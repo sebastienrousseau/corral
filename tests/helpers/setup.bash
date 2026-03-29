@@ -39,7 +39,16 @@ build_isolated_path() {
 # Create a mock `gh` that outputs a given TSV repo list
 mock_gh() {
 	local tsv_content="$1"
-	cat >"$MOCK_BIN/gh" <<MOCK
+	if [[ -z "$tsv_content" ]]; then
+		cat >"$MOCK_BIN/gh" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "$1" == "repo" && "$2" == "list" ]]; then
+	exit 0
+fi
+exit 1
+MOCK
+	else
+		cat >"$MOCK_BIN/gh" <<MOCK
 #!/usr/bin/env bash
 if [[ "\$1" == "repo" && "\$2" == "list" ]]; then
 	cat <<'TSV'
@@ -49,6 +58,7 @@ TSV
 fi
 exit 1
 MOCK
+	fi
 	chmod +x "$MOCK_BIN/gh"
 }
 

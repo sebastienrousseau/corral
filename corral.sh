@@ -32,22 +32,28 @@ normalize_visibility() {
 }
 
 cleanup_empty_legacy_language_folders() {
-	shopt -s dotglob nullglob
 	local seen_languages=()
 	while IFS=$'\t' read -r _ lang _; do
 		seen_languages+=("$(normalize_language "$lang")")
 	done <"$repo_list"
 
+	if ((${#seen_languages[@]} == 0)); then
+		return 0
+	fi
+
 	local unique_langs
 	unique_langs="$(printf '%s\n' "${seen_languages[@]}" | sort -u)"
 
+	shopt -s dotglob nullglob
 	while IFS= read -r lang_dir; do
+		[[ -n "$lang_dir" ]] || continue
 		local folder="$BASE_DIR/$lang_dir"
 		if [[ -d "$folder" ]]; then
 			local entries=("$folder"/*)
 			if ((${#entries[@]} == 0)); then
-				rmdir "$folder"
-				echo "Removed empty legacy folder: $folder"
+				if rmdir "$folder" 2>/dev/null; then
+					echo "Removed empty legacy folder: $folder"
+				fi
 			fi
 		fi
 	done <<<"$unique_langs"
@@ -106,6 +112,7 @@ moved=0
 failed=0
 
 while IFS=$'\t' read -r name lang visibility; do
+	[[ -n "$name" ]] || continue
 	lang_dir="$(normalize_language "$lang")"
 	visibility_dir="$(normalize_visibility "$visibility")"
 	legacy_dir="$BASE_DIR/$lang_dir/$name"

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/logo.png" alt="Corral logo" width="128" />
+  <img src=".github/logo.svg" alt="Corral logo" width="128" />
 </p>
 
 <h1 align="center">Corral</h1>
