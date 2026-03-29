@@ -6,6 +6,13 @@ OWNER=${1:-sebastienrousseau}
 BASE_DIR=${2:-"$HOME/Code"}
 LIMIT=${3:-1000}
 
+for cmd in gh git; do
+	if ! command -v "$cmd" &>/dev/null; then
+		echo "ERROR: Required command '$cmd' not found. Please install it first." >&2
+		exit 1
+	fi
+done
+
 normalize_language() {
 	local lang="$1"
 
@@ -33,6 +40,16 @@ normalize_visibility() {
 
 mkdir -p "$BASE_DIR"
 
+repo_list="$(mktemp)" || { echo "Failed to create temp file" >&2; exit 1; }
+trap 'rm -f "$repo_list"' EXIT
+
+if ! gh repo list "$OWNER" --limit "$LIMIT" --json name,primaryLanguage,visibility \
+	--jq '.[] | [.name, (.primaryLanguage.name // "Other"), .visibility] | @tsv' \
+	>"$repo_list"; then
+	echo "ERROR: gh repo list failed for owner '$OWNER'" >&2
+	exit 1
+fi
+
 cloned=0
 existing=0
 moved=0
@@ -40,22 +57,25 @@ failed=0
 
 cleanup_empty_legacy_language_folders() {
 	shopt -s dotglob nullglob
-	for folder in "$BASE_DIR"/*; do
-		if [[ ! -d "$folder" ]]; then
-			continue
-		fi
+	local seen_languages=()
+	while IFS=$'\t' read -r _ lang _; do
+		seen_languages+=("$(normalize_language "$lang")")
+	done <"$repo_list"
 
-		base="$(basename "$folder")"
-		if [[ "$base" == "Public" || "$base" == "Private" ]]; then
-			continue
-		fi
+	local unique_langs
+	unique_langs="$(printf '%s\n' "${seen_languages[@]}" | sort -u)"
 
-		entries=("$folder"/*)
-		if ((${#entries[@]} == 0)); then
-			rmdir "$folder"
-			echo "Removed empty folder: $folder"
+	while IFS= read -r lang_dir; do
+		local folder="$BASE_DIR/$lang_dir"
+		if [[ -d "$folder" ]]; then
+			local entries=("$folder"/*)
+			if ((${#entries[@]} == 0)); then
+				rmdir "$folder"
+				echo "Removed empty legacy folder: $folder"
+			fi
 		fi
-	done
+	done <<<"$unique_langs"
+	shopt -u dotglob nullglob
 }
 
 while IFS=$'\t' read -r name lang visibility; do
@@ -90,10 +110,7 @@ while IFS=$'\t' read -r name lang visibility; do
 	fi
 
 	cloned=$((cloned + 1))
-done < <(
-	gh repo list "$OWNER" --limit "$LIMIT" --json name,primaryLanguage,visibility \
-		--jq '.[] | [.name, (.primaryLanguage.name // "Other"), .visibility] | @tsv'
-)
+done <"$repo_list"
 
 cleanup_empty_legacy_language_folders
 
