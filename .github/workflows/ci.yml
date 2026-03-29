@@ -24,23 +24,20 @@ jobs:
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck bats
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            brew install shellcheck bats-core
+            brew install bash shellcheck bats-core
           fi
         shell: bash
 
       - name: Verify Bash 4+
         run: |
-          echo "Bash version: $BASH_VERSION"
-          if ((BASH_VERSINFO[0] < 4)); then
-            echo "::error::Bash 4+ required"
-            exit 1
-          fi
+          echo "PATH bash: $(which bash) — $(bash --version | head -1)"
+          bash -c 'if ((BASH_VERSINFO[0] < 4)); then echo "::error::Bash 4+ required on PATH"; exit 1; fi'
         shell: bash
 
       - name: Lint and syntax check
-        run: make check
+        run: bash -c 'make check'
         shell: bash
 
       - name: Run tests
-        run: make test
+        run: bash -c 'make test'
         shell: bash

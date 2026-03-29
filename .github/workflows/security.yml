@@ -32,18 +32,27 @@ jobs:
   signatures:
     name: Verify commit signatures
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Check all commits are signed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          unsigned="$(git log --format='%H %G?' origin/main..HEAD 2>/dev/null | grep -E ' N$' || true)"
-          if [[ -n "$unsigned" ]]; then
-            echo "::error::Unsigned commits detected"
-            echo "$unsigned"
+          failed=0
+          for sha in $(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/commits --jq '.[].sha'); do
+            verified="$(gh api repos/${{ github.repository }}/commits/"$sha" --jq '.commit.verification.verified')"
+            if [[ "$verified" != "true" ]]; then
+              reason="$(gh api repos/${{ github.repository }}/commits/"$sha" --jq '.commit.verification.reason')"
+              echo "::error::Unverified commit $sha (reason: $reason)"
+              failed=1
+            fi
+          done
+          if [[ "$failed" -eq 1 ]]; then
             exit 1
           fi
-          echo "All commits signed."
+          echo "All commits verified by GitHub."
         shell: bash
