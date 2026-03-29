@@ -269,6 +269,33 @@ MOCK
 	[[ "$output" == *"kept 1 repos"* ]]
 }
 
+# --- Dry-run ---
+
+@test "dry-run clone: prints DRY-RUN and does not create directory" {
+	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"[DRY-RUN] git clone"* ]]
+	[[ ! -d "$BASE/Public/rust/my-repo" ]]
+	[[ "$output" == *"Cloned 1 repos"* ]]
+}
+
+@test "dry-run sync: prints DRY-RUN pull and counts synced" {
+	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
+	mock_git
+
+	# Pre-create target with .git directory
+	mkdir -p "$BASE/Public/rust/my-repo/.git"
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run --sync testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"[DRY-RUN] git -C"* ]]
+	[[ "$output" == *"pull --rebase --autostash"* ]]
+	[[ "$output" == *"synced 1 repos"* ]]
+}
+
 @test "without sync: existing repos skipped, no Syncing output" {
 	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
 	mock_git

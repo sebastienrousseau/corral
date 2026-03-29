@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-Report security issues through [GitHub's private vulnerability reporting](https://github.com/sebastienrousseau/clone-gh-repos/security/advisories/new). Do not open a public issue.
+Report security issues through [GitHub's private vulnerability reporting](https://github.com/sebastienrousseau/Corral/security/advisories/new). Do not open a public issue.
 
 You should receive a response within 48 hours. If confirmed, a fix will be released as soon as possible.
 

@@ -39,6 +39,31 @@ clone_url() {
 	fi
 }
 
+show_help() {
+	cat <<EOF
+Usage: $(basename "$0") [options] <owner> [base_dir] [limit]
+
+Arguments:
+  owner      GitHub username or organisation (required)
+  base_dir   root directory for cloned repos (default: \$HOME/Code)
+  limit      max repos to list (default: 1000)
+
+Options:
+  -h, --help                  Show this help message
+  -n, --dry-run               Preview actions without making changes
+  -p, --protocol <ssh|https>  Clone protocol (default: https)
+  -s, --sync                  Pull latest changes for existing repos
+EOF
+}
+
+execute() {
+	if [[ "$DRY_RUN" == "true" ]]; then
+		echo "[DRY-RUN] $*"
+		return 0
+	fi
+	"$@"
+}
+
 cleanup_empty_legacy_language_folders() {
 	shopt -s dotglob nullglob
 	local seen_languages=()
@@ -74,9 +99,18 @@ fi
 
 PROTOCOL=https
 SYNC=false
+DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+	-h | --help)
+		show_help
+		exit 0
+		;;
+	-n | --dry-run)
+		DRY_RUN=true
+		shift
+		;;
 	-p | --protocol)
 		if [[ -z "${2:-}" ]]; then
 			echo "ERROR: --protocol requires a value (ssh or https)" >&2
@@ -105,14 +139,7 @@ if [[ "$PROTOCOL" != "https" && "$PROTOCOL" != "ssh" ]]; then
 fi
 
 if [[ $# -lt 1 ]]; then
-	echo "Usage: $(basename "$0") [options] <owner> [base_dir] [limit]" >&2
-	echo "  owner:      GitHub username or organisation (required)" >&2
-	echo "  base_dir:   root directory for cloned repos (default: \$HOME/Code)" >&2
-	echo "  limit:      max repos to list (default: 1000)" >&2
-	echo "" >&2
-	echo "Options:" >&2
-	echo "  -p, --protocol <ssh|https>  Clone protocol (default: https)" >&2
-	echo "  -s, --sync                  Pull latest changes for existing repos" >&2
+	show_help >&2
 	exit 1
 fi
 
@@ -162,7 +189,7 @@ while IFS=$'\t' read -r name lang visibility; do
 		if [[ "$SYNC" == "true" ]]; then
 			if [[ -d "$target_dir/.git" ]]; then
 				echo "Syncing $OWNER/$name"
-				if git -C "$target_dir" pull --ff-only; then
+				if execute git -C "$target_dir" pull --rebase --autostash; then
 					synced=$((synced + 1))
 				else
 					echo "SYNC FAILED: $OWNER/$name"
@@ -179,7 +206,7 @@ while IFS=$'\t' read -r name lang visibility; do
 	fi
 
 	if [[ -d "$legacy_dir" ]]; then
-		if mv "$legacy_dir" "$target_dir"; then
+		if execute mv "$legacy_dir" "$target_dir"; then
 			moved=$((moved + 1))
 		else
 			failed=$((failed + 1))
@@ -190,7 +217,7 @@ while IFS=$'\t' read -r name lang visibility; do
 
 	echo "Cloning $OWNER/$name -> $visibility_dir/$lang_dir"
 
-	if ! git clone "$(clone_url "$OWNER" "$name")" "$target_dir"; then
+	if ! execute git clone "$(clone_url "$OWNER" "$name")" "$target_dir"; then
 		echo "FAILED: $OWNER/$name (left at: $target_dir)"
 		failed=$((failed + 1))
 		continue

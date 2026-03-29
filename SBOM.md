@@ -1,6 +1,6 @@
 # Software Bill of Materials (SBOM)
 
-**Project:** clone-gh-repos
+**Project:** Corral
 **Generated:** 2026-03-29
 **Format:** Manual (no package manager dependencies)
 

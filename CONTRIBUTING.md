@@ -1,6 +1,6 @@
 # Contributing
 
-clone-gh-repos is a single-file Bash tool that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
+Corral is a single-file Bash tool that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
 
 ## Getting Started
 

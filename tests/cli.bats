@@ -105,3 +105,47 @@ setup() {
 	[[ "$status" -eq 0 ]]
 	teardown_test_env
 }
+
+# --- --help flag ---
+
+@test "--help: prints usage and exits 0" {
+	run bash "$SCRIPT" --help
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"Usage:"* ]]
+	[[ "$output" == *"--help"* ]]
+	[[ "$output" == *"--dry-run"* ]]
+}
+
+@test "-h shorthand: prints usage and exits 0" {
+	run bash "$SCRIPT" -h
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"Usage:"* ]]
+}
+
+# --- --dry-run flag ---
+
+@test "--dry-run: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-n shorthand: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -n testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "--dry-run without owner: shows usage and exits 1" {
+	run bash "$SCRIPT" --dry-run
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"Usage:"* ]]
+}
