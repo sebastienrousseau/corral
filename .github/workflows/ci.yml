@@ -17,24 +17,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install dependencies
         run: |
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck bats
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            brew install shellcheck bats-core
+            brew install bash shellcheck bats-core
+            echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           fi
         shell: bash
 
       - name: Verify Bash 4+
         run: |
-          echo "Bash version: $BASH_VERSION"
-          if ((BASH_VERSINFO[0] < 4)); then
-            echo "::error::Bash 4+ required"
-            exit 1
-          fi
+          echo "Bash path: $(command -v bash)"
+          echo "Bash version: $(bash --version | head -1)"
+          bash -c 'if ((BASH_VERSINFO[0] < 4)); then echo "::error::Bash 4+ required"; exit 1; fi'
         shell: bash
 
       - name: Lint and syntax check
