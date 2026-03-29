@@ -7,7 +7,6 @@
 .gitattributes text eol=lf
 .editorconfig text eol=lf
 Makefile text eol=lf
-*.svg text eol=lf
-
 # Binary files
 LICENSE binary
+*.png binary

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/logo.svg" alt="clone-gh-repos logo" width="128" />
+  <img src=".github/logo.png" alt="clone-gh-repos logo" width="128" />
 </p>
 
 <h1 align="center">clone-gh-repos</h1>
