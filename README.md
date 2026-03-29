@@ -247,6 +247,7 @@ For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
 ---
 
 **THE ARCHITECT** ᛫ [Sebastien Rousseau](https://sebastienrousseau.com)
+**THE ENGINE** ᛞ [EUXIS](https://euxis.co) ᛫ Enterprise Unified Execution Intelligence System
 
 ---
 
