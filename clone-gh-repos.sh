@@ -2,7 +2,15 @@
 
 set -euo pipefail
 
-OWNER=${1:-sebastienrousseau}
+if [[ $# -lt 1 ]]; then
+	echo "Usage: $(basename "$0") <owner> [base_dir] [limit]" >&2
+	echo "  owner:    GitHub username or organisation (required)" >&2
+	echo "  base_dir: root directory for cloned repos (default: \$HOME/Code)" >&2
+	echo "  limit:    max repos to list (default: 1000)" >&2
+	exit 1
+fi
+
+OWNER="$1"
 BASE_DIR=${2:-"$HOME/Code"}
 LIMIT=${3:-1000}
 

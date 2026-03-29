@@ -35,24 +35,26 @@ gh auth login
 ## Usage
 
 ```bash
-./clone-gh-repos.sh [owner] [base_dir] [limit]
+./clone-gh-repos.sh <owner> [base_dir] [limit]
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `owner` | `sebastienrousseau` | GitHub username or organisation |
-| `base_dir` | `$HOME/Code` | Root directory for the cloned tree |
-| `limit` | `1000` | Maximum number of repos to list via `gh` |
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `owner` | **yes** | — | GitHub username or organisation |
+| `base_dir` | no | `$HOME/Code` | Root directory for the cloned tree |
+| `limit` | no | `1000` | Maximum number of repos to list via `gh` |
+
+> **Note:** Private repos are only cloned if your `gh` token has access to them. Public repos from any user/org are always available.
 
 ### Examples
 
-Clone with defaults:
+Clone all your own repos:
 
 ```bash
-./clone-gh-repos.sh
+./clone-gh-repos.sh my-username
 ```
 
-Clone a different org into a custom directory:
+Clone an organisation into a custom directory:
 
 ```bash
 ./clone-gh-repos.sh my-org ~/Projects 500
