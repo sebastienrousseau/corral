@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions are welcome.
+clone-gh-repos is a single-file Bash tool that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
 
 ## Getting Started
 
@@ -17,6 +17,7 @@ Contributions are welcome.
 5. Verify everything passes:
    ```bash
    make check
+   make test
    ```
 6. Commit, push, and open a pull request.
 
@@ -36,6 +37,7 @@ Use imperative commit messages: "Add dry-run flag", not "Added dry-run flag."
 ## Pull Request Checklist
 
 - [ ] `make check` passes
+- [ ] `make test` passes
 - [ ] README updated if behaviour changed
 - [ ] All commits are signed (`git log --show-signature`)
 

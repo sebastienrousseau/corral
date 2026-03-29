@@ -16,6 +16,10 @@
 
 ---
 
+clone-gh-repos is a single-file Bash tool that clones every repository from a GitHub user or organisation and sorts them into `Public/` and `Private/` trees, grouped by primary language.
+
+---
+
 ## Why clone-gh-repos
 
 Most cloning tools dump every repository into a single flat directory. Finding anything means scrolling through hundreds of folders with no structure.
@@ -42,7 +46,7 @@ One script. No install step. No config files. No runtime dependencies beyond `gh
 
 ## How It Compares
 
-| | clone-gh-repos | [ghorg](https://github.com/gabrie30/ghorg) | [ghcloneall](https://pypi.org/project/ghcloneall/) | Gist scripts |
+| Feature | clone-gh-repos | [ghorg](https://github.com/gabrie30/ghorg) | [ghcloneall](https://pypi.org/project/ghcloneall/) | Gist scripts |
 |:---|:---|:---|:---|:---|
 | Organises by language | Yes | No | No | No |
 | Organises by visibility | Yes | No | No | No |
@@ -100,7 +104,7 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 
 ## Features
 
-| | |
+| Feature | Description |
 |:---|:---|
 | **Structured** | The only tool that sorts repositories into `Public/` and `Private/` trees, grouped by primary language. |
 | **Idempotent** | Safe to re-run at any time. Already-cloned repositories are skipped. Only new ones are fetched. |
@@ -167,6 +171,12 @@ The local clone remains untouched. The script never deletes existing directories
 
 **Is it safe to run on a schedule (cron)?**
 Yes. The script is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
+
+---
+
+## Security
+
+See [SECURITY.md](SECURITY.md).
 
 ---
 
