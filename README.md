@@ -1,6 +1,14 @@
-# Corral
+<p align="center">
+  <img src=".github/logo.svg" alt="Corral logo" width="160" />
+</p>
 
-![](https://img.shields.io/github/actions/workflow/status/sebastienrousseau/Corral/ci.yml?style=flat-square&logo=github) ![](https://img.shields.io/github/v/release/sebastienrousseau/Corral?style=flat-square) ![](https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square)
+<h1 align="center">Corral</h1>
+
+<p align="center">
+  <a href="https://github.com/sebastienrousseau/Corral/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/Corral/ci.yml?style=flat-square&logo=github" alt="Build" /></a>
+  <a href="https://github.com/sebastienrousseau/Corral/releases/latest"><img src="https://img.shields.io/github/v/release/sebastienrousseau/Corral?style=flat-square" alt="Version" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square" alt="License" /></a>
+</p>
 
 Corral clones every repository from a GitHub user or organisation and sorts them into a clean, navigable directory tree by visibility and language — one command, zero config, safe to re-run.
 
