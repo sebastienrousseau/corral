@@ -39,3 +39,31 @@ setup() {
 	[[ "$output" == *"Required command 'git' not found"* ]]
 	teardown_test_env
 }
+
+# --- Dry-run flag ---
+
+@test "--dry-run flag is accepted" {
+	create_test_env
+	mock_gh ""
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run testowner "$TEST_DIR/out"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-n shorthand works" {
+	create_test_env
+	mock_gh ""
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -n testowner "$TEST_DIR/out"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "unknown flag exits 1" {
+	run bash "$SCRIPT" --bogus testowner
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"Unknown option: --bogus"* ]]
+}

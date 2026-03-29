@@ -146,6 +146,7 @@ graph TD
 
 | Parameter | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
+| `-n`, `--dry-run` | No | — | Preview changes without executing them |
 | `owner` | Yes | — | GitHub username or organisation |
 | `base_dir` | No | `$HOME/Code` | Root directory for the cloned tree |
 | `limit` | No | `1000` | Maximum repositories to fetch |
@@ -160,6 +161,12 @@ Clone an organisation into a custom directory:
 
 ```bash
 ./corral.sh my-org ~/Projects 500
+```
+
+Preview what would happen without making changes:
+
+```bash
+./corral.sh --dry-run my-username
 ```
 
 Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.

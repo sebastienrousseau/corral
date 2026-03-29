@@ -202,6 +202,20 @@ MOCK
 
 # --- Idempotency ---
 
+# --- Dry-run ---
+
+@test "dry-run: no directories created for cloned repos" {
+	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ ! -d "$BASE/Public/rust/my-repo" ]]
+	[[ "$output" == *"[DRY-RUN]"* ]]
+}
+
+# --- Idempotency ---
+
 @test "idempotent: second run clones 0, keeps all" {
 	mock_gh "$(printf 'repo-a\tGo\tPUBLIC\nrepo-b\tGo\tPRIVATE')"
 	mock_git
