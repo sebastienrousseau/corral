@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Enforce ShellCheck on staged .sh files
+staged_sh=$(git diff --cached --name-only --diff-filter=ACM -- '*.sh')
+if [[ -n "$staged_sh" ]]; then
+	if ! command -v shellcheck &>/dev/null; then
+		echo "WARNING: shellcheck not found, skipping lint" >&2
+	else
+		echo "$staged_sh" | xargs shellcheck
+	fi
+fi
+
+# Verify commit signing is configured
+if [[ "$(git config --get commit.gpgsign 2>/dev/null)" != "true" ]]; then
+	echo "ERROR: commit.gpgsign is not enabled. Run: git config --global commit.gpgsign true" >&2
+	exit 1
+fi

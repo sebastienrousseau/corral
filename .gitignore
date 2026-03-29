@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Linux
+*~
+.nfs*
+
+# Editors
+*.swp
+*.swo
+.idea/
+.vscode/

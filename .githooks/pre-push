@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Running pre-push checks..."
+
+# Lint and syntax
+make check
+
+# Run tests if bats is available
+if command -v bats &>/dev/null; then
+	make test
+else
+	echo "WARNING: bats not found, skipping tests. Install: brew install bats-core" >&2
+fi
+
+# Verify commit signing on all unpushed commits
+while read -r _ local_sha _ remote_sha; do
+	if [[ "$local_sha" == "0000000000000000000000000000000000000000" ]]; then
+		continue
+	fi
+	range="${remote_sha}..${local_sha}"
+	if [[ "$remote_sha" == "0000000000000000000000000000000000000000" ]]; then
+		range="$local_sha"
+	fi
+	unsigned="$(git log --format='%H %G?' "$range" | grep -E ' N$' || true)"
+	if [[ -n "$unsigned" ]]; then
+		echo "ERROR: Unsigned commits detected:" >&2
+		echo "$unsigned" >&2
+		exit 1
+	fi
+done
+
+echo "Pre-push checks passed."
