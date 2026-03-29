@@ -5,7 +5,7 @@
 <h1 align="center">clone-gh-repos</h1>
 
 <p align="center">
-  <strong>Clone every repository from a GitHub account. Organised by visibility and language. Ready in seconds.</strong>
+  <strong>The only GitHub cloning tool that organises repositories by visibility and language — automatically.</strong>
 </p>
 
 <p align="center">
@@ -16,11 +16,11 @@
 
 ---
 
-## Overview
+## Why clone-gh-repos
 
-One script. Every repo. A clean local tree.
+Most cloning tools dump every repository into a single flat directory. Finding anything means scrolling through hundreds of folders with no structure.
 
-Run it once to clone an entire GitHub account. Run it again — only new repositories are fetched. Existing ones stay untouched.
+clone-gh-repos creates a clean, navigable local mirror — sorted by visibility and language — in one command.
 
 ```
 ~/Code/
@@ -36,7 +36,21 @@ Run it once to clone an entire GitHub account. Run it again — only new reposit
         └── internal-tool/
 ```
 
-Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.
+One script. No install step. No config files. No runtime dependencies beyond `gh` and `git`.
+
+---
+
+## How It Compares
+
+| | clone-gh-repos | [ghorg](https://github.com/gabrie30/ghorg) | [ghcloneall](https://pypi.org/project/ghcloneall/) | Gist scripts |
+|:---|:---|:---|:---|:---|
+| Organises by language | Yes | No | No | No |
+| Organises by visibility | Yes | No | No | No |
+| Zero install | Yes (single bash file) | Go binary or Docker | Python + pip | Copy-paste |
+| Idempotent re-runs | Yes | Yes | Yes | No |
+| Legacy layout migration | Yes | No | No | No |
+| Test suite | 32 tests, CI on 2 OS | Yes | Limited | None |
+| Config required | None | YAML + env vars | CLI flags + rc file | Manual edits |
 
 ---
 
@@ -80,18 +94,21 @@ Clone an organisation into a custom directory:
 ./clone-gh-repos.sh my-org ~/Projects 500
 ```
 
+Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.
+
 ---
 
 ## Features
 
 | | |
 |:---|:---|
-| **Idempotent** | Safe to re-run. Already-cloned repositories are skipped. |
-| **Organised** | Repositories sort into `Public/` and `Private/` trees by language. |
-| **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure on the next run. |
-| **Cross-platform** | Works on macOS, Linux, and WSL2. LF line endings enforced. |
-| **Portable** | No hardcoded paths or usernames. Works for any GitHub account. |
+| **Structured** | The only tool that sorts repositories into `Public/` and `Private/` trees, grouped by primary language. |
+| **Idempotent** | Safe to re-run at any time. Already-cloned repositories are skipped. Only new ones are fetched. |
+| **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure automatically. |
+| **Cross-platform** | Tested on macOS, Linux, and WSL2. LF line endings enforced via `.gitattributes`. |
+| **Zero-config** | No YAML, no `.env`, no config files. Pass the owner name and run. |
 | **Fail-safe** | Pre-flight checks for `gh`, `git`, and Bash version. Clear error messages on failure. |
+| **Production-grade** | 32 automated tests. CI on Ubuntu and macOS. Signed commits. ShellCheck clean. |
 
 ---
 
@@ -134,6 +151,22 @@ Earlier versions of this script stored repositories in a flat `~/Code/<Language>
 | `ERROR: gh repo list failed` | Not authenticated, or the owner does not exist | Run `gh auth login` and verify the owner name |
 | `FAILED: owner/repo` | Network issue or protocol mismatch | Check connectivity. Run `gh config set git_protocol https` |
 | Script reports 0 repos | No repositories visible to the current token | Run `gh repo list <owner> --limit 5` to verify |
+
+---
+
+## FAQ
+
+**Can clone-gh-repos back up private repositories?**
+Yes. Any repository visible to the authenticated `gh` token is cloned. Private repositories land in the `Private/` tree.
+
+**Does it work with GitHub organisations?**
+Yes. Pass the organisation name as the first argument. Both user accounts and organisations are supported.
+
+**What happens if a repository is deleted on GitHub?**
+The local clone remains untouched. The script never deletes existing directories.
+
+**Is it safe to run on a schedule (cron)?**
+Yes. The script is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
 
 ---
 
