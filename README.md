@@ -5,7 +5,7 @@
 <h1 align="center">Corral</h1>
 
 <p align="center">
-  <strong>Wrangle your repos — the only GitHub cloning tool that organises repositories by visibility and language on macOS, Linux, and WSL2.</strong>
+  <strong>Corral clones every repository from a GitHub user or organisation and sorts them into a clean, navigable directory tree by visibility and language — one command, zero config, safe to re-run.</strong>
 </p>
 
 <p align="center">
