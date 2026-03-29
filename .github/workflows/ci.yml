@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  lint:
-    name: ShellCheck (${{ matrix.os }})
+  check:
+    name: Lint & Syntax (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -19,7 +19,7 @@ jobs:
       - name: Install ShellCheck
         run: |
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            sudo apt-get update && sudo apt-get install -y shellcheck
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             brew install shellcheck
           fi
@@ -34,10 +34,6 @@ jobs:
           fi
         shell: bash
 
-      - name: ShellCheck
-        run: shellcheck clone-gh-repos.sh
-        shell: bash
-
-      - name: Syntax check
-        run: bash -n clone-gh-repos.sh
+      - name: Run make check
+        run: make check
         shell: bash

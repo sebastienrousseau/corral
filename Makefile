@@ -1,13 +1,17 @@
-SHELL := /usr/bin/env bash
-SCRIPT := clone-gh-repos.sh
+SHELL := /bin/bash
+SCRIPTS := clone-gh-repos.sh .githooks/pre-commit
 
-.PHONY: lint check all
+.PHONY: all init lint check
 
 all: check
 
+init:
+	git config core.hooksPath .githooks
+	@echo "Git hooks enabled."
+
 lint:
-	shellcheck $(SCRIPT)
+	shellcheck $(SCRIPTS)
 
 check: lint
-	bash -n $(SCRIPT)
+	@for s in $(SCRIPTS); do bash -n "$$s" || exit 1; done
 	@echo "All checks passed."

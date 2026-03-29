@@ -5,9 +5,9 @@ Thank you for considering a contribution to this project.
 ## Getting started
 
 1. Fork and clone the repo.
-2. Enable the project's Git hooks:
+2. Set up the project (enables Git hooks):
    ```bash
-   git config core.hooksPath .githooks
+   make init
    ```
 3. Create a feature branch from `main`:
    ```bash
