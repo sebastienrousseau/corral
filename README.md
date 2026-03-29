@@ -109,15 +109,15 @@ Run once or a hundred times, the directory tree converges on the same state.
 
 ```mermaid
 graph TD
-    A[User Shell] --> B{clone-gh-repos}
+    A[User Shell] --> B{Corral}
     B --> C[Pre-flight: Bash 4+ / gh / git]
     C -- Missing --> Z1[Exit: dependency error]
     C -- OK --> D[gh repo list → tempfile]
     D -- Fails --> Z2[Exit: gh error]
     D -- OK --> E[Loop: each repo]
     E --> F{Already cloned?}
-    F -- Yes, --sync --> G1[git pull --ff-only]
-    F -- Yes, no sync --> G2[Skip]
+    F -- "Yes + --sync" --> G1[git pull --ff-only]
+    F -- "Yes / no sync" --> G2[Skip]
     F -- No --> H{Legacy directory?}
     H -- Yes --> I[Migrate to new layout]
     H -- No --> J[git clone]
