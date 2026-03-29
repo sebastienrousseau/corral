@@ -1,48 +1,46 @@
 # Contributing
 
-Thank you for considering a contribution to this project.
+Contributions are welcome.
 
-## Getting started
+## Getting Started
 
-1. Fork and clone the repo.
-2. Set up the project (enables Git hooks):
+1. Fork and clone the repository.
+2. Set up the project:
    ```bash
    make init
    ```
-3. Create a feature branch from `main`:
+3. Create a branch:
    ```bash
    git checkout -b feat/my-change
    ```
-4. Make your changes.
-5. Run all checks:
+4. Make changes.
+5. Verify everything passes:
    ```bash
    make check
    ```
 6. Commit, push, and open a pull request.
 
-## Commit guidelines
+## Commits
 
-- **Sign all commits.** Unsigned commits will not be accepted.
-  ```bash
-  # Configure once:
-  git config --global commit.gpgsign true
+Sign every commit. Unsigned commits are not accepted.
 
-  # Then commit as usual:
-  git commit -m "feat: add dry-run mode"
-  ```
-  See [GitHub's guide to signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits) if you haven't set up a signing key.
+```bash
+# Enable signing once:
+git config --global commit.gpgsign true
+```
 
-- Write clear, imperative commit messages (e.g., "Add dry-run flag", not "Added dry-run flag").
+Need a signing key? Follow [GitHub's guide to signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits).
 
-## Pull request checklist
+Use imperative commit messages: "Add dry-run flag", not "Added dry-run flag."
 
-- [ ] `shellcheck clone-gh-repos.sh` passes with no warnings
-- [ ] `bash -n clone-gh-repos.sh` confirms valid syntax
+## Pull Request Checklist
+
+- [ ] `make check` passes
 - [ ] README updated if behaviour changed
-- [ ] Commit(s) are signed (`git log --show-signature`)
+- [ ] All commits are signed (`git log --show-signature`)
 
-## Code style
+## Code Style
 
-- Indent with tabs (matches the existing script).
-- Use `local` for function-scoped variables.
+- Indent with tabs.
+- Scope variables with `local`.
 - Quote all variable expansions.

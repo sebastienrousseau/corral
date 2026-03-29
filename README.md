@@ -5,7 +5,7 @@
 <h1 align="center">clone-gh-repos</h1>
 
 <p align="center">
-  <strong>Bulk-clone all repositories from any GitHub user or organisation, organised by visibility and primary language.</strong>
+  <strong>Clone every repository from a GitHub account. Organised by visibility and language. Ready in seconds.</strong>
 </p>
 
 <p align="center">
@@ -18,7 +18,9 @@
 
 ## Overview
 
-A single idempotent script that mirrors an entire GitHub account into a clean local tree. Re-running it skips repos that are already cloned and only fetches new ones. Legacy flat layouts are migrated automatically.
+One script. Every repo. A clean local tree.
+
+Run it once to clone an entire GitHub account. Run it again — only new repositories are fetched. Existing ones stay untouched.
 
 ```
 ~/Code/
@@ -34,27 +36,27 @@ A single idempotent script that mirrors an entire GitHub account into a clean lo
         └── internal-tool/
 ```
 
-> **Note:** Private repos are only cloned if your `gh` token has access to them. Public repos from any user or organisation are always available.
+Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.
 
 ---
 
-## Prerequisites
+## Get Started
 
-| Tool | Install |
-|:-----|:--------|
-| Bash 4+ | macOS: `brew install bash` / Linux & WSL: pre-installed |
-| [Git](https://git-scm.com/) | macOS: `brew install git` / Linux & WSL: `sudo apt install git` |
-| [GitHub CLI (`gh`)](https://cli.github.com/) | macOS: `brew install gh` / Linux & WSL: `sudo apt install gh` or see [install docs](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) |
+### 1. Install the prerequisites
 
-After installing `gh`, authenticate:
+| Tool | macOS | Linux and WSL |
+|:-----|:------|:--------------|
+| Bash 4+ | `brew install bash` | Pre-installed |
+| [Git](https://git-scm.com/) | `brew install git` | `sudo apt install git` |
+| [GitHub CLI](https://cli.github.com/) | `brew install gh` | `sudo apt install gh` |
+
+### 2. Authenticate with GitHub
 
 ```bash
 gh auth login
 ```
 
----
-
-## Usage
+### 3. Clone
 
 ```bash
 ./clone-gh-repos.sh <owner> [base_dir] [limit]
@@ -62,13 +64,11 @@ gh auth login
 
 | Parameter | Required | Default | Description |
 |:----------|:---------|:--------|:------------|
-| `owner` | **yes** | — | GitHub username or organisation |
-| `base_dir` | no | `$HOME/Code` | Root directory for the cloned tree |
-| `limit` | no | `1000` | Maximum number of repos to list via `gh` |
+| `owner` | Yes | — | GitHub username or organisation |
+| `base_dir` | No | `$HOME/Code` | Root directory for the cloned tree |
+| `limit` | No | `1000` | Maximum repositories to fetch |
 
-### Examples
-
-Clone all your own repos:
+Clone a personal account:
 
 ```bash
 ./clone-gh-repos.sh my-username
@@ -86,54 +86,54 @@ Clone an organisation into a custom directory:
 
 | | |
 |:---|:---|
-| **Idempotent** | Safe to re-run — existing repos are skipped, only new ones are cloned |
-| **Organised** | Repos are sorted into `Public/` and `Private/` trees by language |
-| **Migration** | Legacy flat `~/Code/<Language>/` layouts are moved into the new structure automatically |
-| **Cross-platform** | Tested on macOS, Linux, and WSL2 with enforced LF line endings |
-| **Portable** | No hardcoded paths or usernames — works for any GitHub account |
-| **Fail-safe** | Pre-flight checks for `gh`, `git`, and Bash version; loud errors on failure |
+| **Idempotent** | Safe to re-run. Already-cloned repositories are skipped. |
+| **Organised** | Repositories sort into `Public/` and `Private/` trees by language. |
+| **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure on the next run. |
+| **Cross-platform** | Works on macOS, Linux, and WSL2. LF line endings enforced. |
+| **Portable** | No hardcoded paths or usernames. Works for any GitHub account. |
+| **Fail-safe** | Pre-flight checks for `gh`, `git`, and Bash version. Clear error messages on failure. |
 
 ---
 
-## Architecture
+## How It Works
 
 ```mermaid
 flowchart TD
     A[Start] --> B{Bash 4+ / gh / git?}
-    B -- Missing --> Z1[EXIT 1: dependency error]
+    B -- Missing --> Z1[Exit: dependency error]
     B -- OK --> C[gh repo list → tempfile]
-    C -- Fails --> Z2[EXIT 1: gh error]
+    C -- Fails --> Z2[Exit: gh error]
     C -- OK --> D[Loop: each repo]
 
-    D --> E{target exists?}
+    D --> E{Already cloned?}
     E -- Yes --> F[Skip]
-    E -- No --> G{legacy dir exists?}
+    E -- No --> G{Legacy directory?}
 
     G -- Yes --> H[Migrate to new layout]
     G -- No --> I[git clone]
 
     F & H & I --> D
-    D -- Done --> J[Cleanup empty legacy dirs]
+    D -- Done --> J[Remove empty legacy directories]
     J --> K[Print summary]
 ```
 
 ---
 
-## Legacy migration
+## Legacy Migration
 
-If you previously cloned repos into a flat `~/Code/<Language>/<repo>` layout, the script detects these and moves them into the new `<Visibility>/<Language>/<repo>` structure automatically. Empty legacy language folders are cleaned up after migration.
+Earlier versions of this script stored repositories in a flat `~/Code/<Language>/<repo>` layout. When the script encounters these directories, it moves them into the new `<Visibility>/<Language>/<repo>` structure. Empty legacy language folders are removed afterward.
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|:--------|:------|:----|
-| `ERROR: Bash 4+ is required` | macOS ships Bash 3.2 | `brew install bash` |
-| `ERROR: Required command 'gh' not found` | `gh` not installed | Install per Prerequisites above |
-| `ERROR: gh repo list failed for owner '...'` | Not authenticated, or owner doesn't exist | Run `gh auth login` and verify the owner name |
-| `FAILED: owner/repo` during clone | Network issue, repo deleted, or SSH vs HTTPS mismatch | Check connectivity; `gh config set git_protocol https` |
-| Script succeeds but clones 0 repos | Owner has no repos visible to your token | Run `gh repo list <owner> --limit 5` manually to verify |
+| Message | Cause | Solution |
+|:--------|:------|:---------|
+| `ERROR: Bash 4+ is required` | macOS includes Bash 3.2 by default | `brew install bash` |
+| `ERROR: Required command 'gh' not found` | GitHub CLI is not installed | See Get Started above |
+| `ERROR: gh repo list failed` | Not authenticated, or the owner does not exist | Run `gh auth login` and verify the owner name |
+| `FAILED: owner/repo` | Network issue or protocol mismatch | Check connectivity. Run `gh config set git_protocol https` |
+| Script reports 0 repos | No repositories visible to the current token | Run `gh repo list <owner> --limit 5` to verify |
 
 ---
 
@@ -145,6 +145,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Licensed under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for details.
+Released under the [GNU General Public License v3.0](LICENSE).
 
 <p align="right"><a href="#clone-gh-repos">Back to Top</a></p>
