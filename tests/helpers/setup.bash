@@ -2,11 +2,11 @@
 # Common test setup: source functions, create temp dirs, build mocks.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT="$REPO_ROOT/clone-gh-repos.sh"
+SCRIPT="$REPO_ROOT/corral.sh"
 
 # Source only the function definitions
 source_functions() {
-	__CLONE_GH_REPOS_SOURCED=1 source "$SCRIPT"
+	__CORRAL_SOURCED=1 source "$SCRIPT"
 }
 
 # Create an isolated temp directory for each test
@@ -62,12 +62,17 @@ MOCK
 	chmod +x "$MOCK_BIN/gh"
 }
 
-# Create a mock `git` that simulates clone by creating the target directory
+# Create a mock `git` that simulates clone and pull
 mock_git() {
-	cat >"$MOCK_BIN/git" <<'MOCK'
+	cat >"$MOCK_BIN/git" <<MOCK
 #!/usr/bin/env bash
-if [[ "$1" == "clone" ]]; then
-	mkdir -p "$3"
+if [[ "\$1" == "clone" ]]; then
+	echo "\$2" >> "$TEST_DIR/git_clone_urls"
+	mkdir -p "\$3"
+	exit 0
+fi
+if [[ "\$1" == "-C" && "\$3" == "pull" ]]; then
+	echo "\$2" >> "$TEST_DIR/git_pull_targets"
 	exit 0
 fi
 exit 1

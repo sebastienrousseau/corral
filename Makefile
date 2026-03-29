@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-SCRIPTS := clone-gh-repos.sh .githooks/pre-commit .githooks/pre-push
+SCRIPTS := corral.sh .githooks/pre-commit .githooks/pre-push
 
 .PHONY: all init lint check test
 

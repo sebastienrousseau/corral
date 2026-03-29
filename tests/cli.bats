@@ -39,3 +39,69 @@ setup() {
 	[[ "$output" == *"Required command 'git' not found"* ]]
 	teardown_test_env
 }
+
+# --- --protocol flag ---
+
+@test "--protocol ssh: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --protocol ssh testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "--protocol https: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --protocol https testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-p shorthand: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -p ssh testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "--protocol bogus: exits 1" {
+	run bash "$SCRIPT" --protocol bogus testowner
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"--protocol must be 'ssh' or 'https'"* ]]
+}
+
+@test "--protocol without value: exits 1" {
+	run bash "$SCRIPT" --protocol
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"--protocol requires a value"* ]]
+}
+
+# --- --sync flag ---
+
+@test "--sync: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --sync testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-s shorthand: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -s testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}

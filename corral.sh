@@ -31,6 +31,14 @@ normalize_visibility() {
 	fi
 }
 
+clone_url() {
+	if [[ "$PROTOCOL" == "ssh" ]]; then
+		echo "git@github.com:${1}/${2}.git"
+	else
+		echo "https://github.com/${1}/${2}.git"
+	fi
+}
+
 cleanup_empty_legacy_language_folders() {
 	shopt -s dotglob nullglob
 	local seen_languages=()
@@ -54,8 +62,8 @@ cleanup_empty_legacy_language_folders() {
 	shopt -u dotglob nullglob
 }
 
-# Allow sourcing for tests: __CLONE_GH_REPOS_SOURCED=1 source clone-gh-repos.sh
-if [[ "${__CLONE_GH_REPOS_SOURCED:-}" == "1" ]]; then
+# Allow sourcing for tests: __CORRAL_SOURCED=1 source corral.sh
+if [[ "${__CORRAL_SOURCED:-}" == "1" ]]; then
 	# shellcheck disable=SC2317
 	return 0 2>/dev/null || exit 0
 fi
@@ -64,11 +72,47 @@ fi
 # Main
 # ---------------------------------------------------------------------------
 
+PROTOCOL=https
+SYNC=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-p | --protocol)
+		if [[ -z "${2:-}" ]]; then
+			echo "ERROR: --protocol requires a value (ssh or https)" >&2
+			exit 1
+		fi
+		PROTOCOL="$2"
+		shift 2
+		;;
+	-s | --sync)
+		SYNC=true
+		shift
+		;;
+	-*)
+		echo "ERROR: Unknown option: $1" >&2
+		exit 1
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+if [[ "$PROTOCOL" != "https" && "$PROTOCOL" != "ssh" ]]; then
+	echo "ERROR: --protocol must be 'ssh' or 'https' (got: '$PROTOCOL')" >&2
+	exit 1
+fi
+
 if [[ $# -lt 1 ]]; then
-	echo "Usage: $(basename "$0") <owner> [base_dir] [limit]" >&2
-	echo "  owner:    GitHub username or organisation (required)" >&2
-	echo "  base_dir: root directory for cloned repos (default: \$HOME/Code)" >&2
-	echo "  limit:    max repos to list (default: 1000)" >&2
+	echo "Usage: $(basename "$0") [options] <owner> [base_dir] [limit]" >&2
+	echo "  owner:      GitHub username or organisation (required)" >&2
+	echo "  base_dir:   root directory for cloned repos (default: \$HOME/Code)" >&2
+	echo "  limit:      max repos to list (default: 1000)" >&2
+	echo "" >&2
+	echo "Options:" >&2
+	echo "  -p, --protocol <ssh|https>  Clone protocol (default: https)" >&2
+	echo "  -s, --sync                  Pull latest changes for existing repos" >&2
 	exit 1
 fi
 
@@ -104,6 +148,7 @@ cloned=0
 existing=0
 moved=0
 failed=0
+synced=0
 
 while IFS=$'\t' read -r name lang visibility; do
 	lang_dir="$(normalize_language "$lang")"
@@ -114,7 +159,22 @@ while IFS=$'\t' read -r name lang visibility; do
 	mkdir -p "$BASE_DIR/$visibility_dir/$lang_dir"
 
 	if [[ -d "$target_dir" ]]; then
-		existing=$((existing + 1))
+		if [[ "$SYNC" == "true" ]]; then
+			if [[ -d "$target_dir/.git" ]]; then
+				echo "Syncing $OWNER/$name"
+				if git -C "$target_dir" pull --ff-only; then
+					synced=$((synced + 1))
+				else
+					echo "SYNC FAILED: $OWNER/$name"
+					failed=$((failed + 1))
+				fi
+			else
+				echo "WARNING: $target_dir exists but is not a git repo, skipping sync"
+				existing=$((existing + 1))
+			fi
+		else
+			existing=$((existing + 1))
+		fi
 		continue
 	fi
 
@@ -130,7 +190,7 @@ while IFS=$'\t' read -r name lang visibility; do
 
 	echo "Cloning $OWNER/$name -> $visibility_dir/$lang_dir"
 
-	if ! git clone "https://github.com/$OWNER/$name.git" "$target_dir"; then
+	if ! git clone "$(clone_url "$OWNER" "$name")" "$target_dir"; then
 		echo "FAILED: $OWNER/$name (left at: $target_dir)"
 		failed=$((failed + 1))
 		continue
@@ -141,8 +201,11 @@ done <"$repo_list"
 
 cleanup_empty_legacy_language_folders
 
-if [[ "$failed" -gt 0 ]]; then
-	echo "Done. Cloned $cloned repos, moved $moved existing repos, kept $existing repos, $failed failures."
-else
-	echo "Done. Cloned $cloned repos, moved $moved existing repos, kept $existing repos."
+summary="Done. Cloned $cloned repos, moved $moved existing repos, kept $existing repos"
+if [[ "$SYNC" == "true" ]]; then
+	summary+=", synced $synced repos"
 fi
+if [[ "$failed" -gt 0 ]]; then
+	summary+=", $failed failures"
+fi
+echo "${summary}."
