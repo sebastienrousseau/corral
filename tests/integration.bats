@@ -309,3 +309,71 @@ MOCK
 	[[ "$output" == *"kept 1 repos"* ]]
 	[[ "$output" != *"synced"* ]]
 }
+
+# --- Branch-Safe Syncing ---
+
+@test "sync: warns and skips if local branch differs from default branch" {
+	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
+	mock_git
+
+	mkdir -p "$BASE/Public/rust/my-repo/.git"
+	echo "feat/xyz" > "$BASE/Public/rust/my-repo/.git/mock_branch"
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"WARNING: testowner/my-repo is on branch 'feat/xyz' (default is 'main'), skipping sync"* ]]
+	[[ "$output" == *"kept 1 repos"* ]]
+	[[ "$output" == *"synced 0 repos"* ]]
+}
+
+# --- Orphan Detection ---
+
+@test "orphans: detects and lists local repos not on GitHub" {
+	mock_gh "$(printf 'repo-a\tRust\tPUBLIC')"
+	mock_git
+
+	# Pre-create an orphan repo
+	mkdir -p "$BASE/Public/rust/orphan-repo/.git"
+	echo "https://github.com/testowner/orphan-repo.git" > "$BASE/Public/rust/orphan-repo/.git/mock_remote"
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --orphans testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"--- Orphan Detection ---"* ]]
+	[[ "$output" == *"Orphan found: $BASE/Public/rust/orphan-repo"* ]]
+}
+
+# --- Submodule Injection ---
+
+@test "submodules: injects --recurse-submodules into clone and pull commands" {
+	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --recurse-submodules testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	run cat "$TEST_DIR/git_clone_urls"
+	[[ "$output" == *"--recurse-submodules"* ]]
+
+	# Second run for pull
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --recurse-submodules testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	run cat "$TEST_DIR/git_pull_targets"
+	[[ "$output" == *"--recurse-submodules"* ]]
+}
+
+# --- Concurrency Output ---
+
+@test "concurrency: aggregates counts correctly with multiple parallel jobs" {
+	# 4 repos total
+	mock_gh "$(printf 'repo-1\tGo\tPUBLIC\nrepo-2\tGo\tPRIVATE\nrepo-3\tGo\tPUBLIC\nrepo-4\tGo\tPRIVATE')"
+	mock_git
+
+	# Run with concurrency 2
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -c 2 testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"Cloned 4 repos"* ]]
+
+	# Run again to trigger syncs
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -c 2 testowner "$BASE"
+	[[ "$status" -eq 0 ]]
+	[[ "$output" == *"synced 4 repos"* ]]
+}

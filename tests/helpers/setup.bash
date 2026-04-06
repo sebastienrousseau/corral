@@ -77,12 +77,32 @@ mock_git() {
 	cat >"$MOCK_BIN/git" <<MOCK
 #!/usr/bin/env bash
 if [[ "\$1" == "clone" ]]; then
-	echo "\$2" >> "$TEST_DIR/git_clone_urls"
-	mkdir -p "\$3/.git"
+	echo "\$*" >> "$TEST_DIR/git_clone_urls"
+	for arg in "\$@"; do
+		if [[ "\$arg" != "--recurse-submodules" && "\$arg" != "\$1" && "\$arg" != "\$2" && "\$arg" != "https"* && "\$arg" != "git@"* ]]; then
+			mkdir -p "\$arg/.git"
+		fi
+	done
 	exit 0
 fi
 if [[ "\$1" == "-C" && "\$3" == "pull" ]]; then
-	echo "\$2" >> "$TEST_DIR/git_pull_targets"
+	echo "\$*" >> "$TEST_DIR/git_pull_targets"
+	exit 0
+fi
+if [[ "\$1" == "-C" && "\$3" == "rev-parse" ]]; then
+	if [[ -f "\$2/.git/mock_branch" ]]; then
+		cat "\$2/.git/mock_branch"
+	else
+		echo "main"
+	fi
+	exit 0
+fi
+if [[ "\$1" == "-C" && "\$3" == "remote" && "\$4" == "get-url" ]]; then
+	if [[ -f "\$2/.git/mock_remote" ]]; then
+		cat "\$2/.git/mock_remote"
+	else
+		echo "https://github.com/testowner/testrepo.git"
+	fi
 	exit 0
 fi
 exit 0

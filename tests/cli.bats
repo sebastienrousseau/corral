@@ -96,6 +96,80 @@ setup() {
 	teardown_test_env
 }
 
+# --- --concurrency flag ---
+
+@test "--concurrency: accepted with positive integer" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --concurrency 5 testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-c shorthand: accepted with positive integer" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -c 2 testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "--concurrency rejects 0" {
+	run bash "$SCRIPT" --concurrency 0 testowner
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"--concurrency must be a positive integer"* ]]
+}
+
+@test "--concurrency rejects non-numeric value" {
+	run bash "$SCRIPT" --concurrency abc testowner
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"--concurrency must be a positive integer"* ]]
+}
+
+@test "--concurrency requires a value" {
+	run bash "$SCRIPT" --concurrency
+	[[ "$status" -eq 1 ]]
+	[[ "$output" == *"--concurrency requires a value"* ]]
+}
+
+# --- --orphans flag ---
+
+@test "--orphans: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --orphans testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+@test "-o shorthand: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -o testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
+# --- --recurse-submodules flag ---
+
+@test "--recurse-submodules: accepted" {
+	create_test_env
+	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
+	mock_git
+
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --recurse-submodules testowner "$TEST_DIR/repos"
+	[[ "$status" -eq 0 ]]
+	teardown_test_env
+}
+
 # --- --help flag ---
 
 @test "--help: prints usage and exits 0" {
