@@ -116,8 +116,8 @@ graph TD
     D -- Fails --> Z2[Exit: gh error]
     D -- OK --> E[Loop: each repo]
     E --> F{Already cloned?}
-    F -- "Yes + --sync" --> G1[git pull --rebase --autostash]
-    F -- "Yes / no sync" --> G2[Skip]
+    F -- "Yes (default)" --> G1[git pull --rebase --autostash]
+    F -- "Yes + --no-sync" --> G2[Skip]
     F -- No --> H{Legacy directory?}
     H -- Yes --> I[Migrate to new layout]
     H -- No --> J[git clone]
@@ -156,7 +156,7 @@ graph TD
 | `--dry-run` | `-n` | off | Preview actions without making changes |
 | `--help` | `-h` | — | Show help message |
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
-| `--sync` | `-s` | off | Pull latest changes for already-cloned repos |
+| `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
 
 Clone a personal account:
 
@@ -176,10 +176,10 @@ Clone via SSH (key-based auth):
 ./corral.sh --protocol ssh my-username
 ```
 
-Keep existing clones up to date:
+Skip pulling updates for existing clones:
 
 ```bash
-./corral.sh --sync my-username
+./corral.sh --no-sync my-username
 ```
 
 Preview what would happen without making changes:
@@ -227,9 +227,10 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 <details>
 <summary><b>Frequently Asked Questions</b></summary>
 
-- **Can it back up private repositories?** Yes. Any repository visible to the authenticated `gh` token is cloned. Private repositories land in the `Private/` tree.
+- **Can it back up private repositories?** Yes. Any repository visible to the authenticated `gh` token is cloned. `PRIVATE` and GitHub Enterprise `INTERNAL` repositories land in the `Private/` tree.
 - **Does it work with organisations?** Yes. Pass the organisation name as the first argument. Both user accounts and organisations are supported.
 - **What happens if a repository is deleted on GitHub?** The local clone remains untouched. The script never deletes existing directories.
+- **What happens if I have uncommitted changes when it syncs?** Your local uncommitted work is kept safe. Git automatically stashes your changes (`--autostash`), rebases the latest commits from the remote branch, and then reapplies your stash. If there is a direct conflict, the sync is cleanly aborted for that specific repository.
 - **Does it work on Windows?** Yes, through WSL2. Install a Linux distribution from the Microsoft Store, open its terminal, and run the script there. It behaves identically to native Linux.
 - **Does it work on macOS with the default shell?** macOS ships with Bash 3.2. Run `brew install bash` to get Bash 4+, then invoke the script with the Homebrew-installed Bash or add it to your `$PATH`.
 - **Is it safe to run on a schedule?** Yes. The script is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
@@ -264,3 +265,4 @@ For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
 Licensed under the **[GNU General Public License v3.0](LICENSE)**.
 
 <p align="right"><a href="#corral">Back to Top</a></p>
+align="right"><a href="#corral">Back to Top</a></p>
