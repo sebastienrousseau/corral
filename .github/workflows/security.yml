@@ -18,3 +18,4 @@ jobs:
     uses: sebastienrousseau/pipelines/.github/workflows/security.yml@main
     with:
       language: 'go'
+      severity-threshold: 'moderate'
