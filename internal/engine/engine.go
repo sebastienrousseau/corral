@@ -1,3 +1,4 @@
+// Package engine provides the core concurrency and execution logic for Corral.
 package engine
 
 import (
@@ -16,14 +17,28 @@ import (
 	"github.com/sebastienrousseau/corral/internal/tui"
 )
 
+// Job encapsulates a repository to be processed along with its target directories.
 type Job struct {
 	Repo   github.Repo
 	Target string
 	Legacy string
 }
 
+var (
+	fetchRepos       = github.FetchRepos
+	osExit           = os.Exit
+	gitPull          = git.Pull
+	gitClone         = git.Clone
+	gitCurrentBranch = git.CurrentBranch
+	gitRemoteOrigin  = git.RemoteOrigin
+	isTerminal       = isatty.IsTerminal
+	runProgram       = func(p *tea.Program) (tea.Model, error) { return p.Run() }
+)
+
+// Run executes the core Corral workflow, orchestrating GitHub API fetches,
+// legacy layout migrations, concurrent Git operations, and orphaned repository detection.
 func Run(owner, baseDir string, limit, concurrency int, dryRun, orphans bool, protocol string, doSync, recurseSubmodules bool) {
-	isTTY := isatty.IsTerminal(os.Stdout.Fd())
+	isTTY := isTerminal(os.Stdout.Fd())
 	if !isTTY {
 		log.SetOutput(os.Stdout)
 	}
@@ -34,10 +49,11 @@ func Run(owner, baseDir string, limit, concurrency int, dryRun, orphans bool, pr
 		log.Println("Fetching repositories from GitHub...")
 	}
 
-	repos, err := github.FetchRepos(owner, limit)
+	repos, err := fetchRepos(owner, limit)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(1)
+		osExit(1)
+		return
 	}
 
 	if len(repos) == limit && limit > 0 {
@@ -80,7 +96,7 @@ func Run(owner, baseDir string, limit, concurrency int, dryRun, orphans bool, pr
 				p.Send(msg)
 			}
 		}()
-		if _, err := p.Run(); err != nil {
+		if _, err := runProgram(p); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		}
 	} else {
@@ -163,11 +179,11 @@ func processRepo(owner, baseDir, protocol string, doSync, recurseSubmodules, dry
 			if dryRun {
 				return tui.LogMsg{RepoName: repo.Name, Action: "DRY-RUN", Message: "git pull"}
 			}
-			branch, err := git.CurrentBranch(targetDir)
+			branch, err := gitCurrentBranch(targetDir)
 			if err == nil && branch != repo.DefaultBranch {
 				return tui.LogMsg{RepoName: repo.Name, Action: "SKIP", Message: fmt.Sprintf("on branch %s", branch)}
 			}
-			err = git.Pull(targetDir, recurseSubmodules)
+			err = gitPull(targetDir, recurseSubmodules)
 			if err != nil {
 				return tui.LogMsg{RepoName: repo.Name, Action: "ERROR", Message: "sync failed"}
 			}
@@ -189,7 +205,7 @@ func processRepo(owner, baseDir, protocol string, doSync, recurseSubmodules, dry
 		return tui.LogMsg{RepoName: repo.Name, Action: "DRY-RUN", Message: "git clone"}
 	}
 
-	err := git.Clone(url, targetDir, recurseSubmodules)
+	err := gitClone(url, targetDir, recurseSubmodules)
 	if err != nil {
 		return tui.LogMsg{RepoName: repo.Name, Action: "ERROR", Message: "clone failed"}
 	}
@@ -211,7 +227,7 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 		if d.IsDir() && d.Name() == ".git" {
 			repoDir := filepath.Dir(path)
 			repoName := filepath.Base(repoDir)
-			url, err := git.RemoteOrigin(repoDir)
+			url, err := gitRemoteOrigin(repoDir)
 			if err == nil && (strings.Contains(url, "/"+owner+"/") || strings.Contains(url, ":"+owner+"/")) {
 				if !repoMap[repoName] {
 					orphans = append(orphans, repoDir)

@@ -1,3 +1,4 @@
+// Package tui provides a Bubble Tea terminal user interface for Corral.
 package tui
 
 import (
@@ -9,12 +10,14 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// LogMsg represents a log entry to be displayed in the TUI.
 type LogMsg struct {
 	RepoName string
 	Action   string
 	Message  string
 }
 
+// model represents the state of the Bubble Tea application.
 type model struct {
 	total    int
 	done     int
@@ -28,13 +31,15 @@ type model struct {
 	existing int
 }
 
-func NewModel(total int) model {
+// NewModel initializes a new TUI model with the expected total number of items.
+func NewModel(total int) tea.Model {
 	return model{
 		total: total,
 		prog:  progress.New(progress.WithDefaultGradient()),
 	}
 }
 
+// Init initializes the Bubble Tea application (no-op).
 func (m model) Init() tea.Cmd {
 	return nil
 }

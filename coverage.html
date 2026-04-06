@@ -1,0 +1,350 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>engine: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/sebastienrousseau/corral/internal/engine/engine.go (99.2%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Package engine provides the core concurrency and execution logic for Corral.
+package engine
+
+import (
+        "fmt"
+        "io/fs"
+        "log"
+        "os"
+        "path/filepath"
+        "strings"
+        "sync"
+
+        tea "github.com/charmbracelet/bubbletea"
+        "github.com/mattn/go-isatty"
+        "github.com/sebastienrousseau/corral/internal/git"
+        "github.com/sebastienrousseau/corral/internal/github"
+        "github.com/sebastienrousseau/corral/internal/tui"
+)
+
+// Job encapsulates a repository to be processed along with its target directories.
+type Job struct {
+        Repo   github.Repo
+        Target string
+        Legacy string
+}
+
+var (
+        fetchRepos = github.FetchRepos
+        osExit     = os.Exit
+        gitPull    = git.Pull
+        gitClone   = git.Clone
+        gitCurrentBranch = git.CurrentBranch
+        gitRemoteOrigin  = git.RemoteOrigin
+        isTerminal       = isatty.IsTerminal
+        runProgram       = func(p *tea.Program) (tea.Model, error) <span class="cov8" title="1">{ return p.Run() }</span>
+)
+
+// Run executes the core Corral workflow, orchestrating GitHub API fetches,
+// legacy layout migrations, concurrent Git operations, and orphaned repository detection.
+func Run(owner, baseDir string, limit, concurrency int, dryRun, orphans bool, protocol string, doSync, recurseSubmodules bool) <span class="cov8" title="1">{
+        isTTY := isTerminal(os.Stdout.Fd())
+        if !isTTY </span><span class="cov8" title="1">{
+                log.SetOutput(os.Stdout)
+        }</span>
+
+        <span class="cov8" title="1">if isTTY </span><span class="cov8" title="1">{
+                fmt.Println("Fetching repositories from GitHub...")
+        }</span> else<span class="cov8" title="1"> {
+                log.Println("Fetching repositories from GitHub...")
+        }</span>
+
+        <span class="cov8" title="1">repos, err := fetchRepos(owner, limit)
+        if err != nil </span><span class="cov8" title="1">{
+                fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+                osExit(1)
+                return
+        }</span>
+
+        <span class="cov8" title="1">if len(repos) == limit &amp;&amp; limit &gt; 0 </span><span class="cov8" title="1">{
+                fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", limit)
+        }</span>
+
+        // 1. Migration
+        <span class="cov8" title="1">migrateLegacy(baseDir, repos)
+
+        jobs := make(chan Job, len(repos))
+        results := make(chan tui.LogMsg, len(repos))
+        var wg sync.WaitGroup
+
+        for i := 0; i &lt; concurrency; i++ </span><span class="cov8" title="1">{
+                wg.Add(1)
+                go func() </span><span class="cov8" title="1">{
+                        defer wg.Done()
+                        for job := range jobs </span><span class="cov8" title="1">{
+                                msg := processRepo(owner, baseDir, protocol, doSync, recurseSubmodules, dryRun, job)
+                                results &lt;- msg
+                        }</span>
+                }()
+        }
+
+        <span class="cov8" title="1">for _, repo := range repos </span><span class="cov8" title="1">{
+                langDir := normalizeLanguage(repo.Language)
+                visDir := repo.Visibility
+                targetDir := filepath.Join(baseDir, visDir, langDir, repo.Name)
+                legacyDir := filepath.Join(baseDir, langDir, repo.Name)
+                jobs &lt;- Job{Repo: repo, Target: targetDir, Legacy: legacyDir}
+        }</span>
+        <span class="cov8" title="1">close(jobs)
+
+        var p *tea.Program
+        if isTTY </span><span class="cov8" title="1">{
+                m := tui.NewModel(len(repos))
+                p = tea.NewProgram(m)
+                go func() </span><span class="cov8" title="1">{
+                        for msg := range results </span><span class="cov8" title="1">{
+                                p.Send(msg)
+                        }</span>
+                }()
+                <span class="cov8" title="1">if _, err := p.Run(); err != nil </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+                }</span>
+        } else<span class="cov8" title="1"> {
+                go func() </span><span class="cov8" title="1">{
+                        for msg := range results </span><span class="cov8" title="1">{
+                                icon := "✓"
+                                if msg.Action == "ERROR" || strings.HasPrefix(msg.Action, "FAIL") </span><span class="cov8" title="1">{
+                                        icon = "✗"
+                                }</span> else<span class="cov8" title="1"> if msg.Action == "SKIP" </span><span class="cov8" title="1">{
+                                        icon = "-"
+                                }</span>
+                                <span class="cov8" title="1">log.Printf("%s [%s] %s: %s", icon, msg.Action, msg.RepoName, msg.Message)</span>
+                        }
+                }()
+        }
+
+        <span class="cov8" title="1">wg.Wait()
+        close(results)
+
+        cleanupEmptyFolders(baseDir)
+
+        if orphans </span><span class="cov8" title="1">{
+                detectOrphans(owner, baseDir, repos)
+        }</span>
+}
+
+func normalizeLanguage(lang string) string <span class="cov8" title="1">{
+        if lang == "" </span><span class="cov8" title="1">{
+                return "other"
+        }</span>
+        <span class="cov8" title="1">l := lang
+        if l == "C#" </span><span class="cov8" title="1">{
+                l = "CSharp"
+        }</span> else<span class="cov8" title="1"> if l == "C++" </span><span class="cov8" title="1">{
+                l = "Cpp"
+        }</span>
+        <span class="cov8" title="1">l = strings.ReplaceAll(l, " ", "_")
+        l = strings.ReplaceAll(l, "/", "_")
+        return strings.ToLower(l)</span>
+}
+
+func migrateLegacy(baseDir string, repos []github.Repo) <span class="cov8" title="1">{
+        for _, repo := range repos </span><span class="cov8" title="1">{
+                langDir := normalizeLanguage(repo.Language)
+                visDir := repo.Visibility
+                legacyDir := filepath.Join(baseDir, langDir, repo.Name)
+                targetDir := filepath.Join(baseDir, visDir, langDir, repo.Name)
+
+                if info, err := os.Stat(legacyDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov8" title="1">{
+                        os.MkdirAll(filepath.Dir(targetDir), 0755)
+                        os.Rename(legacyDir, targetDir)
+                }</span>
+        }
+}
+
+func cleanupEmptyFolders(baseDir string) <span class="cov8" title="1">{
+        entries, err := os.ReadDir(baseDir)
+        if err != nil </span><span class="cov8" title="1">{
+                return
+        }</span>
+        <span class="cov8" title="1">for _, entry := range entries </span><span class="cov8" title="1">{
+                if entry.IsDir() &amp;&amp; entry.Name() != "Public" &amp;&amp; entry.Name() != "Private" </span><span class="cov8" title="1">{
+                        path := filepath.Join(baseDir, entry.Name())
+                        os.Remove(path) // removes only if empty
+                }</span>
+        }
+}
+
+func processRepo(owner, baseDir, protocol string, doSync, recurseSubmodules, dryRun bool, job Job) tui.LogMsg <span class="cov8" title="1">{
+        repo := job.Repo
+        targetDir := job.Target
+
+        if !dryRun </span><span class="cov8" title="1">{
+                os.MkdirAll(filepath.Dir(targetDir), 0755)
+        }</span>
+
+        <span class="cov8" title="1">gitDir := filepath.Join(targetDir, ".git")
+        if info, err := os.Stat(gitDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov8" title="1">{
+                if doSync </span><span class="cov8" title="1">{
+                        if dryRun </span><span class="cov8" title="1">{
+                                return tui.LogMsg{RepoName: repo.Name, Action: "DRY-RUN", Message: "git pull"}
+                        }</span>
+                        <span class="cov8" title="1">branch, err := gitCurrentBranch(targetDir)
+                        if err == nil &amp;&amp; branch != repo.DefaultBranch </span><span class="cov8" title="1">{
+                                return tui.LogMsg{RepoName: repo.Name, Action: "SKIP", Message: fmt.Sprintf("on branch %s", branch)}
+                        }</span>
+                        <span class="cov8" title="1">err = gitPull(targetDir, recurseSubmodules)
+                        if err != nil </span><span class="cov8" title="1">{
+                                return tui.LogMsg{RepoName: repo.Name, Action: "ERROR", Message: "sync failed"}
+                        }</span>
+                        <span class="cov8" title="1">return tui.LogMsg{RepoName: repo.Name, Action: "SYNC", Message: "synced successfully"}</span>
+                }
+                <span class="cov8" title="1">return tui.LogMsg{RepoName: repo.Name, Action: "SKIP", Message: "already exists"}</span>
+        } else<span class="cov8" title="1"> if info, err := os.Stat(targetDir); err == nil &amp;&amp; info.IsDir() </span><span class="cov8" title="1">{
+                return tui.LogMsg{RepoName: repo.Name, Action: "SKIP", Message: "exists but is not a git repo"}
+        }</span>
+
+        <span class="cov8" title="1">url := repo.CloneURL
+        if protocol == "ssh" &amp;&amp; repo.SSHURL != "" </span><span class="cov8" title="1">{
+                url = repo.SSHURL
+        }</span> else<span class="cov8" title="1"> if protocol == "ssh" </span><span class="cov8" title="1">{
+                url = fmt.Sprintf("git@github.com:%s/%s.git", owner, repo.Name)
+        }</span>
+
+        <span class="cov8" title="1">if dryRun </span><span class="cov8" title="1">{
+                return tui.LogMsg{RepoName: repo.Name, Action: "DRY-RUN", Message: "git clone"}
+        }</span>
+
+        <span class="cov8" title="1">err := gitClone(url, targetDir, recurseSubmodules)
+        if err != nil </span><span class="cov8" title="1">{
+                return tui.LogMsg{RepoName: repo.Name, Action: "ERROR", Message: "clone failed"}
+        }</span>
+        <span class="cov8" title="1">return tui.LogMsg{RepoName: repo.Name, Action: "CLONE", Message: "cloned successfully"}</span>
+}
+
+func detectOrphans(owner, baseDir string, repos []github.Repo) <span class="cov8" title="1">{
+        fmt.Println("\n--- Orphan Detection ---")
+        repoMap := make(map[string]bool)
+        for _, r := range repos </span><span class="cov8" title="1">{
+                repoMap[r.Name] = true
+        }</span>
+
+        <span class="cov8" title="1">var orphans []string
+        filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error </span><span class="cov8" title="1">{
+                if err != nil </span><span class="cov8" title="1">{
+                        return nil
+                }</span>
+                <span class="cov8" title="1">if d.IsDir() &amp;&amp; d.Name() == ".git" </span><span class="cov8" title="1">{
+                        repoDir := filepath.Dir(path)
+                        repoName := filepath.Base(repoDir)
+                        url, err := gitRemoteOrigin(repoDir)
+                        if err == nil &amp;&amp; (strings.Contains(url, "/"+owner+"/") || strings.Contains(url, ":"+owner+"/")) </span><span class="cov8" title="1">{
+                                if !repoMap[repoName] </span><span class="cov8" title="1">{
+                                        orphans = append(orphans, repoDir)
+                                }</span>
+                        }
+                        <span class="cov8" title="1">return filepath.SkipDir</span> // skip going deeper into .git
+                }
+                <span class="cov8" title="1">return nil</span>
+        })
+
+        <span class="cov8" title="1">for _, orphan := range orphans </span><span class="cov8" title="1">{
+                fmt.Printf("Orphan found: %s\n", orphan)
+        }</span>
+        <span class="cov8" title="1">if len(orphans) == 0 </span><span class="cov8" title="1">{
+                fmt.Printf("No orphaned repositories found for %s.\n", owner)
+        }</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

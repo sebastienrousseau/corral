@@ -1,3 +1,5 @@
+// Package git provides helper functions to execute common Git commands
+// by wrapping the system's git binary using os/exec.
 package git
 
 import (
@@ -6,6 +8,8 @@ import (
 	"strings"
 )
 
+// Clone executes a git clone command for the given URL into the target directory.
+// If recurseSubmodules is true, it appends the --recurse-submodules flag.
 func Clone(url, targetDir string, recurseSubmodules bool) error {
 	args := []string{"clone"}
 	if recurseSubmodules {
@@ -20,6 +24,8 @@ func Clone(url, targetDir string, recurseSubmodules bool) error {
 	return nil
 }
 
+// Pull executes a git pull --rebase --autostash command in the target directory.
+// If recurseSubmodules is true, it appends the --recurse-submodules flag.
 func Pull(targetDir string, recurseSubmodules bool) error {
 	args := []string{"-C", targetDir, "pull", "--rebase", "--autostash"}
 	if recurseSubmodules {
@@ -33,6 +39,7 @@ func Pull(targetDir string, recurseSubmodules bool) error {
 	return nil
 }
 
+// CurrentBranch retrieves the name of the currently checked-out branch.
 func CurrentBranch(targetDir string) (string, error) {
 	cmd := exec.Command("git", "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
@@ -42,6 +49,7 @@ func CurrentBranch(targetDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RemoteOrigin retrieves the remote origin URL of the target directory.
 func RemoteOrigin(targetDir string) (string, error) {
 	cmd := exec.Command("git", "-C", targetDir, "remote", "get-url", "origin")
 	out, err := cmd.Output()

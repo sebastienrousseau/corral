@@ -1,3 +1,4 @@
+// Package github provides functionality to interact with the GitHub API.
 package github
 
 import (
@@ -9,6 +10,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// Repo represents a simplified repository structure returned by the GitHub API.
 type Repo struct {
 	Name          string
 	Language      string
@@ -18,6 +20,7 @@ type Repo struct {
 	SSHURL        string
 }
 
+// FetchRepos retrieves repositories for a given owner up to the specified limit.
 func FetchRepos(owner string, limit int) ([]Repo, error) {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -31,6 +34,12 @@ func FetchRepos(owner string, limit int) ([]Repo, error) {
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
 
+	return FetchReposWithClient(ctx, client, owner, limit)
+}
+
+// FetchReposWithClient allows injecting a GitHub client for retrieving repositories.
+// This is primarily exposed for testing purposes.
+func FetchReposWithClient(ctx context.Context, client *github.Client, owner string, limit int) ([]Repo, error) {
 	// Determine if owner is an organization or a user
 	u, _, err := client.Users.Get(ctx, owner)
 	if err != nil {

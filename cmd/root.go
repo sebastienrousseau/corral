@@ -1,3 +1,4 @@
+// Package cmd provides the command-line interface for the Corral application.
 package cmd
 
 import (
@@ -17,6 +18,8 @@ var (
 	noSync            bool
 	recurseSubmodules bool
 	limit             int
+	osExit            = os.Exit
+	engineRun         = engine.Run
 )
 
 var rootCmd = &cobra.Command{
@@ -33,20 +36,22 @@ var rootCmd = &cobra.Command{
 		if len(args) > 2 {
 			if _, err := fmt.Sscanf(args[2], "%d", &lim); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: limit must be a valid integer\n")
-				os.Exit(1)
+				osExit(1)
+				return
 			}
 		}
-		engine.Run(owner, bDir, lim, concurrency, dryRun, orphans, protocol, !noSync, recurseSubmodules)
+		engineRun(owner, bDir, lim, concurrency, dryRun, orphans, protocol, !noSync, recurseSubmodules)
 	},
 }
 
+// Execute adds all child commands to the root command and sets flags appropriately.
+// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		osExit(1)
 	}
 }
-
 func init() {
 	defaultBaseDir := os.Getenv("HOME") + "/Code"
 	rootCmd.Flags().StringVar(&baseDir, "base-dir", defaultBaseDir, "root directory for cloned repos")
