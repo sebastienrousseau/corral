@@ -214,24 +214,20 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 
 | Message | Cause | Solution |
 | :--- | :--- | :--- |
-| `ERROR: Bash 4+ is required` | macOS includes Bash 3.2 by default | `brew install bash` |
-| `ERROR: Required command 'gh' not found` | GitHub CLI is not installed | See Install above |
-| `ERROR: gh repo list failed` | Not authenticated, or the owner does not exist | Run `gh auth login` and verify the owner name |
+| `ERROR: Required command 'git' not found` | Git is not installed | See Install above |
+| `ERROR: GITHUB_TOKEN not set` | Environment variable missing | Run `export GITHUB_TOKEN=$(gh auth token)` |
 | `FAILED: owner/repo` | Network issue or private repo without token access | Check connectivity and verify `gh auth status` |
-| Script reports 0 repos | No repositories visible to the current token | Run `gh repo list <owner> --limit 5` to verify |
-| `\r: command not found` (WSL2) | Windows line endings in the script | Run `dos2unix corral.sh` or re-clone with `git config core.autocrlf input` |
 </details>
 
 <details>
 <summary><b>Frequently Asked Questions</b></summary>
 
-- **Can it back up private repositories?** Yes. Any repository visible to the authenticated `gh` token is cloned. `PRIVATE` and GitHub Enterprise `INTERNAL` repositories land in the `Private/` tree.
+- **Can it back up private repositories?** Yes. Any repository visible to the authenticated `GITHUB_TOKEN` is cloned. `PRIVATE` and GitHub Enterprise `INTERNAL` repositories land in the `Private/` tree.
 - **Does it work with organisations?** Yes. Pass the organisation name as the first argument. Both user accounts and organisations are supported.
 - **What happens if a repository is deleted on GitHub?** The local clone remains untouched. The script never deletes existing directories.
 - **What happens if I have uncommitted changes when it syncs?** Your local uncommitted work is kept safe. Git automatically stashes your changes (`--autostash`), rebases the latest commits from the remote branch, and then reapplies your stash. If there is a direct conflict, the sync is cleanly aborted for that specific repository.
 - **Does it work on Windows?** Yes, through WSL2. Install a Linux distribution from the Microsoft Store, open its terminal, and run the script there. It behaves identically to native Linux.
-- **Does it work on macOS with the default shell?** macOS ships with Bash 3.2. Run `brew install bash` to get Bash 4+, then invoke the script with the Homebrew-installed Bash or add it to your `$PATH`.
-- **Is it safe to run on a schedule?** Yes. The script is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
+- **Is it safe to run on a schedule?** Yes. The tool is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
 </details>
 
 <details>
@@ -242,12 +238,11 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 | Organises by language | Yes | No | No | No |
 | Organises by visibility | Yes | No | No | No |
 | macOS, Linux, and WSL2 | Yes (CI on both) | Yes | Linux only | Varies |
-| Zero install | Yes (single bash file) | Go binary or Docker | Python + pip | Copy-paste |
+| Zero configuration | Yes | No | No | Yes |
 | Idempotent re-runs | Yes | Yes | Yes | No |
 | Concurrent operations | Yes | Yes | Yes | No |
 | Legacy layout migration | Yes | No | No | No |
-| Test suite | 39 tests, CI on 2 OS | Yes | Limited | None |
-| Config required | None | YAML + env vars | CLI flags + rc file | Manual edits |
+| Test suite | 100% coverage, CI on 2 OS | Yes | Limited | None |
 </details>
 
 For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
@@ -264,12 +259,3 @@ For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
 Licensed under the **[GNU General Public License v3.0](LICENSE)**.
 
 <p align="right"><a href="#corral">Back to Top</a></p>
-align="right"><a href="#corral">Back to Top</a></p>
--
-
-## License
-
-Licensed under the **[GNU General Public License v3.0](LICENSE)**.
-
-<p align="right"><a href="#corral">Back to Top</a></p>
-align="right"><a href="#corral">Back to Top</a></p>
