@@ -197,7 +197,7 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 <details>
 <summary><b>Organisation and Layout</b></summary>
 
-- **Visibility sorting** separates repositories into `Public/` and `Private/` trees based on GitHub metadata
+- **Visibility sorting** separates repositories into `Public/` and `Private/` trees based on GitHub metadata. GitHub Enterprise `INTERNAL` repositories are securely routed to the `Private/` tree.
 - **Language grouping** places each repository under its primary language directory, normalised to lowercase
 - **Special characters** are handled cleanly — C# becomes `csharp`, C++ becomes `cpp`, spaces and slashes become underscores
 - **Null languages** default to `other/` so every repository has a home
