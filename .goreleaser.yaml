@@ -1,9 +1,6 @@
 version: 2
 
-before:
-  hooks:
-    - go mod tidy
-    - go generate ./...
+project_name: corral
 
 builds:
   - env:
@@ -14,6 +11,10 @@ builds:
     goarch:
       - amd64
       - arm64
+    main: ./main.go
+    binary: corral
+    ldflags:
+      - -s -w -X main.version={{.Version}}
 
 archives:
   - format: tar.gz
@@ -23,7 +24,48 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+# 1. Native Linux Packages (Debian, Ubuntu, WSL, Fedora, RHEL, openSUSE)
+nfpms:
+  - id: corral-packages
+    file_name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    homepage: "https://github.com/sebastienrousseau/corral"
+    maintainer: "Sebastien Rousseau <sebastian.rousseau@gmail.com>"
+    description: "Automatically clone and organise GitHub repositories by visibility and language."
+    license: "GPL-3.0"
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+
+# 2. macOS & Linux Homebrew Tap
+brews:
+  - repository:
+      owner: sebastienrousseau
+      name: homebrew-tap
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/sebastienrousseau/corral"
+    description: "Automatically clone and organise GitHub repositories by visibility and language."
+    license: "GPL-3.0"
+    test: |
+      system "#{bin}/corral --help"
+
+# 3. Arch Linux / CachyOS (AUR)
+aurs:
+  - name: corral-bin
+    homepage: "https://github.com/sebastienrousseau/corral"
+    description: "Automatically clone and organise GitHub repositories by visibility and language."
+    maintainers:
+      - "Sebastien Rousseau"
+    license: "GPL-3.0"
+    private_key: '{{ .Env.AUR_KEY }}'
+    git_url: 'ssh://aur@aur.archlinux.org/corral-bin.git'
+    package: |-
+      # bin
+      install -Dm755 "./corral" "${pkgdir}/usr/bin/corral"
+      # license
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/corral/LICENSE"
 
 checksum:
   name_template: 'checksums.txt'
@@ -37,3 +79,4 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
+      - '^chore:'
