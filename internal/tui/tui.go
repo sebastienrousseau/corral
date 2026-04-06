@@ -105,9 +105,9 @@ func (m model) View() string {
 
 	if m.quitting {
 		if m.done >= m.total {
-			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("Done.")
+			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("✓ Done.")
 		} else {
-			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("Aborted.")
+			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("✗ Aborted.")
 		}
 		out += fmt.Sprintf(" Cloned %d repos, synced %d repos, kept %d repos, %d failures.\n", m.cloned, m.synced, m.existing, m.failed)
 	}
