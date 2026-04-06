@@ -1,25 +1,18 @@
 # Contributing
 
-Corral is a single-file Bash tool that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
+Corral is a compiled Go application with a Bubble Tea terminal user interface that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
 
 ## Getting Started
 
 1. Fork and clone the repository.
 2. Install development dependencies:
+   - **Go 1.21+**
+   - **Make**
+   - **Git**
 
-   **macOS:**
+3. Set up the project hooks (optional but recommended):
    ```bash
-   brew install bash shellcheck bats-core
-   ```
-
-   **Ubuntu / Debian / WSL2:**
-   ```bash
-   sudo apt install shellcheck bats
-   ```
-
-3. Set up the project:
-   ```bash
-   make init
+   git config core.hooksPath .githooks
    ```
 4. Create a branch:
    ```bash
@@ -28,8 +21,9 @@ Corral is a single-file Bash tool that clones and organises GitHub repositories 
 5. Make changes.
 6. Verify everything passes:
    ```bash
-   make check
+   make format
    make test
+   make build
    ```
 7. Commit, push, and open a pull request.
 
@@ -48,13 +42,13 @@ Use imperative commit messages: "Add dry-run flag", not "Added dry-run flag."
 
 ## Pull Request Checklist
 
-- [ ] `make check` passes
 - [ ] `make test` passes
+- [ ] `make build` succeeds
 - [ ] README updated if behaviour changed
 - [ ] All commits are signed (`git log --show-signature`)
 
 ## Code Style
 
-- Indent with tabs.
-- Scope variables with `local`.
-- Quote all variable expansions.
+- Use standard Go formatting (`gofmt -w .`).
+- Ensure all exported functions and types are documented.
+- Follow idiomatic Go guidelines.

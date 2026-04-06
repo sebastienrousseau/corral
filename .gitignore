@@ -10,3 +10,7 @@
 *.swo
 .idea/
 .vscode/
+
+# Build artifacts
+corralcoverage.*
+dist/

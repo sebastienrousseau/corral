@@ -10,5 +10,4 @@ Makefile text eol=lf
 
 # Binary files
 LICENSE binary
-*.svg binary
 *.png binary
