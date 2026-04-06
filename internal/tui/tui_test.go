@@ -31,27 +31,27 @@ func TestModelUpdate(t *testing.T) {
 	}
 
 	// Test KeyMsg not quit
-	newM, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if cmd != nil {
 		t.Errorf("Expected nil cmd for 'a'")
 	}
 
 	// Test unknown msg
-	newM, cmd = m.Update("unknown")
+	_, cmd = m.Update("unknown")
 	if cmd != nil {
 		t.Errorf("Expected nil cmd for unknown msg")
 	}
 
 	// Test LogMsg processing and completion
 	msg1 := LogMsg{RepoName: "repo1", Action: "CLONE", Message: "clone ok"}
-	newM, cmd = m.Update(msg1)
+	newM, _ = m.Update(msg1)
 	m2 := newM.(model)
 	if m2.done != 1 || m2.cloned != 1 {
 		t.Errorf("Expected done=1, cloned=1, got done=%d cloned=%d", m2.done, m2.cloned)
 	}
 
 	msg2 := LogMsg{RepoName: "repo2", Action: "SYNC", Message: "sync ok"}
-	newM, cmd = m2.Update(msg2)
+	newM, _ = m2.Update(msg2)
 	m3 := newM.(model)
 	if !m3.quitting || m3.done != 2 || m3.synced != 1 {
 		t.Errorf("Expected quitting=true, done=2, synced=1, got quitting=%v done=%d synced=%d", m3.quitting, m3.done, m3.synced)
