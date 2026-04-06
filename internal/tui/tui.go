@@ -100,7 +100,13 @@ func (m model) View() string {
 	out += pad + progBar + fmt.Sprintf(" %d/%d", m.done, m.total) + "\n\n"
 
 	for _, l := range m.logs {
-		out += logStyle.Render(fmt.Sprintf("[%s] %s: %s", l.Action, l.RepoName, l.Message)) + "\n"
+		icon := "✓"
+		if l.Action == "ERROR" || strings.HasPrefix(l.Action, "FAIL") {
+			icon = "✗"
+		} else if l.Action == "SKIP" {
+			icon = "-"
+		}
+		out += logStyle.Render(fmt.Sprintf("%s [%s] %s: %s", icon, l.Action, l.RepoName, l.Message)) + "\n"
 	}
 
 	if m.quitting {

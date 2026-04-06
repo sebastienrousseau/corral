@@ -86,7 +86,13 @@ func Run(owner, baseDir string, limit, concurrency int, dryRun, orphans bool, pr
 	} else {
 		go func() {
 			for msg := range results {
-				log.Printf("[%s] %s: %s", msg.Action, msg.RepoName, msg.Message)
+				icon := "✓"
+				if msg.Action == "ERROR" || strings.HasPrefix(msg.Action, "FAIL") {
+					icon = "✗"
+				} else if msg.Action == "SKIP" {
+					icon = "-"
+				}
+				log.Printf("%s [%s] %s: %s", icon, msg.Action, msg.RepoName, msg.Message)
 			}
 		}()
 	}
