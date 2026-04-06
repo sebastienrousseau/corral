@@ -31,7 +31,10 @@ var rootCmd = &cobra.Command{
 		}
 		lim := limit
 		if len(args) > 2 {
-			fmt.Sscanf(args[2], "%d", &lim)
+			if _, err := fmt.Sscanf(args[2], "%d", &lim); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: limit must be a valid integer\n")
+				os.Exit(1)
+			}
 		}
 		engine.Run(owner, bDir, lim, concurrency, dryRun, orphans, protocol, !noSync, recurseSubmodules)
 	},
