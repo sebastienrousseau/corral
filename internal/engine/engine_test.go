@@ -6,16 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sebastienrousseau/corral/internal/github"
 )
 
 func TestEngineRunError(t *testing.T) {
-	// Cover the default runProgram
-	runProgram(tea.NewProgram(nil))
-
 	oldFetchRepos := fetchRepos
 	defer func() { fetchRepos = oldFetchRepos }()
 	fetchRepos = func(owner string, limit int) ([]github.Repo, error) {
@@ -84,6 +80,12 @@ func TestEngineRunSuccess(t *testing.T) {
 	defer func() { isTerminal = oldIsTerminal }()
 	isTerminal = func(fd uintptr) bool { return true } // Mock TTY true
 
+	oldRunProgram := runProgram
+	defer func() { runProgram = oldRunProgram }()
+	runProgram = func(p *tea.Program) (tea.Model, error) {
+		return nil, nil // Mock successful TUI run
+	}
+
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer os.RemoveAll(baseDir)
 
@@ -99,10 +101,7 @@ func TestEngineRunSuccess(t *testing.T) {
 
 	// Mock TTY true but runProgram fails
 	isTerminal = func(fd uintptr) bool { return true }
-	oldRunProgram := runProgram
-	defer func() { runProgram = oldRunProgram }()
 	runProgram = func(p *tea.Program) (tea.Model, error) {
-		time.Sleep(50 * time.Millisecond)
 		return nil, fmt.Errorf("tui err")
 	}
 	Run("owner", baseDir, 2, 2, true, true, "https", true, false)

@@ -31,7 +31,7 @@ Then verify the output:
 ls ~/Code/
 ```
 
-Requires `gh`, `git`, and Bash 4+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
+Requires `gh`, `git`, and Go 1.25+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
 
 <details>
 <summary>Platform-specific prerequisites</summary>
@@ -39,15 +39,13 @@ Requires `gh`, `git`, and Bash 4+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, A
 **macOS:**
 
 ```bash
-brew install bash git gh
+brew install go git gh
 ```
-
-macOS ships with Bash 3.2. After installing Bash 4+ via Homebrew, ensure it appears first in your `$PATH` or invoke the script explicitly: `/opt/homebrew/bin/bash corral.sh <owner>`.
 
 **Ubuntu / Debian / WSL2:**
 
 ```bash
-sudo apt install git
+sudo apt install golang git
 ```
 
 Install `gh` separately — see the [GitHub CLI install guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) for your distribution.
@@ -55,7 +53,7 @@ Install `gh` separately — see the [GitHub CLI install guide](https://github.co
 **Fedora / RHEL:**
 
 ```bash
-sudo dnf install git gh
+sudo dnf install golang git gh
 ```
 
 > **WSL2 users:** Run all commands inside your Linux distribution, not from PowerShell or CMD. The script works identically to native Linux.
@@ -65,11 +63,11 @@ sudo dnf install git gh
 <details>
 <summary>Automation and cron</summary>
 
-The script is idempotent and non-interactive. Safe to run on a schedule:
+The tool is idempotent and non-interactive. Safe to run on a schedule:
 
 ```bash
 # crontab -e
-0 2 * * * /path/to/corral.sh my-username
+0 2 * * * /path/to/corral my-username
 ```
 
 Existing repositories are skipped. Only new ones are cloned.
@@ -80,7 +78,7 @@ Existing repositories are skipped. Only new ones are cloned.
 
 ## Overview
 
-Most cloning tools dump every repository into a single flat directory. Finding anything means scrolling through hundreds of folders with no structure. Corral creates a clean, navigable local mirror — sorted by visibility and language — in one command. One script. No install step. No config files. No runtime dependencies beyond `gh` and `git`.
+Most cloning tools dump every repository into a single flat directory. Finding anything means scrolling through hundreds of folders with no structure. Corral creates a clean, navigable local mirror — sorted by visibility and language — in one command. No config files.
 
 ```
 ~/Code/
@@ -99,7 +97,7 @@ Most cloning tools dump every repository into a single flat directory. Finding a
 - **One command** to clone and organise every repository from a user or organisation
 - **Safe to re-run** at any time — new repos are cloned, and existing ones are pulled to their latest changes (unless `--no-sync` is passed)
 - **Automatic migration** from flat `~/Code/<Language>/` layouts to the new visibility-based structure
-- **Tested on macOS and Ubuntu** with 39 automated tests, signed commits, and ShellCheck compliance
+- **Tested on macOS and Ubuntu** with automated tests, 100% coverage, and signed commits.
 
 ---
 
@@ -110,10 +108,10 @@ Run once or a hundred times, the directory tree converges on the same state.
 ```mermaid
 graph TD
     A[User Shell] --> B{Corral}
-    B --> C[Pre-flight: Bash 4+ / gh / git]
+    B --> C[Pre-flight: Git / GitHub API]
     C -- Missing --> Z1[Exit: dependency error]
-    C -- OK --> D[gh repo list → tempfile]
-    D -- Fails --> Z2[Exit: gh error]
+    C -- OK --> D[GitHub API → Fetch Repos]
+    D -- Fails --> Z2[Exit: API error]
     D -- OK --> E[Loop: each repo]
     E --> F{Already cloned?}
     F -- "Yes (default)" --> G1[git pull --rebase --autostash]
@@ -137,8 +135,8 @@ graph TD
 | **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure automatically |
 | **Platforms** | First-class support for macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and Windows via WSL2 |
 | **Zero-config** | No YAML, no `.env`, no config files — pass the owner name and run |
-| **Fail-safe** | Pre-flight checks for `gh`, `git`, and Bash version with clear error messages on failure |
-| **Production-grade** | 39 automated tests, CI on Ubuntu and macOS, signed commits, ShellCheck clean |
+| **Fail-safe** | Pre-flight checks for `git` and API connectivity with clear error messages on failure |
+| **Production-grade** | 100% test coverage, CI on Ubuntu and macOS, signed commits |
 | **Security** | All commits cryptographically signed (ED25519), CI actions pinned to immutable SHAs, Gitleaks secret scanning |
 
 ---
