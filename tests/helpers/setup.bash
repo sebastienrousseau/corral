@@ -39,8 +39,15 @@ build_isolated_path() {
 # Create a mock `gh` that outputs a given TSV repo list
 mock_gh() {
 	local tsv_content="$1"
+	if [[ -n "$tsv_content" ]]; then
+		# Append default branch \tmain to each line
+		tsv_content="$(echo "$tsv_content" | awk -v OFS='\t' '{print $0, "main"}')"
+	fi
 	cat >"$MOCK_BIN/gh" <<MOCK
 #!/usr/bin/env bash
+if [[ "\$1" == "auth" && "\$2" == "status" ]]; then
+	exit 0
+fi
 if [[ "\$1" == "repo" && "\$2" == "list" ]]; then
 	cat <<'TSV'
 ${tsv_content}
@@ -56,6 +63,9 @@ MOCK
 mock_gh_fail() {
 	cat >"$MOCK_BIN/gh" <<'MOCK'
 #!/usr/bin/env bash
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+	exit 0
+fi
 echo "gh: error" >&2
 exit 1
 MOCK

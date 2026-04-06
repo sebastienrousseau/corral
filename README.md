@@ -246,6 +246,7 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 | macOS, Linux, and WSL2 | Yes (CI on both) | Yes | Linux only | Varies |
 | Zero install | Yes (single bash file) | Go binary or Docker | Python + pip | Copy-paste |
 | Idempotent re-runs | Yes | Yes | Yes | No |
+| Concurrent operations | Yes | Yes | Yes | No |
 | Legacy layout migration | Yes | No | No | No |
 | Test suite | 39 tests, CI on 2 OS | Yes | Limited | None |
 | Config required | None | YAML + env vars | CLI flags + rc file | Manual edits |
@@ -259,6 +260,14 @@ For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
 **THE ENGINE** ᛞ [EUXIS](https://euxis.co) ᛫ Enterprise Unified Execution Intelligence System
 
 ---
+
+## License
+
+Licensed under the **[GNU General Public License v3.0](LICENSE)**.
+
+<p align="right"><a href="#corral">Back to Top</a></p>
+align="right"><a href="#corral">Back to Top</a></p>
+-
 
 ## License
 

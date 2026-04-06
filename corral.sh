@@ -50,9 +50,12 @@ Arguments:
 
 Options:
   -h, --help                  Show this help message
+  -c, --concurrency <n>       Number of concurrent operations (default: 1)
   -n, --dry-run               Preview actions without making changes
+  -o, --orphans               Detect and list local repositories not on GitHub
   -p, --protocol <ssh|https>  Clone protocol (default: https)
       --no-sync               Skip pulling latest changes for existing repos
+      --recurse-submodules    Initialize submodules on clone and sync
 EOF
 }
 
@@ -65,24 +68,15 @@ execute() {
 }
 
 cleanup_empty_legacy_language_folders() {
-	local seen_languages=()
-	while IFS=$'\t' read -r _ lang _; do
-		seen_languages+=("$(normalize_language "$lang")")
-	done <"$repo_list"
-
-	((${#seen_languages[@]} == 0)) && return 0
-
-	local unique_langs
-	unique_langs="$(printf '%s\n' "${seen_languages[@]}" | sort -u)"
-
-	while IFS= read -r lang_dir; do
-		local folder="$BASE_DIR/$lang_dir"
-		if [[ -d "$folder" && "$folder" != "$BASE_DIR" && "$folder" != "$BASE_DIR/" ]]; then
+	shopt -s nullglob
+	for folder in "$BASE_DIR"/*; do
+		if [[ -d "$folder" && "$folder" != "$BASE_DIR/Public" && "$folder" != "$BASE_DIR/Private" ]]; then
 			if rmdir "$folder" 2>/dev/null; then
 				echo "Removed empty legacy folder: $folder"
 			fi
 		fi
-	done <<<"$unique_langs"
+	done
+	shopt -u nullglob
 }
 
 # Allow sourcing for tests: __CORRAL_SOURCED=1 source corral.sh
@@ -98,6 +92,9 @@ fi
 PROTOCOL=https
 SYNC=true
 DRY_RUN=false
+CONCURRENCY=1
+ORPHANS=false
+RECURSE_SUBMODULES=false
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -105,8 +102,24 @@ while [[ $# -gt 0 ]]; do
 		show_help
 		exit 0
 		;;
+	-c | --concurrency)
+		if [[ -z "${2:-}" ]]; then
+			echo "ERROR: --concurrency requires a value" >&2
+			exit 1
+		fi
+		CONCURRENCY="$2"
+		if [[ ! "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+			echo "ERROR: --concurrency must be a positive integer" >&2
+			exit 1
+		fi
+		shift 2
+		;;
 	-n | --dry-run)
 		DRY_RUN=true
+		shift
+		;;
+	-o | --orphans)
+		ORPHANS=true
 		shift
 		;;
 	-p | --protocol)
@@ -119,6 +132,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--no-sync)
 		SYNC=false
+		shift
+		;;
+	--recurse-submodules)
+		RECURSE_SUBMODULES=true
 		shift
 		;;
 	-*)
@@ -150,6 +167,11 @@ if ((BASH_VERSINFO[0] < 4)); then
 	exit 1
 fi
 
+if [[ ! "$LIMIT" =~ ^[0-9]+$ ]]; then
+	echo "ERROR: limit must be a positive integer" >&2
+	exit 1
+fi
+
 for cmd in gh git; do
 	if ! command -v "$cmd" &>/dev/null; then
 		echo "ERROR: Required command '$cmd' not found. Please install it first." >&2
@@ -157,25 +179,34 @@ for cmd in gh git; do
 	fi
 done
 
+if ! gh auth status &>/dev/null; then
+	echo "ERROR: gh is not authenticated. Please run 'gh auth login' first." >&2
+	exit 1
+fi
+
 mkdir -p "$BASE_DIR"
 
 repo_list="$(mktemp)" || { echo "Failed to create temp file" >&2; exit 1; }
-trap 'rm -f "$repo_list"' EXIT
+counter_dir="$(mktemp -d)" || { echo "Failed to create temp dir" >&2; exit 1; }
+touch "$counter_dir/events"
+trap 'rm -rf "$repo_list" "$counter_dir"' EXIT
 
-if ! gh repo list "$OWNER" --limit "$LIMIT" --json name,primaryLanguage,visibility \
-	--jq '.[] | [.name, (.primaryLanguage.name // "Other"), .visibility] | @tsv' \
+if ! gh repo list "$OWNER" --limit "$LIMIT" --json name,primaryLanguage,visibility,defaultBranchRef \
+	--jq '.[] | [.name, (.primaryLanguage.name // "Other"), .visibility, (.defaultBranchRef.name // "main")] | @tsv' \
 	>"$repo_list"; then
 	echo "ERROR: gh repo list failed for owner '$OWNER'" >&2
 	exit 1
 fi
 
-cloned=0
-existing=0
-moved=0
-failed=0
-synced=0
+repo_count=$(wc -l < "$repo_list" | tr -d ' ')
+if (( repo_count == LIMIT && LIMIT > 0 )); then
+	echo "WARNING: Fetched exactly $LIMIT repositories. There may be more. Increase the limit argument if needed."
+fi
 
-while IFS=$'\t' read -r name lang visibility; do
+process_repo() {
+	local name="$1" lang="$2" visibility="$3" default_branch="$4"
+	local lang_dir visibility_dir legacy_dir target_dir
+	
 	lang_dir="$(normalize_language "$lang")"
 	visibility_dir="$(normalize_visibility "$visibility")"
 	legacy_dir="$BASE_DIR/$lang_dir/$name"
@@ -185,45 +216,93 @@ while IFS=$'\t' read -r name lang visibility; do
 
 	if [[ -d "$target_dir/.git" ]]; then
 		if [[ "$SYNC" == "true" ]]; then
-			echo "Syncing $OWNER/$name"
-			if execute git -C "$target_dir" pull --rebase --autostash; then
-				synced=$((synced + 1))
+			local current_branch
+			current_branch=$(git -C "$target_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+			if [[ -n "$current_branch" && "$current_branch" != "$default_branch" ]]; then
+				echo "WARNING: $OWNER/$name is on branch '$current_branch' (default is '$default_branch'), skipping sync"
+				echo "existing" >> "$counter_dir/events"
 			else
-				echo "SYNC FAILED: $OWNER/$name"
-				failed=$((failed + 1))
+				echo "Syncing $OWNER/$name"
+				local sync_cmd=(git -C "$target_dir" pull --rebase --autostash)
+				[[ "$RECURSE_SUBMODULES" == "true" ]] && sync_cmd+=(--recurse-submodules)
+				if execute "${sync_cmd[@]}"; then
+					echo "synced" >> "$counter_dir/events"
+				else
+					echo "SYNC FAILED: $OWNER/$name"
+					echo "failed" >> "$counter_dir/events"
+				fi
 			fi
 		else
-			existing=$((existing + 1))
+			echo "existing" >> "$counter_dir/events"
 		fi
-		continue
+		return 0
 	elif [[ -d "$target_dir" ]]; then
 		echo "WARNING: $target_dir exists but is not a git repo, skipping"
-		existing=$((existing + 1))
-		continue
+		echo "existing" >> "$counter_dir/events"
+		return 0
 	fi
 
 	if [[ -d "$legacy_dir" ]]; then
 		if execute mv "$legacy_dir" "$target_dir"; then
-			moved=$((moved + 1))
+			echo "moved" >> "$counter_dir/events"
 		else
-			failed=$((failed + 1))
 			echo "FAILED MOVE: $OWNER/$name (left at: $legacy_dir)"
+			echo "failed" >> "$counter_dir/events"
 		fi
-		continue
+		return 0
 	fi
 
 	echo "Cloning $OWNER/$name -> $visibility_dir/$lang_dir"
+	local clone_cmd=(git clone)
+	[[ "$RECURSE_SUBMODULES" == "true" ]] && clone_cmd+=(--recurse-submodules)
+	clone_cmd+=("$(clone_url "$OWNER" "$name")" "$target_dir")
 
-	if ! execute git clone "$(clone_url "$OWNER" "$name")" "$target_dir"; then
+	if ! execute "${clone_cmd[@]}"; then
 		echo "FAILED: $OWNER/$name (left at: $target_dir)"
-		failed=$((failed + 1))
-		continue
+		echo "failed" >> "$counter_dir/events"
+	else
+		echo "cloned" >> "$counter_dir/events"
 	fi
+}
 
-	cloned=$((cloned + 1))
+job_count=0
+while IFS=$'\t' read -r name lang visibility default_branch; do
+	if (( CONCURRENCY > 1 )); then
+		process_repo "$name" "$lang" "$visibility" "$default_branch" &
+		(( ++job_count == CONCURRENCY )) && { wait; job_count=0; }
+	else
+		process_repo "$name" "$lang" "$visibility" "$default_branch"
+	fi
 done <"$repo_list"
+wait
+
+cloned=$(grep -c "^cloned$" "$counter_dir/events" || true)
+existing=$(grep -c "^existing$" "$counter_dir/events" || true)
+moved=$(grep -c "^moved$" "$counter_dir/events" || true)
+failed=$(grep -c "^failed$" "$counter_dir/events" || true)
+synced=$(grep -c "^synced$" "$counter_dir/events" || true)
 
 cleanup_empty_legacy_language_folders
+
+if [[ "$ORPHANS" == "true" ]]; then
+	echo "--- Orphan Detection ---"
+	orphans_found=0
+	while IFS= read -r -d '' git_dir; do
+		repo_dir="$(dirname "$git_dir")"
+		repo_name="$(basename "$repo_dir")"
+		
+		remote_url=$(git -C "$repo_dir" remote get-url origin 2>/dev/null || true)
+		if [[ "$remote_url" == *"/$OWNER/"* || "$remote_url" == *":$OWNER/"* ]]; then
+			if ! grep -q "^${repo_name}"$'\t' "$repo_list"; then
+				echo "Orphan found: $repo_dir"
+				orphans_found=$((orphans_found + 1))
+			fi
+		fi
+	done < <(find "$BASE_DIR" -name .git -type d -print0 2>/dev/null)
+	if (( orphans_found == 0 )); then
+		echo "No orphaned repositories found for $OWNER."
+	fi
+fi
 
 summary="Done. Cloned $cloned repos, moved $moved existing repos, kept $existing repos"
 if [[ "$SYNC" == "true" ]]; then
