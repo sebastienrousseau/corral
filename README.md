@@ -97,7 +97,7 @@ Most cloning tools dump every repository into a single flat directory. Finding a
 ```
 
 - **One command** to clone and organise every repository from a user or organisation
-- **Safe to re-run** at any time — new repos are cloned, existing ones are untouched (or pulled if `--sync` is active)
+- **Safe to re-run** at any time — new repos are cloned, and existing ones are pulled to their latest changes (unless `--no-sync` is passed)
 - **Automatic migration** from flat `~/Code/<Language>/` layouts to the new visibility-based structure
 - **Tested on macOS and Ubuntu** with 39 automated tests, signed commits, and ShellCheck compliance
 

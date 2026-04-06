@@ -84,24 +84,14 @@ setup() {
 	[[ "$output" == *"--protocol requires a value"* ]]
 }
 
-# --- --sync flag ---
+# --- --no-sync flag ---
 
-@test "--sync: accepted" {
+@test "--no-sync: accepted" {
 	create_test_env
 	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
 	mock_git
 
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --sync testowner "$TEST_DIR/repos"
-	[[ "$status" -eq 0 ]]
-	teardown_test_env
-}
-
-@test "-s shorthand: accepted" {
-	create_test_env
-	mock_gh "$(printf 'repo\tRust\tPUBLIC')"
-	mock_git
-
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" -s testowner "$TEST_DIR/repos"
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --no-sync testowner "$TEST_DIR/repos"
 	[[ "$status" -eq 0 ]]
 	teardown_test_env
 }

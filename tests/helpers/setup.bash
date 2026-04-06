@@ -68,14 +68,14 @@ mock_git() {
 #!/usr/bin/env bash
 if [[ "\$1" == "clone" ]]; then
 	echo "\$2" >> "$TEST_DIR/git_clone_urls"
-	mkdir -p "\$3"
+	mkdir -p "\$3/.git"
 	exit 0
 fi
 if [[ "\$1" == "-C" && "\$3" == "pull" ]]; then
 	echo "\$2" >> "$TEST_DIR/git_pull_targets"
 	exit 0
 fi
-exit 1
+exit 0
 MOCK
 	chmod +x "$MOCK_BIN/git"
 }

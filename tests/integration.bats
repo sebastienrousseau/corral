@@ -203,7 +203,7 @@ MOCK
 
 # --- Idempotency ---
 
-@test "idempotent: second run clones 0, keeps all" {
+@test "idempotent: second run clones 0, syncs all by default" {
 	mock_gh "$(printf 'repo-a\tGo\tPUBLIC\nrepo-b\tGo\tPRIVATE')"
 	mock_git
 
@@ -214,7 +214,7 @@ MOCK
 	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *"Cloned 0 repos"* ]]
-	[[ "$output" == *"kept 2 repos"* ]]
+	[[ "$output" == *"synced 2 repos"* ]]
 }
 
 # --- Protocol ---
@@ -248,7 +248,7 @@ MOCK
 	# Pre-create target with .git directory
 	mkdir -p "$BASE/Public/rust/my-repo/.git"
 
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --sync testowner "$BASE"
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *"Syncing testowner/my-repo"* ]]
 	[[ "$output" == *"synced 1 repos"* ]]
@@ -263,7 +263,7 @@ MOCK
 	# Pre-create target without .git directory
 	mkdir -p "$BASE/Public/rust/my-repo"
 
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --sync testowner "$BASE"
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *"WARNING:"* ]]
 	[[ "$output" == *"not a git repo"* ]]
@@ -290,20 +290,20 @@ MOCK
 	# Pre-create target with .git directory
 	mkdir -p "$BASE/Public/rust/my-repo/.git"
 
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run --sync testowner "$BASE"
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --dry-run testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *"[DRY-RUN] git -C"* ]]
 	[[ "$output" == *"pull --rebase --autostash"* ]]
 	[[ "$output" == *"synced 1 repos"* ]]
 }
 
-@test "without sync: existing repos skipped, no Syncing output" {
+@test "with --no-sync: existing repos skipped, no Syncing output" {
 	mock_gh "$(printf 'my-repo\tRust\tPUBLIC')"
 	mock_git
 
 	mkdir -p "$BASE/Public/rust/my-repo/.git"
 
-	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
+	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" --no-sync testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" != *"Syncing"* ]]
 	[[ "$output" == *"kept 1 repos"* ]]

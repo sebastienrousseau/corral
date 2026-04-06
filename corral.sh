@@ -52,7 +52,7 @@ Options:
   -h, --help                  Show this help message
   -n, --dry-run               Preview actions without making changes
   -p, --protocol <ssh|https>  Clone protocol (default: https)
-  -s, --sync                  Pull latest changes for existing repos
+      --no-sync               Skip pulling latest changes for existing repos
 EOF
 }
 
@@ -96,7 +96,7 @@ fi
 # ---------------------------------------------------------------------------
 
 PROTOCOL=https
-SYNC=false
+SYNC=true
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -117,8 +117,8 @@ while [[ $# -gt 0 ]]; do
 		PROTOCOL="$2"
 		shift 2
 		;;
-	-s | --sync)
-		SYNC=true
+	--no-sync)
+		SYNC=false
 		shift
 		;;
 	-*)
