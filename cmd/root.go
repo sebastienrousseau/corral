@@ -4,6 +4,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/sebastienrousseau/corral/internal/engine"
 	"github.com/spf13/cobra"
@@ -52,8 +53,13 @@ func Execute() {
 		osExit(1)
 	}
 }
+
 func init() {
-	defaultBaseDir := os.Getenv("HOME") + "/Code"
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "." // fallback
+	}
+	defaultBaseDir := filepath.Join(home, "Code")
 	rootCmd.Flags().StringVar(&baseDir, "base-dir", defaultBaseDir, "root directory for cloned repos")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 1000, "max repos to list")
 	rootCmd.Flags().IntVarP(&concurrency, "concurrency", "c", 1, "Number of concurrent operations")
