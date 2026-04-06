@@ -1,0 +1,42 @@
+# PR Labeler Configuration
+# This file is used by the .github/workflows/labeler.yml action.
+
+# Add 'core' label to any changes in internal engine/git/github directories
+core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/**'
+      - 'main.go'
+
+# Add 'cli' label to changes in the cmd directory
+cli:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'cmd/**'
+
+# Add 'ui' label to any changes in the tui directory
+ui:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'internal/tui/**'
+
+# Add 'documentation' label to any changes to markdown files
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '*.md'
+      - 'docs/**'
+
+# Add 'test' label to any changes to test files
+test:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*_test.go'
+
+# Add 'ci' label to any changes in GitHub Actions workflows
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/workflows/**'
+      - '.goreleaser.yaml'
+      - 'Makefile'
