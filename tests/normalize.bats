@@ -65,7 +65,12 @@ setup() {
 	[[ "$result" == "Public" ]]
 }
 
-@test "normalize_visibility: unknown value returns Public" {
+@test "normalize_visibility: INTERNAL returns Private" {
 	result="$(normalize_visibility "INTERNAL")"
+	[[ "$result" == "Private" ]]
+}
+
+@test "normalize_visibility: unknown value returns Public" {
+	result="$(normalize_visibility "FOOBAR")"
 	[[ "$result" == "Public" ]]
 }

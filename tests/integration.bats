@@ -149,6 +149,7 @@ MOCK
 	run env PATH="$MOCK_BIN:$PATH" bash "$SCRIPT" testowner "$BASE"
 	[[ "$status" -eq 0 ]]
 	[[ "$output" == *"Cloned 0 repos"* ]]
+	[[ -d "$BASE" ]]
 }
 
 # --- Language edge cases in integration ---

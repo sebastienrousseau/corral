@@ -24,7 +24,7 @@ normalize_language() {
 }
 
 normalize_visibility() {
-	if [[ "$1" == "PRIVATE" ]]; then
+	if [[ "$1" == "PRIVATE" || "$1" == "INTERNAL" ]]; then
 		echo "Private"
 	else
 		echo "Public"
@@ -65,26 +65,24 @@ execute() {
 }
 
 cleanup_empty_legacy_language_folders() {
-	shopt -s dotglob nullglob
 	local seen_languages=()
 	while IFS=$'\t' read -r _ lang _; do
 		seen_languages+=("$(normalize_language "$lang")")
 	done <"$repo_list"
+
+	((${#seen_languages[@]} == 0)) && return 0
 
 	local unique_langs
 	unique_langs="$(printf '%s\n' "${seen_languages[@]}" | sort -u)"
 
 	while IFS= read -r lang_dir; do
 		local folder="$BASE_DIR/$lang_dir"
-		if [[ -d "$folder" ]]; then
-			local entries=("$folder"/*)
-			if ((${#entries[@]} == 0)); then
-				rmdir "$folder"
+		if [[ -d "$folder" && "$folder" != "$BASE_DIR" && "$folder" != "$BASE_DIR/" ]]; then
+			if rmdir "$folder" 2>/dev/null; then
 				echo "Removed empty legacy folder: $folder"
 			fi
 		fi
 	done <<<"$unique_langs"
-	shopt -u dotglob nullglob
 }
 
 # Allow sourcing for tests: __CORRAL_SOURCED=1 source corral.sh
@@ -183,25 +181,24 @@ while IFS=$'\t' read -r name lang visibility; do
 	legacy_dir="$BASE_DIR/$lang_dir/$name"
 	target_dir="$BASE_DIR/$visibility_dir/$lang_dir/$name"
 
-	mkdir -p "$BASE_DIR/$visibility_dir/$lang_dir"
+	execute mkdir -p "$BASE_DIR/$visibility_dir/$lang_dir"
 
-	if [[ -d "$target_dir" ]]; then
+	if [[ -d "$target_dir/.git" ]]; then
 		if [[ "$SYNC" == "true" ]]; then
-			if [[ -d "$target_dir/.git" ]]; then
-				echo "Syncing $OWNER/$name"
-				if execute git -C "$target_dir" pull --rebase --autostash; then
-					synced=$((synced + 1))
-				else
-					echo "SYNC FAILED: $OWNER/$name"
-					failed=$((failed + 1))
-				fi
+			echo "Syncing $OWNER/$name"
+			if execute git -C "$target_dir" pull --rebase --autostash; then
+				synced=$((synced + 1))
 			else
-				echo "WARNING: $target_dir exists but is not a git repo, skipping sync"
-				existing=$((existing + 1))
+				echo "SYNC FAILED: $OWNER/$name"
+				failed=$((failed + 1))
 			fi
 		else
 			existing=$((existing + 1))
 		fi
+		continue
+	elif [[ -d "$target_dir" ]]; then
+		echo "WARNING: $target_dir exists but is not a git repo, skipping"
+		existing=$((existing + 1))
 		continue
 	fi
 
