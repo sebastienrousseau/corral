@@ -8,13 +8,14 @@ on:
   schedule:
     - cron: '0 0 * * 0' # Weekly on Sunday
 
-permissions:
-  contents: read
-  security-events: write
+permissions: {}
 
 jobs:
   security:
     name: Security
+    permissions:
+      contents: read
+      security-events: write
     uses: sebastienrousseau/pipelines/.github/workflows/security.yml@main
     with:
       language: 'go'

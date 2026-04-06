@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   go:
     name: Go CI
+    permissions:
+      contents: read
     uses: sebastienrousseau/pipelines/.github/workflows/go-ci.yml@main
     with:
       go-version: '1.26.1'
