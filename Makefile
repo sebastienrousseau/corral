@@ -1,21 +1,18 @@
-SHELL := /bin/bash
-SCRIPTS := corral.sh .githooks/pre-commit .githooks/pre-push
+BINARY_NAME=corral
 
-.PHONY: all init lint check test
+.PHONY: all build test clean format
 
-all: check
+all: format test build
 
-init:
-	git config core.hooksPath .githooks
-	@echo "Git hooks enabled."
+build:
+	go build -o $(BINARY_NAME) main.go
 
-lint:
-	shellcheck $(SCRIPTS)
+test:
+	go test ./...
 
-check: lint
-	@for s in $(SCRIPTS); do bash -n "$$s" || exit 1; done
-	@echo "All checks passed."
+format:
+	go fmt ./...
 
-test: check
-	@command -v bats >/dev/null 2>&1 || { echo "ERROR: bats not found. Install: brew install bats-core (macOS) or sudo apt install bats (Linux)"; exit 1; }
-	bats tests/
+clean:
+	go clean
+	rm -f $(BINARY_NAME)

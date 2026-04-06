@@ -3,15 +3,7 @@ set -euo pipefail
 
 echo "Running pre-push checks..."
 
-# Lint and syntax
-make check
-
-# Run tests if bats is available
-if command -v bats &>/dev/null; then
-	make test
-else
-	echo "WARNING: bats not found, skipping tests. Install: brew install bats-core" >&2
-fi
+make format test build
 
 # Verify commit signing on all unpushed commits
 while read -r _ local_sha _ remote_sha; do

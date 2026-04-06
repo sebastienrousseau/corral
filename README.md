@@ -22,7 +22,7 @@
 git clone https://github.com/sebastienrousseau/corral.git
 cd corral
 gh auth login
-./corral.sh <owner>
+./corral <owner>
 ```
 
 Then verify the output:
@@ -161,31 +161,31 @@ graph TD
 Clone a personal account:
 
 ```bash
-./corral.sh my-username
+./corral my-username
 ```
 
 Clone an organisation into a custom directory:
 
 ```bash
-./corral.sh my-org ~/Projects 500
+./corral my-org ~/Projects 500
 ```
 
 Clone via SSH (key-based auth):
 
 ```bash
-./corral.sh --protocol ssh my-username
+./corral --protocol ssh my-username
 ```
 
 Skip pulling updates for existing clones:
 
 ```bash
-./corral.sh --no-sync my-username
+./corral --no-sync my-username
 ```
 
 Preview what would happen without making changes:
 
 ```bash
-./corral.sh --dry-run my-org
+./corral --dry-run my-org
 ```
 
 Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.

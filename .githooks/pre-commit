@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Enforce ShellCheck on staged .sh files
-staged_sh=$(git diff --cached --name-only --diff-filter=ACM -- '*.sh')
-if [[ -n "$staged_sh" ]]; then
-	if ! command -v shellcheck &>/dev/null; then
-		echo "WARNING: shellcheck not found, skipping lint" >&2
-	else
-		echo "$staged_sh" | xargs shellcheck
-	fi
+# Ensure code is formatted
+staged_go=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [[ -n "$staged_go" ]]; then
+	echo "$staged_go" | xargs gofmt -w
+	echo "$staged_go" | xargs git add
 fi
 
 # Verify commit signing is configured
