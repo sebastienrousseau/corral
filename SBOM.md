@@ -1,38 +1,39 @@
 # Software Bill of Materials (SBOM)
 
 **Project:** Corral
-**Generated:** 2026-03-29
-**Format:** Manual (no package manager dependencies)
+**Format:** Go Modules (`go.mod` / `go.sum`)
 
-## Runtime Dependencies
+Corral has been migrated from a single-file Bash script to a compiled Go application. 
+The canonical source of truth for all runtime dependencies, version constraints, and cryptographic checksums is the `go.mod` and `go.sum` files located at the root of the repository.
+
+## Core Dependencies
+
+| Component | Purpose | License |
+|:----------|:--------|:--------|
+| `github.com/spf13/cobra` | CLI Framework | Apache 2.0 |
+| `github.com/google/go-github/v60` | GitHub API Client | BSD-3-Clause |
+| `golang.org/x/oauth2` | OAuth2 Client (GitHub Auth) | BSD-3-Clause |
+| `github.com/charmbracelet/bubbletea` | TUI Architecture | MIT |
+| `github.com/charmbracelet/lipgloss` | TUI Styling | MIT |
+| `github.com/charmbracelet/bubbles` | TUI Components | MIT |
+| `github.com/mattn/go-isatty` | Terminal Detection | MIT |
+
+## System Dependencies
 
 | Component | Type | Version Constraint | License | Source | Verification |
 |:----------|:-----|:-------------------|:--------|:-------|:-------------|
-| Bash | System shell | 4.0+ | GPL-3.0 | OS package manager | `bash --version` |
 | Git | CLI tool | Any | GPL-2.0 | OS package manager | `git --version` |
-| GitHub CLI (`gh`) | CLI tool | Any | MIT | [cli.github.com](https://cli.github.com/) | `gh --version` |
 
-## Development Dependencies
+## Development & Build Dependencies
 
-| Component | Type | Version Constraint | License | Source | Verification |
-|:----------|:-----|:-------------------|:--------|:-------|:-------------|
-| ShellCheck | Linter | Any | GPL-3.0 | OS package manager | `shellcheck --version` |
-| BATS | Test framework | Any | MIT | OS package manager | `bats --version` |
-| GNU Make | Build tool | Any | GPL-3.0 | OS package manager | `make --version` |
-
-## CI Dependencies
-
-| Component | Version | SHA | License |
-|:----------|:--------|:----|:--------|
-| actions/checkout | v4 | `34e114876b0b11c390a56381ad16ebd13914f8d5` | MIT |
-
-## Third-Party Code
-
-None. This project contains no vendored, bundled, or embedded third-party source code.
+| Component | Type | Version Constraint | License |
+|:----------|:-----|:-------------------|:--------|
+| Go | Compiler/Toolchain | 1.21+ | BSD-3-Clause |
+| GoReleaser | Release Automation | v2+ | MIT |
+| GNU Make | Build tool | Any | GPL-3.0 |
 
 ## Supply Chain Notes
 
-- All dependencies are well-established open-source tools installed via OS package managers.
-- No transitive dependency trees. No lock files required.
-- CI action pinned to immutable SHA, not mutable tag.
-- All commits cryptographically signed (ED25519).
+- All third-party code is managed via Go modules with cryptographic checksums recorded in `go.sum`.
+- Binaries are compiled natively via GitHub Actions and GoReleaser.
+- All commits are cryptographically signed (ED25519/GPG).
