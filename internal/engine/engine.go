@@ -154,18 +154,38 @@ func Run(ctx context.Context, opts RunOptions) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for job := range jobs {
-				results <- processRepo(opts.Owner, opts.Protocol, opts.DoSync, opts.DryRun, opts.Clone, job)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					msg := processRepo(ctx, opts.Owner, opts.Protocol, opts.DoSync, opts.DryRun, opts.Clone, job)
+					select {
+					case <-ctx.Done():
+						return
+					case results <- msg:
+					}
+				}
 			}
 		}()
 	}
 
+	scheduled := 0
+enqueueLoop:
 	for _, repo := range repos {
 		langDir := normalizeLanguage(repo.Language)
 		visDir := repo.Visibility
 		targetDir := filepath.Join(opts.BaseDir, visDir, langDir, repo.Name)
 		legacyDir := filepath.Join(opts.BaseDir, langDir, repo.Name)
-		jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir}
+		select {
+		case <-ctx.Done():
+			break enqueueLoop
+		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir}:
+			scheduled++
+		}
 	}
 	close(jobs)
 
@@ -174,13 +194,13 @@ func Run(ctx context.Context, opts RunOptions) {
 		summary    Summary
 	)
 
-	summary.Total = len(repos)
+	summary.Total = scheduled
 	var (
 		consumerWG sync.WaitGroup
 		p          *tea.Program
 	)
 	if opts.Output == OutputText && isTTY {
-		p = tea.NewProgram(tui.NewModel(len(repos)))
+		p = tea.NewProgram(tui.NewModel(scheduled))
 	}
 
 	encoder := json.NewEncoder(os.Stdout)
@@ -315,7 +335,7 @@ func cleanupEmptyFolders(baseDir string) {
 	}
 }
 
-func processRepo(owner, protocol string, doSync, dryRun bool, cloneOpts git.CloneOptions, job Job) RepoResult {
+func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun bool, cloneOpts git.CloneOptions, job Job) RepoResult {
 	repo := job.Repo
 	targetDir := job.Target
 	result := RepoResult{
@@ -325,6 +345,11 @@ func processRepo(owner, protocol string, doSync, dryRun bool, cloneOpts git.Clon
 		Language:   normalizeLanguage(repo.Language),
 		DryRun:     dryRun,
 		Protocol:   protocol,
+	}
+	if err := ctx.Err(); err != nil {
+		result.Action = "ERROR"
+		result.Message = "operation canceled"
+		return result
 	}
 
 	if !dryRun {
@@ -350,7 +375,7 @@ func processRepo(owner, protocol string, doSync, dryRun bool, cloneOpts git.Clon
 				result.Message = fmt.Sprintf("on branch %s", branch)
 				return result
 			}
-			err = gitPull(targetDir, cloneOpts.RecurseSubmodules)
+			err = gitPull(ctx, targetDir, cloneOpts.RecurseSubmodules)
 			if err != nil {
 				result.Action = "ERROR"
 				result.Message = "sync failed"
@@ -383,7 +408,7 @@ func processRepo(owner, protocol string, doSync, dryRun bool, cloneOpts git.Clon
 		return result
 	}
 
-	err := gitClone(url, targetDir, cloneOpts)
+	err := gitClone(ctx, url, targetDir, cloneOpts)
 	if err != nil {
 		result.Action = "ERROR"
 		result.Message = "clone failed"

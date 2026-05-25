@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +60,7 @@ func TestGitCommands(t *testing.T) {
 	defer os.RemoveAll(targetDir)
 	_ = os.RemoveAll(targetDir)
 
-	err = Clone(upstream, targetDir, CloneOptions{RecurseSubmodules: true})
+	err = Clone(context.Background(), upstream, targetDir, CloneOptions{RecurseSubmodules: true})
 	if err != nil {
 		t.Errorf("Failed to clone: %v", err)
 	}
@@ -83,17 +84,17 @@ func TestGitCommands(t *testing.T) {
 	run(t, "git", "-C", workDir, "commit", "-m", "add test2")
 	run(t, "git", "-C", workDir, "push", "origin", "main")
 
-	err = Pull(targetDir, true)
+	err = Pull(context.Background(), targetDir, true)
 	if err != nil {
 		t.Errorf("Failed to pull: %v", err)
 	}
 
-	err = Clone("invalid_url_that_does_not_exist", "/invalid/target/dir", CloneOptions{})
+	err = Clone(context.Background(), "invalid_url_that_does_not_exist", "/invalid/target/dir", CloneOptions{})
 	if err == nil {
 		t.Errorf("Expected clone to fail")
 	}
 
-	err = Pull("/invalid/target/dir", false)
+	err = Pull(context.Background(), "/invalid/target/dir", false)
 	if err == nil {
 		t.Errorf("Expected pull to fail")
 	}

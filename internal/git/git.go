@@ -3,6 +3,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -18,7 +19,7 @@ type CloneOptions struct {
 }
 
 // Clone executes a git clone command for the given URL into the target directory.
-func Clone(url, targetDir string, opts CloneOptions) error {
+func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error {
 	args := []string{"clone"}
 	if opts.RecurseSubmodules {
 		args = append(args, "--recurse-submodules")
@@ -33,7 +34,7 @@ func Clone(url, targetDir string, opts CloneOptions) error {
 		args = append(args, "--depth", strconv.Itoa(opts.Depth))
 	}
 	args = append(args, url, targetDir)
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -43,12 +44,12 @@ func Clone(url, targetDir string, opts CloneOptions) error {
 
 // Pull executes a git pull --rebase --autostash command in the target directory.
 // If recurseSubmodules is true, it appends the --recurse-submodules flag.
-func Pull(targetDir string, recurseSubmodules bool) error {
+func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	args := []string{"-C", targetDir, "pull", "--rebase", "--autostash"}
 	if recurseSubmodules {
 		args = append(args, "--recurse-submodules")
 	}
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
