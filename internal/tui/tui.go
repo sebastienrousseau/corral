@@ -98,7 +98,10 @@ var (
 
 func (m model) View() string {
 	pad := strings.Repeat(" ", 2)
-	percent := float64(m.done) / float64(m.total)
+	percent := 1.0
+	if m.total > 0 {
+		percent = float64(m.done) / float64(m.total)
+	}
 	progBar := m.prog.ViewAs(percent)
 
 	out := titleStyle.Render("Corral - Organising Repositories") + "\n"
