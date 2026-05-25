@@ -2,120 +2,223 @@ package github
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/google/go-github/v60/github"
+	gh "github.com/google/go-github/v60/github"
 )
 
-func TestFetchRepos(t *testing.T) {
-	// Test missing token
-	os.Unsetenv("GITHUB_TOKEN")
-	_, err := FetchRepos("owner", 10)
-	if err == nil || err.Error() != "GITHUB_TOKEN environment variable not set" {
-		t.Errorf("Expected error for missing GITHUB_TOKEN")
-	}
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-	os.Setenv("GITHUB_TOKEN", "dummy")
-	defer os.Unsetenv("GITHUB_TOKEN")
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
-	// Call FetchRepos directly to cover its initialization
-	_, _ = FetchRepos("owner", 10)
-
-	mux := http.NewServeMux()
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	client := github.NewClient(server.Client())
-	u, _ := url.Parse(server.URL + "/")
+func newTestClient(rt http.RoundTripper) *gh.Client {
+	client := gh.NewClient(&http.Client{Transport: rt})
+	u, _ := url.Parse("https://api.test/")
 	client.BaseURL = u
+	return client
+}
 
-	// Mock endpoints
-	mux.HandleFunc("/users/org1", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"type": "Organization"}`))
-	})
-	mux.HandleFunc("/users/user1", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"type": "User"}`))
-	})
-	mux.HandleFunc("/users/unknown", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
+func jsonResp(req *http.Request, status int, body string, headers map[string]string) *http.Response {
+	h := make(http.Header)
+	for k, v := range headers {
+		h.Set(k, v)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     h,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}
+}
 
-	mux.HandleFunc("/orgs/org1/repos", func(w http.ResponseWriter, r *http.Request) {
-		page := r.URL.Query().Get("page")
-		if page == "2" {
-			w.Header().Set("Link", `<`+server.URL+`/orgs/org1/repos?page=2>; rel="last"`)
-			w.Write([]byte(`[
-				{"name": "repo3", "language": "Go", "visibility": "private", "default_branch": "master", "clone_url": "http://clone3", "ssh_url": "ssh3"}
-			]`))
-			return
-		}
-		w.Header().Set("Link", `<`+server.URL+`/orgs/org1/repos?page=2>; rel="next"`)
-		w.Write([]byte(`[
-			{"name": "repo1", "language": "Go", "visibility": "public", "default_branch": "main", "clone_url": "http://clone", "ssh_url": "ssh"},
-			{"name": "repo2", "visibility": "internal"}
-		]`))
-	})
+func TestFetchReposWithOptionsAuthModes(t *testing.T) {
+	os.Unsetenv("GITHUB_TOKEN")
+	os.Unsetenv("GH_TOKEN")
 
-	mux.HandleFunc("/users/user1/repos", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[
-			{"name": "userrepo", "language": "Go", "visibility": "public", "default_branch": "main"}
-		]`))
-	})
-
-	mux.HandleFunc("/users/user_error/repos", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	mux.HandleFunc("/users/user_error", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"type": "User"}`))
-	})
-
-	// Test user fetch error
-	_, err = FetchReposWithClient(context.Background(), client, "unknown", 10)
-	if err == nil || !strings.Contains(err.Error(), "failed to get user/org") {
-		t.Errorf("Expected fetch error for unknown user, got: %v", err)
+	_, err := resolveToken(context.Background(), AuthModeToken)
+	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Fatalf("expected token env error, got %v", err)
 	}
 
-	// Test repo list error
-	_, err = FetchReposWithClient(context.Background(), client, "user_error", 10)
-	if err == nil {
-		t.Errorf("Expected fetch error for user_error")
+	oldRunAuth := runGitHubCLIAuthToken
+	defer func() { runGitHubCLIAuthToken = oldRunAuth }()
+	runGitHubCLIAuthToken = func(ctx context.Context) (string, error) {
+		return "gh-token", nil
 	}
 
-	// Test Org fetch success
-	repos, err := FetchReposWithClient(context.Background(), client, "org1", 10)
+	token, err := resolveToken(context.Background(), AuthModeGH)
 	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+		t.Fatalf("expected gh token resolution, got %v", err)
+	}
+	if token != "gh-token" {
+		t.Fatalf("expected gh-token, got %q", token)
+	}
+
+	os.Setenv("GITHUB_TOKEN", "env-token")
+	defer os.Unsetenv("GITHUB_TOKEN")
+	token, err = resolveToken(context.Background(), AuthModeAuto)
+	if err != nil {
+		t.Fatalf("expected auto token resolution, got %v", err)
+	}
+	if token != "env-token" {
+		t.Fatalf("expected env-token, got %q", token)
+	}
+}
+
+func TestFetchReposWithClientOptions(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/users/org1":
+			return jsonResp(req, http.StatusOK, `{"type":"Organization"}`, nil), nil
+		case "/users/user1":
+			return jsonResp(req, http.StatusOK, `{"type":"User"}`, nil), nil
+		case "/users/unknown":
+			return jsonResp(req, http.StatusNotFound, `{"message":"not found"}`, nil), nil
+		case "/users/user_error":
+			return jsonResp(req, http.StatusOK, `{"type":"User"}`, nil), nil
+		case "/orgs/org1/repos":
+			page := req.URL.Query().Get("page")
+			if page == "2" {
+				return jsonResp(req, http.StatusOK, `[
+					{"name":"repo3","language":"Go","visibility":"private","default_branch":"master","clone_url":"http://clone3","ssh_url":"ssh3","archived":true}
+				]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="last"`}), nil
+			}
+			return jsonResp(req, http.StatusOK, `[
+				{"name":"repo1","language":"Go","visibility":"public","default_branch":"main","clone_url":"http://clone","ssh_url":"ssh","fork":false},
+				{"name":"repo2","visibility":"internal","fork":true}
+			]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="next"`}), nil
+		case "/users/user1/repos":
+			return jsonResp(req, http.StatusOK, `[
+				{"name":"userrepo","language":"Rust","visibility":"public","default_branch":"main"}
+			]`, nil), nil
+		case "/users/user_error/repos":
+			return jsonResp(req, http.StatusInternalServerError, `{"message":"boom"}`, nil), nil
+		default:
+			return nil, fmt.Errorf("unexpected path: %s", req.URL.Path)
+		}
+	})
+
+	client := newTestClient(rt)
+
+	_, err := FetchReposWithClientOptions(context.Background(), client, "unknown", FetchOptions{Limit: 10})
+	if err == nil || !strings.Contains(err.Error(), "failed to get user/org") {
+		t.Fatalf("expected owner lookup error, got: %v", err)
+	}
+
+	_, err = FetchReposWithClientOptions(context.Background(), client, "user_error", FetchOptions{Limit: 10})
+	if err == nil {
+		t.Fatalf("expected repo list error")
+	}
+
+	repos, err := FetchReposWithClientOptions(context.Background(), client, "org1", FetchOptions{Limit: 10, IncludeArchived: true, IncludeForks: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 3 {
-		t.Errorf("Expected 3 repos, got %d", len(repos))
-	}
-	if repos[0].Visibility != "Public" || repos[1].Visibility != "Private" || repos[2].Visibility != "Private" {
-		t.Errorf("Visibility parsing incorrect")
+		t.Fatalf("expected 3 repos, got %d", len(repos))
 	}
 	if repos[1].Language != "Other" {
-		t.Errorf("Language default incorrect")
+		t.Fatalf("expected default language Other, got %q", repos[1].Language)
 	}
 
-	// Test User fetch success with limit
-	repos, err = FetchReposWithClient(context.Background(), client, "user1", 1)
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "org1", FetchOptions{Limit: 10})
 	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 1 {
-		t.Errorf("Expected 1 repo, got %d", len(repos))
+		t.Fatalf("expected only 1 repo after default filters, got %d", len(repos))
 	}
 
-	// Test limit logic
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "org1", FetchOptions{Limit: 10, IncludeArchived: true, Visibility: "private", IncludeForks: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 private repos, got %d", len(repos))
+	}
+
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "user1", FetchOptions{Limit: 10, IncludeLanguages: []string{"rust"}, IncludeArchived: true, IncludeForks: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("expected 1 repo from language include, got %d", len(repos))
+	}
+
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "user1", FetchOptions{Limit: 10, ExcludeLanguages: []string{"rust"}, IncludeArchived: true, IncludeForks: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 0 {
+		t.Fatalf("expected excluded language to remove all repos, got %d", len(repos))
+	}
+
 	repos, err = FetchReposWithClient(context.Background(), client, "org1", 1)
 	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 1 {
-		t.Errorf("Expected 1 repo due to limit, got %d", len(repos))
+		t.Fatalf("expected limit=1, got %d", len(repos))
+	}
+}
+
+func TestRetryTransport(t *testing.T) {
+	var calls int32
+	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return jsonResp(req, http.StatusServiceUnavailable, `{"message":"retry"}`, nil), nil
+		}
+		return jsonResp(req, http.StatusOK, `{"ok":true}`, nil), nil
+	})
+
+	client := &http.Client{
+		Transport: &retryTransport{
+			base:       base,
+			maxRetries: 2,
+			minBackoff: 10 * time.Millisecond,
+			maxBackoff: 20 * time.Millisecond,
+		},
+		Timeout: time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://api.test/foo", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("expected one retry, got %d calls", calls)
+	}
+}
+
+func TestShouldRetryHelpers(t *testing.T) {
+	resp := &http.Response{Header: make(http.Header), StatusCode: http.StatusForbidden}
+	resp.Header.Set("X-RateLimit-Remaining", "0")
+	resp.Header.Set("X-RateLimit-Reset", fmt.Sprintf("%d", time.Now().Add(time.Second).Unix()))
+	retry, wait := shouldRetry(resp, nil, 0, 1)
+	if !retry || wait <= 0 {
+		t.Fatalf("expected retry with positive wait for rate limit")
+	}
+
+	retry, _ = shouldRetry(nil, errors.New("plain"), 0, 1)
+	if retry {
+		t.Fatalf("did not expect retry for non-network context error")
 	}
 }

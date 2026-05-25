@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,13 +9,28 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
 )
+
+func defaultRunOptions(baseDir string) RunOptions {
+	return RunOptions{
+		Owner:       "owner",
+		BaseDir:     baseDir,
+		Concurrency: 1,
+		Protocol:    "https",
+		DoSync:      true,
+		Output:      OutputText,
+		Fetch: github.FetchOptions{
+			Limit: 100,
+		},
+	}
+}
 
 func TestEngineRunError(t *testing.T) {
 	oldFetchRepos := fetchRepos
 	defer func() { fetchRepos = oldFetchRepos }()
-	fetchRepos = func(owner string, limit int) ([]github.Repo, error) {
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
 		return nil, fmt.Errorf("mock error")
 	}
 
@@ -23,16 +39,39 @@ func TestEngineRunError(t *testing.T) {
 	defer func() { osExit = oldOsExit }()
 	osExit = func(code int) { exitCode = code }
 
-	Run("owner", "dir", 100, 1, false, false, "https", true, false)
+	opts := defaultRunOptions("dir")
+	Run(context.Background(), opts)
 	if exitCode != 1 {
 		t.Errorf("Expected exit code 1, got %d", exitCode)
+	}
+}
+
+func TestEngineRunInvalidConfig(t *testing.T) {
+	var exitCode int
+	oldOsExit := osExit
+	defer func() { osExit = oldOsExit }()
+	osExit = func(code int) { exitCode = code }
+
+	opts := defaultRunOptions("dir")
+	opts.Concurrency = 0
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("Expected exit code 1 for invalid concurrency, got %d", exitCode)
+	}
+
+	exitCode = 0
+	opts = defaultRunOptions("dir")
+	opts.Fetch.Limit = -1
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("Expected exit code 1 for negative limit, got %d", exitCode)
 	}
 }
 
 func TestEngineRunHeadlessErrors(t *testing.T) {
 	oldFetchRepos := fetchRepos
 	defer func() { fetchRepos = oldFetchRepos }()
-	fetchRepos = func(owner string, limit int) ([]github.Repo, error) {
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
 		return []github.Repo{
 			{Name: "repo_error", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
 			{Name: "repo_skip", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
@@ -41,7 +80,7 @@ func TestEngineRunHeadlessErrors(t *testing.T) {
 
 	oldGitClone := gitClone
 	defer func() { gitClone = oldGitClone }()
-	gitClone = func(url, targetDir string, recurseSubmodules bool) error {
+	gitClone = func(url, targetDir string, opts git.CloneOptions) error {
 		if strings.Contains(targetDir, "repo_error") {
 			return fmt.Errorf("err")
 		}
@@ -51,20 +90,22 @@ func TestEngineRunHeadlessErrors(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer os.RemoveAll(baseDir)
 
-	// Pre-create repo_skip so it skips
-	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_skip", ".git"), 0755)
+	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_skip", ".git"), 0o755)
 
 	oldIsTerminal := isTerminal
 	defer func() { isTerminal = oldIsTerminal }()
-	isTerminal = func(fd uintptr) bool { return false } // Headless
+	isTerminal = func(fd uintptr) bool { return false }
 
-	Run("owner", baseDir, 2, 1, false, false, "https", false, false)
+	opts := defaultRunOptions(baseDir)
+	opts.Fetch.Limit = 2
+	opts.DoSync = false
+	Run(context.Background(), opts)
 }
 
 func TestEngineRunSuccess(t *testing.T) {
 	oldFetchRepos := fetchRepos
 	defer func() { fetchRepos = oldFetchRepos }()
-	fetchRepos = func(owner string, limit int) ([]github.Repo, error) {
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
 		return []github.Repo{
 			{Name: "repo1", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
 			{Name: "repo2", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
@@ -78,33 +119,34 @@ func TestEngineRunSuccess(t *testing.T) {
 
 	oldIsTerminal := isTerminal
 	defer func() { isTerminal = oldIsTerminal }()
-	isTerminal = func(fd uintptr) bool { return true } // Mock TTY true
+	isTerminal = func(fd uintptr) bool { return true }
 
 	oldRunProgram := runProgram
 	defer func() { runProgram = oldRunProgram }()
 	runProgram = func(p *tea.Program) (tea.Model, error) {
-		return nil, nil // Mock successful TUI run
+		return nil, nil
 	}
 
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer os.RemoveAll(baseDir)
 
-	// Run with TTY simulation and orphans
-	Run("owner", baseDir, 2, 2, true, true, "https", true, false)
+	opts := defaultRunOptions(baseDir)
+	opts.Fetch.Limit = 2
+	opts.DryRun = true
+	opts.Orphans = true
+	Run(context.Background(), opts)
 	if exitCode != 0 {
 		t.Errorf("Expected exit code 0, got %d", exitCode)
 	}
 
-	// Mock TTY false
 	isTerminal = func(fd uintptr) bool { return false }
-	Run("owner", baseDir, 2, 2, true, true, "https", true, false)
+	Run(context.Background(), opts)
 
-	// Mock TTY true but runProgram fails
 	isTerminal = func(fd uintptr) bool { return true }
 	runProgram = func(p *tea.Program) (tea.Model, error) {
 		return nil, fmt.Errorf("tui err")
 	}
-	Run("owner", baseDir, 2, 2, true, true, "https", true, false)
+	Run(context.Background(), opts)
 }
 
 func TestProcessRepo(t *testing.T) {
@@ -120,40 +162,34 @@ func TestProcessRepo(t *testing.T) {
 		SSHURL:        "ssh://clone",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
-
-	// Dry run clone
 	job := Job{Repo: repo, Target: targetDir}
-	msg := processRepo("owner", baseDir, "https", true, false, true, job)
+
+	msg := processRepo("owner", "https", true, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git clone" {
 		t.Errorf("Expected dry run clone, got %v", msg)
 	}
 
-	// Create a dummy .git dir to simulate existing repo
-	os.MkdirAll(filepath.Join(targetDir, ".git"), 0755)
+	os.MkdirAll(filepath.Join(targetDir, ".git"), 0o755)
 
-	// Dry run sync
-	msg = processRepo("owner", baseDir, "https", true, false, true, job)
+	msg = processRepo("owner", "https", true, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git pull" {
 		t.Errorf("Expected dry run pull, got %v", msg)
 	}
 
-	// Test skip sync (noSync)
-	msg = processRepo("owner", baseDir, "https", false, false, false, job)
+	msg = processRepo("owner", "https", false, false, git.CloneOptions{}, job)
 	if msg.Action != "SKIP" {
 		t.Errorf("Expected SKIP, got %v", msg)
 	}
 
-	// Test exists but not git repo
 	os.RemoveAll(targetDir)
-	os.MkdirAll(targetDir, 0755)
-	msg = processRepo("owner", baseDir, "https", false, false, false, job)
+	os.MkdirAll(targetDir, 0o755)
+	msg = processRepo("owner", "https", false, false, git.CloneOptions{}, job)
 	if msg.Action != "SKIP" || !strings.Contains(msg.Message, "not a git repo") {
 		t.Errorf("Expected SKIP for non-git repo, got %v", msg)
 	}
 
-	// Test ssh protocol clone
 	os.RemoveAll(targetDir)
-	msg = processRepo("owner", baseDir, "ssh", false, false, true, job)
+	msg = processRepo("owner", "ssh", false, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" {
 		t.Errorf("Expected DRY-RUN for ssh, got %v", msg)
 	}
@@ -174,7 +210,7 @@ func TestProcessRepoFull(t *testing.T) {
 		gitRemoteOrigin = oldGitRemoteOrigin
 	}()
 
-	gitClone = func(url, targetDir string, recurseSubmodules bool) error { return nil }
+	gitClone = func(url, targetDir string, opts git.CloneOptions) error { return nil }
 	gitPull = func(targetDir string, recurseSubmodules bool) error { return nil }
 	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
 	gitRemoteOrigin = func(targetDir string) (string, error) { return "https://github.com/owner/repo1.git", nil }
@@ -188,65 +224,56 @@ func TestProcessRepoFull(t *testing.T) {
 		SSHURL:        "ssh://clone",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
-
 	job := Job{Repo: repo, Target: targetDir}
 
-	// Test clone success
-	msg := processRepo("owner", baseDir, "https", true, false, false, job)
+	msg := processRepo("owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "CLONE" {
 		t.Errorf("Expected CLONE, got %v", msg)
 	}
 
-	// Test clone error
-	gitClone = func(url, targetDir string, recurseSubmodules bool) error { return fmt.Errorf("err") }
+	gitClone = func(url, targetDir string, opts git.CloneOptions) error { return fmt.Errorf("err") }
 	os.RemoveAll(targetDir)
-	msg = processRepo("owner", baseDir, "https", true, false, false, job)
+	msg = processRepo("owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
-	// Test sync success
-	os.MkdirAll(filepath.Join(targetDir, ".git"), 0755)
-	msg = processRepo("owner", baseDir, "https", true, false, false, job)
+	os.MkdirAll(filepath.Join(targetDir, ".git"), 0o755)
+	msg = processRepo("owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "SYNC" {
 		t.Errorf("Expected SYNC, got %v", msg)
 	}
 
-	// Test sync error
 	gitPull = func(targetDir string, recurseSubmodules bool) error { return fmt.Errorf("err") }
-	msg = processRepo("owner", baseDir, "https", true, false, false, job)
+	msg = processRepo("owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
-	// Test skip on wrong branch
 	gitCurrentBranch = func(targetDir string) (string, error) { return "feat", nil }
-	msg = processRepo("owner", baseDir, "https", true, false, false, job)
+	msg = processRepo("owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "SKIP" {
 		t.Errorf("Expected SKIP, got %v", msg)
 	}
 
-	// Test ssh protocol clone fallback
 	repo.SSHURL = ""
 	job = Job{Repo: repo, Target: targetDir}
 	os.RemoveAll(targetDir)
-	msg = processRepo("owner", baseDir, "ssh", false, false, true, job)
+	msg = processRepo("owner", "ssh", false, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" || !strings.Contains(msg.Message, "git clone") {
 		t.Errorf("Expected DRY-RUN for ssh fallback, got %v", msg)
 	}
 
-	// Test orphan detection with actual hit
 	detectOrphans("owner", baseDir, []github.Repo{{Name: "other"}})
 }
 
 func TestDetectOrphansError(t *testing.T) {
-	// Cover WalkDir error and RemoteOrigin error
 	detectOrphans("owner", "/invalid_dir_that_does_not_exist", []github.Repo{})
 
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer os.RemoveAll(baseDir)
 
-	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo1", ".git"), 0755)
+	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo1", ".git"), 0o755)
 
 	oldGitRemoteOrigin := gitRemoteOrigin
 	defer func() { gitRemoteOrigin = oldGitRemoteOrigin }()
@@ -300,12 +327,9 @@ func TestMigrateLegacy(t *testing.T) {
 	defer os.RemoveAll(baseDir)
 
 	legacyDir := filepath.Join(baseDir, "go", "myrepo")
-	os.MkdirAll(legacyDir, 0755)
+	os.MkdirAll(legacyDir, 0o755)
 
-	repos := []github.Repo{
-		{Name: "myrepo", Language: "Go", Visibility: "Public"},
-	}
-
+	repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
 	migrateLegacy(baseDir, repos)
 
 	targetDir := filepath.Join(baseDir, "Public", "go", "myrepo")
@@ -322,15 +346,14 @@ func TestCleanupEmptyFolders(t *testing.T) {
 	defer os.RemoveAll(baseDir)
 
 	emptyDir := filepath.Join(baseDir, "empty")
-	os.MkdirAll(emptyDir, 0755)
+	os.MkdirAll(emptyDir, 0o755)
 
 	notEmptyDir := filepath.Join(baseDir, "not_empty")
-	os.MkdirAll(notEmptyDir, 0755)
-	os.WriteFile(filepath.Join(notEmptyDir, "file.txt"), []byte("data"), 0644)
+	os.MkdirAll(notEmptyDir, 0o755)
+	os.WriteFile(filepath.Join(notEmptyDir, "file.txt"), []byte("data"), 0o644)
 
-	// Keep Public/Private
-	os.MkdirAll(filepath.Join(baseDir, "Public"), 0755)
-	os.MkdirAll(filepath.Join(baseDir, "Private"), 0755)
+	os.MkdirAll(filepath.Join(baseDir, "Public"), 0o755)
+	os.MkdirAll(filepath.Join(baseDir, "Private"), 0o755)
 
 	cleanupEmptyFolders(baseDir)
 

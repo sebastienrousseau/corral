@@ -155,6 +155,19 @@ graph TD
 | `--help` | `-h` | — | Show help message |
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
 | `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
+| `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
+| `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
+| `--visibility` | — | `all` | Filter repositories by visibility: `all`, `public`, `private` |
+| `--include-forks` | — | off | Include forked repositories |
+| `--include-archived` | — | off | Include archived repositories |
+| `--languages` | — | — | Comma-separated language allow-list (for example: `go,rust`) |
+| `--exclude-languages` | — | — | Comma-separated language deny-list |
+| `--clone-blobless` | — | off | Use partial clone (`--filter=blob:none`) |
+| `--clone-single-branch` | — | off | Clone only the default branch |
+| `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
+| `--retry-max` | — | `4` | Max retries for transient GitHub API failures |
+| `--retry-min-backoff` | — | `500ms` | Minimum backoff between retries |
+| `--retry-max-backoff` | — | `8s` | Maximum backoff between retries |
 
 Clone a personal account:
 
@@ -186,7 +199,19 @@ Preview what would happen without making changes:
 ./corral --dry-run my-org
 ```
 
-Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.
+Fetch only private Go and Rust repositories, and emit machine-readable JSON:
+
+```bash
+./corral --visibility private --languages go,rust --output json my-org
+```
+
+Use GitHub CLI auth explicitly and perform shallow single-branch clones:
+
+```bash
+./corral --auth gh --clone-single-branch --clone-depth 1 my-username
+```
+
+By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then falls back to `gh auth token`.
 
 ---
 
@@ -215,7 +240,7 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 | Message | Cause | Solution |
 | :--- | :--- | :--- |
 | `ERROR: Required command 'git' not found` | Git is not installed | See Install above |
-| `ERROR: GITHUB_TOKEN not set` | Environment variable missing | Run `export GITHUB_TOKEN=$(gh auth token)` |
+| `ERROR: GITHUB_TOKEN (or GH_TOKEN) environment variable not set` | `--auth token` was set and no token variable is present | Run `export GITHUB_TOKEN=$(gh auth token)` or switch to `--auth auto` |
 | `FAILED: owner/repo` | Network issue or private repo without token access | Check connectivity and verify `gh auth status` |
 </details>
 
