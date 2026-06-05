@@ -49,6 +49,11 @@ func FetchReposWithClient(ctx context.Context, client *github.Client, owner stri
 	var allRepos []Repo
 	isOrg := u.GetType() == "Organization"
 
+	// Check if owner is the authenticated user so we can use the authed endpoint
+	// which returns private repos, unlike ListByUser which returns only public.
+	authedUser, _, _ := client.Users.Get(ctx, "")
+	isAuthenticatedUser := !isOrg && authedUser != nil && authedUser.GetLogin() == u.GetLogin()
+
 	page := 1
 	for {
 		var repos []*github.Repository
@@ -60,6 +65,11 @@ func FetchReposWithClient(ctx context.Context, client *github.Client, owner stri
 				ListOptions: github.ListOptions{Page: page, PerPage: 100},
 			}
 			repos, resp, err = client.Repositories.ListByOrg(ctx, owner, opt)
+		} else if isAuthenticatedUser {
+			opt := &github.RepositoryListOptions{
+				ListOptions: github.ListOptions{Page: page, PerPage: 100},
+			}
+			repos, resp, err = client.Repositories.List(ctx, "", opt)
 		} else {
 			opt := &github.RepositoryListByUserOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: 100},
