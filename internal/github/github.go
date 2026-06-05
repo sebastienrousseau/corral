@@ -66,10 +66,10 @@ func FetchReposWithClient(ctx context.Context, client *github.Client, owner stri
 			}
 			repos, resp, err = client.Repositories.ListByOrg(ctx, owner, opt)
 		} else if isAuthenticatedUser {
-			opt := &github.RepositoryListOptions{
+			opt := &github.RepositoryListByAuthenticatedUserOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: 100},
 			}
-			repos, resp, err = client.Repositories.List(ctx, "", opt)
+			repos, resp, err = client.Repositories.ListByAuthenticatedUser(ctx, opt)
 		} else {
 			opt := &github.RepositoryListByUserOptions{
 				ListOptions: github.ListOptions{Page: page, PerPage: 100},
