@@ -767,3 +767,47 @@ func mustUnsetenv(t *testing.T, key string) {
 		t.Fatalf("unsetenv %s: %v", key, err)
 	}
 }
+
+func TestFetchReposAuthenticatedUser(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/user":
+			// The authenticated user is "me".
+			return jsonResp(req, http.StatusOK, `{"login":"me","type":"User"}`, nil), nil
+		case "/users/me":
+			return jsonResp(req, http.StatusOK, `{"login":"me","type":"User"}`, nil), nil
+		case "/user/repos":
+			// The authenticated-user endpoint exposes private repositories.
+			return jsonResp(req, http.StatusOK, `[
+				{"name":"secret","language":"Go","visibility":"private","default_branch":"main"}
+			]`, nil), nil
+		case "/users/other":
+			return jsonResp(req, http.StatusOK, `{"login":"other","type":"User"}`, nil), nil
+		case "/users/other/repos":
+			return jsonResp(req, http.StatusOK, `[
+				{"name":"public-only","language":"Go","visibility":"public","default_branch":"main"}
+			]`, nil), nil
+		default:
+			return nil, fmt.Errorf("unexpected path: %s", req.URL.Path)
+		}
+	})
+	client := newTestClient(rt)
+
+	// Owner is the authenticated user: list via /user/repos so private repos appear.
+	repos, err := FetchReposWithClientOptions(context.Background(), client, "me", FetchOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "secret" || repos[0].Visibility != "Private" {
+		t.Fatalf("expected the authenticated user's private repo, got %+v", repos)
+	}
+
+	// Owner differs from the authenticated user: fall back to the public listing.
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "other", FetchOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "public-only" {
+		t.Fatalf("expected fallback to public listing, got %+v", repos)
+	}
+}
