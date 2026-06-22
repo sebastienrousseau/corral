@@ -159,6 +159,17 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 	excludeLang := toLookupSet(opts.ExcludeLanguages)
 	isOrg := u.GetType() == "Organization"
 
+	// When the requested owner is the authenticated user, list via the
+	// authenticated-user endpoint, which returns private repositories that the
+	// public ListByUser endpoint omits.
+	isAuthenticatedUser := false
+	if !isOrg {
+		if authedUser, _, authErr := client.Users.Get(ctx, ""); authErr == nil {
+			login := authedUser.GetLogin()
+			isAuthenticatedUser = login != "" && login == u.GetLogin()
+		}
+	}
+
 	var allRepos []Repo
 	page := 1
 	for {
@@ -168,7 +179,8 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 			err   error
 		)
 
-		if isOrg {
+		switch {
+		case isOrg:
 			repos, resp, err = client.Repositories.ListByOrg(ctx, owner, &gh.RepositoryListByOrgOptions{
 				Type: orgTypeForVisibility(opts.Visibility),
 				Sort: "updated",
@@ -177,7 +189,17 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 					PerPage: 100,
 				},
 			})
-		} else {
+		case isAuthenticatedUser:
+			repos, resp, err = client.Repositories.ListByAuthenticatedUser(ctx, &gh.RepositoryListByAuthenticatedUserOptions{
+				Visibility:  opts.Visibility,
+				Affiliation: "owner",
+				Sort:        "updated",
+				ListOptions: gh.ListOptions{
+					Page:    page,
+					PerPage: 100,
+				},
+			})
+		default:
 			repos, resp, err = client.Repositories.ListByUser(ctx, owner, &gh.RepositoryListByUserOptions{
 				Type: "owner",
 				Sort: "updated",
