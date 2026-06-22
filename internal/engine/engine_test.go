@@ -445,8 +445,10 @@ func TestEngineRunNilContextAndDefaultOutput(t *testing.T) {
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = "" // exercise default-output branch
-	//nolint:staticcheck // intentionally passing nil to cover the ctx == nil guard
-	Run(nil, opts)
+	// A typed nil context exercises the ctx == nil guard without tripping
+	// staticcheck's SA1012 (which only flags an untyped nil literal).
+	var nilCtx context.Context
+	Run(nilCtx, opts)
 }
 
 // TestEngineRunJSON covers the OutputJSON aggregated payload branch and the

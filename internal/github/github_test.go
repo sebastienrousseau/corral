@@ -617,8 +617,10 @@ func TestFetchReposWithOptionsRequestPath(t *testing.T) {
 		RetryMinBackoff: time.Millisecond,
 		RetryMaxBackoff: time.Millisecond,
 	}
-	//nolint:staticcheck // intentionally exercising the ctx == nil branch
-	if _, err := FetchReposWithOptions(nil, "someowner", opts); err == nil {
+	// A typed nil context exercises the ctx == nil guard without tripping
+	// staticcheck's SA1012 (which only flags an untyped nil literal).
+	var nilCtx context.Context
+	if _, err := FetchReposWithOptions(nilCtx, "someowner", opts); err == nil {
 		t.Fatalf("expected request error from stubbed transport")
 	}
 }
