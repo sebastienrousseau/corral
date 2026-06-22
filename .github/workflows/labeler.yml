@@ -11,6 +11,6 @@ permissions:
 jobs:
   label:
     name: Label PR
-    uses: sebastienrousseau/pipelines/.github/workflows/labeler.yml@99a39f7d02e76beb2b935fa07b7cd6a46d8bbc65
+    uses: sebastienrousseau/pipelines/.github/workflows/labeler.yml@186372a9033a4a2ab2c1157866a5a0bc37410683
     with:
       config-path: '.github/labeler.yml'
