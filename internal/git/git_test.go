@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+// cleanup removes a temporary directory and reports a failure if removal
+// errors, satisfying errcheck for deferred cleanup.
+func cleanup(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Errorf("failed to remove %s: %v", dir, err)
+	}
+}
+
 func run(t *testing.T, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
@@ -35,7 +44,7 @@ func setupTestRepo(t *testing.T) (bareDir string, workDir string) {
 	run(t, "git", "-C", workDir, "config", "user.email", "test@test.com")
 
 	file := filepath.Join(workDir, "test.txt")
-	if err := os.WriteFile(file, []byte("test"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte("test"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run(t, "git", "-C", workDir, "add", "test.txt")
@@ -50,15 +59,17 @@ func setupTestRepo(t *testing.T) (bareDir string, workDir string) {
 
 func TestGitCommands(t *testing.T) {
 	upstream, workDir := setupTestRepo(t)
-	defer os.RemoveAll(upstream)
-	defer os.RemoveAll(workDir)
+	defer cleanup(t, upstream)
+	defer cleanup(t, workDir)
 
 	targetDir, err := os.MkdirTemp("", "git_test_target")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(targetDir)
-	_ = os.RemoveAll(targetDir)
+	defer cleanup(t, targetDir)
+	if err := os.RemoveAll(targetDir); err != nil {
+		t.Fatal(err)
+	}
 
 	err = Clone(context.Background(), upstream, targetDir, CloneOptions{RecurseSubmodules: true})
 	if err != nil {
@@ -77,7 +88,7 @@ func TestGitCommands(t *testing.T) {
 	run(t, "git", "-C", targetDir, "config", "merge.verifySignatures", "false")
 
 	file := filepath.Join(workDir, "test2.txt")
-	if err := os.WriteFile(file, []byte("test2"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte("test2"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run(t, "git", "-C", workDir, "add", "test2.txt")
@@ -107,5 +118,43 @@ func TestGitCommands(t *testing.T) {
 	_, err = RemoteOrigin("/invalid/target/dir")
 	if err == nil {
 		t.Errorf("Expected remote origin to fail")
+	}
+}
+
+// TestCloneOptions exercises each optional clone flag branch independently by
+// cloning from a local upstream repository.
+func TestCloneOptions(t *testing.T) {
+	upstream, workDir := setupTestRepo(t)
+	defer cleanup(t, upstream)
+	defer cleanup(t, workDir)
+
+	cases := []struct {
+		name string
+		opts CloneOptions
+	}{
+		{"SingleBranch", CloneOptions{SingleBranch: true}},
+		{"Blobless", CloneOptions{Blobless: true}},
+		{"Depth", CloneOptions{Depth: 1}},
+		{"RecurseSubmodules", CloneOptions{RecurseSubmodules: true}},
+		{"All", CloneOptions{RecurseSubmodules: true, SingleBranch: true, Blobless: true, Depth: 1}},
+		{"None", CloneOptions{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir, err := os.MkdirTemp("", "git_test_opts_target")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup(t, targetDir)
+			// git clone requires the target to not exist (or be empty).
+			if err := os.RemoveAll(targetDir); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := Clone(context.Background(), upstream, targetDir, tc.opts); err != nil {
+				t.Errorf("Clone with %s failed: %v", tc.name, err)
+			}
+		})
 	}
 }

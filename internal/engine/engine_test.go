@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -359,6 +360,425 @@ func TestMigrateLegacy(t *testing.T) {
 	targetDir := filepath.Join(baseDir, "Public", "go", "myrepo")
 	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
 		t.Errorf("Expected %s to exist after migration", targetDir)
+	}
+}
+
+// quitModel is a minimal tea.Model that quits immediately on Init so the
+// default runProgram closure (p.Run()) can be exercised without a real TTY.
+type quitModel struct{}
+
+func (quitModel) Init() tea.Cmd                       { return tea.Quit }
+func (quitModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return quitModel{}, tea.Quit }
+func (quitModel) View() string                        { return "" }
+
+// TestRunProgramDefault exercises the default runProgram closure (engine.go:85)
+// by running a program that quits immediately with the renderer disabled.
+func TestRunProgramDefault(t *testing.T) {
+	p := tea.NewProgram(
+		quitModel{},
+		tea.WithoutRenderer(),
+		tea.WithInput(nil),
+		tea.WithOutput(io.Discard),
+	)
+	if _, err := runProgram(p); err != nil {
+		t.Fatalf("runProgram returned error: %v", err)
+	}
+}
+
+// TestEngineRunNilContext covers the ctx == nil branch and the remaining
+// validation branches (empty owner, empty base dir, bad protocol).
+func TestEngineRunValidation(t *testing.T) {
+	var exitCode int
+	oldOsExit := osExit
+	defer func() { osExit = oldOsExit }()
+	osExit = func(code int) { exitCode = code }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	// Empty owner.
+	opts := defaultRunOptions("dir")
+	opts.Owner = ""
+	exitCode = 0
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("expected exit 1 for empty owner, got %d", exitCode)
+	}
+
+	// Empty base directory.
+	opts = defaultRunOptions("")
+	exitCode = 0
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("expected exit 1 for empty base dir, got %d", exitCode)
+	}
+
+	// Invalid protocol.
+	opts = defaultRunOptions("dir")
+	opts.Protocol = "ftp"
+	exitCode = 0
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("expected exit 1 for bad protocol, got %d", exitCode)
+	}
+}
+
+// TestEngineRunNilContextAndDefaultOutput covers the ctx == nil branch and the
+// Output == "" defaulting branch using a nil context and unset output.
+func TestEngineRunNilContextAndDefaultOutput(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	defer func() { fetchRepos = oldFetchRepos }()
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{}, nil
+	}
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = "" // exercise default-output branch
+	//nolint:staticcheck // intentionally passing nil to cover the ctx == nil guard
+	Run(nil, opts)
+}
+
+// TestEngineRunJSON covers the OutputJSON aggregated payload branch and the
+// add CLONE/SYNC accumulation cases.
+func TestEngineRunJSON(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	oldGitPull := gitPull
+	oldGitCurrentBranch := gitCurrentBranch
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+		gitPull = oldGitPull
+		gitCurrentBranch = oldGitCurrentBranch
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "repo_clone", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+			{Name: "repo_sync", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error { return nil }
+	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	// Pre-create an existing git repo so repo_sync triggers a SYNC action.
+	if err := os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_sync", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputJSON
+	Run(context.Background(), opts)
+}
+
+// TestEngineRunNDJSON covers the OutputNDJSON per-result encode branch.
+func TestEngineRunNDJSON(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "repo_a", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputNDJSON
+	Run(context.Background(), opts)
+}
+
+// TestEngineRunLimitWarning covers the "fetched exactly N" warning branch.
+func TestEngineRunLimitWarning(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "repo_a", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Fetch.Limit = 1 // equals number of repos -> warning
+	Run(context.Background(), opts)
+}
+
+// TestEngineRunCanceled covers the ctx-cancel enqueue and worker/consumer
+// select branches by running with an already-canceled context.
+func TestEngineRunCanceled(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+	}()
+
+	repos := make([]github.Repo, 0, 50)
+	for i := 0; i < 50; i++ {
+		repos = append(repos, github.Repo{
+			Name:          fmt.Sprintf("repo_%d", i),
+			Language:      "Go",
+			Visibility:    "Public",
+			DefaultBranch: "main",
+		})
+	}
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return repos, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Fetch.Limit = len(repos)
+
+	// The cancel-handling select branches in the worker, the post-process
+	// results send, and the enqueue loop are inherently racy (both select
+	// cases may be ready). Run repeatedly with an already-canceled context to
+	// deterministically exercise all of them.
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		Run(ctx, opts)
+	}
+}
+
+// withRedirectedStdout temporarily replaces os.Stdout with the write end of a
+// pipe whose read end is immediately closed, so any write to stdout fails. It
+// returns a restore function.
+func withRedirectedStdout(t *testing.T) func() {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	return func() {
+		os.Stdout = old
+		_ = w.Close()
+	}
+}
+
+// TestEngineRunJSONEncodeError covers the OutputJSON encode-failure branch
+// (which calls osExit) by directing stdout to a broken pipe.
+func TestEngineRunJSONEncodeError(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+	}()
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "repo_a", Language: "Go", Visibility: "Public", DefaultBranch: "main"}}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	var exitCode int
+	oldOsExit := osExit
+	defer func() { osExit = oldOsExit }()
+	osExit = func(code int) { exitCode = code }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputJSON
+
+	restore := withRedirectedStdout(t)
+	Run(context.Background(), opts)
+	restore()
+
+	if exitCode != 1 {
+		t.Errorf("expected exit 1 on json encode failure, got %d", exitCode)
+	}
+}
+
+// TestEngineRunNDJSONEncodeError covers the OutputNDJSON per-result
+// encode-failure branch by directing stdout to a broken pipe.
+func TestEngineRunNDJSONEncodeError(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+	}()
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "repo_a", Language: "Go", Visibility: "Public", DefaultBranch: "main"}}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputNDJSON
+
+	restore := withRedirectedStdout(t)
+	Run(context.Background(), opts)
+	restore()
+}
+
+// TestMigrateLegacyFailures covers the MkdirAll-failure and Rename-failure
+// WARN branches of migrateLegacy.
+func TestMigrateLegacyFailures(t *testing.T) {
+	// MkdirAll failure: make the target's parent path component a regular file.
+	t.Run("mkdirall_fails", func(t *testing.T) {
+		baseDir, err := os.MkdirTemp("", "engine_test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Legacy dir: <base>/go/myrepo
+		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Target parent is <base>/Public/go. Create <base>/Public as a regular
+		// file so MkdirAll of the parent fails.
+		if err := os.WriteFile(filepath.Join(baseDir, "Public"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
+		migrateLegacy(baseDir, repos) // should log WARN and continue
+	})
+
+	// Rename failure: pre-create a non-empty destination directory so os.Rename
+	// of the legacy dir onto it fails.
+	t.Run("rename_fails", func(t *testing.T) {
+		baseDir, err := os.MkdirTemp("", "engine_test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.RemoveAll(baseDir)
+
+		// Legacy dir: <base>/go/myrepo
+		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Target dir: <base>/Public/go/myrepo, pre-populated so rename fails.
+		target := filepath.Join(baseDir, "Public", "go", "myrepo")
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, "keep.txt"), []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
+		migrateLegacy(baseDir, repos) // should log WARN about failed migration
+	})
+}
+
+// TestProcessRepoMkdirFail covers the failed-creating-target-directory branch
+// in processRepo by making the target's parent a regular file.
+func TestProcessRepoMkdirFail(t *testing.T) {
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(baseDir)
+
+	// Create <base>/Public/go as a regular file so MkdirAll of the target
+	// parent (<base>/Public/go) fails.
+	if err := os.MkdirAll(filepath.Join(baseDir, "Public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseDir, "Public", "go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := github.Repo{
+		Name:          "repo1",
+		Language:      "Go",
+		Visibility:    "Public",
+		DefaultBranch: "main",
+		CloneURL:      "http://clone",
+	}
+	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
+	job := Job{Repo: repo, Target: targetDir}
+
+	msg := processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, job)
+	if msg.Action != "ERROR" || !strings.Contains(msg.Message, "failed creating target directory") {
+		t.Fatalf("expected mkdir error result, got %#v", msg)
 	}
 }
 

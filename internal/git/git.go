@@ -12,10 +12,18 @@ import (
 
 // CloneOptions configures optional clone-time performance and layout flags.
 type CloneOptions struct {
+	// RecurseSubmodules, when true, clones submodules recursively by adding
+	// the --recurse-submodules flag.
 	RecurseSubmodules bool
-	SingleBranch      bool
-	Blobless          bool
-	Depth             int
+	// SingleBranch, when true, clones only the history of the default branch
+	// by adding the --single-branch flag.
+	SingleBranch bool
+	// Blobless, when true, performs a blobless partial clone by adding the
+	// --filter=blob:none flag, deferring blob downloads until needed.
+	Blobless bool
+	// Depth, when greater than zero, creates a shallow clone truncated to the
+	// given number of commits by adding the --depth flag.
+	Depth int
 }
 
 // Clone executes a git clone command for the given URL into the target directory.

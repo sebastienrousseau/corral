@@ -24,54 +24,85 @@ import (
 type OutputFormat string
 
 const (
-	OutputText   OutputFormat = "text"
-	OutputJSON   OutputFormat = "json"
+	// OutputText emits human-readable, line-oriented progress output.
+	OutputText OutputFormat = "text"
+	// OutputJSON emits a single aggregated JSON document at the end of the run.
+	OutputJSON OutputFormat = "json"
+	// OutputNDJSON emits one JSON object per result as a stream of newline-delimited records.
 	OutputNDJSON OutputFormat = "ndjson"
 )
 
 // RunOptions contains all execution controls for a run.
 type RunOptions struct {
-	Owner       string
-	BaseDir     string
+	// Owner is the GitHub user or organization whose repositories are processed.
+	Owner string
+	// BaseDir is the root directory under which repositories are laid out.
+	BaseDir string
+	// Concurrency is the number of worker goroutines processing repositories; must be >= 1.
 	Concurrency int
-	DryRun      bool
-	Orphans     bool
-	Protocol    string
-	DoSync      bool
-	Output      OutputFormat
+	// DryRun, when true, reports intended actions without performing clone or pull operations.
+	DryRun bool
+	// Orphans, when true, enables detection of local repositories no longer present upstream.
+	Orphans bool
+	// Protocol selects the clone transport and must be either "https" or "ssh".
+	Protocol string
+	// DoSync, when true, pulls updates into existing repositories.
+	DoSync bool
+	// Output selects the result emission format (text, json, or ndjson).
+	Output OutputFormat
 
+	// Fetch holds the options passed to the GitHub repository listing call.
 	Fetch github.FetchOptions
+	// Clone holds the options passed to each Git clone operation.
 	Clone git.CloneOptions
 }
 
 // Job encapsulates a repository to be processed along with its target directories.
 type Job struct {
-	Repo   github.Repo
+	// Repo is the GitHub repository to be processed.
+	Repo github.Repo
+	// Target is the destination directory for the repository under the new layout.
 	Target string
+	// Legacy is the directory where the repository may exist under the old layout.
 	Legacy string
 }
 
 // RepoResult represents the final status of processing a repository.
 type RepoResult struct {
-	RepoName    string `json:"repo"`
-	Action      string `json:"action"`
-	Message     string `json:"message"`
-	Target      string `json:"target"`
-	Visibility  string `json:"visibility"`
-	Language    string `json:"language"`
-	DryRun      bool   `json:"dry_run"`
-	Protocol    string `json:"protocol"`
-	ClonedURL   string `json:"clone_url,omitempty"`
-	SyncAttempt bool   `json:"sync_attempt"`
+	// RepoName is the name of the processed repository.
+	RepoName string `json:"repo"`
+	// Action is the outcome verb, such as CLONE, SYNC, SKIP, ERROR, or DRY-RUN.
+	Action string `json:"action"`
+	// Message is a human-readable description of the outcome.
+	Message string `json:"message"`
+	// Target is the destination directory for the repository.
+	Target string `json:"target"`
+	// Visibility is the repository visibility (e.g. Public or Private).
+	Visibility string `json:"visibility"`
+	// Language is the normalized primary language directory name.
+	Language string `json:"language"`
+	// DryRun indicates whether the run was performed in dry-run mode.
+	DryRun bool `json:"dry_run"`
+	// Protocol is the clone transport used (https or ssh).
+	Protocol string `json:"protocol"`
+	// ClonedURL is the URL used for cloning, if a clone was attempted.
+	ClonedURL string `json:"clone_url,omitempty"`
+	// SyncAttempt indicates whether a sync (pull) was attempted.
+	SyncAttempt bool `json:"sync_attempt"`
 }
 
 // Summary tracks aggregate run outcomes.
 type Summary struct {
-	Total   int `json:"total"`
-	Cloned  int `json:"cloned"`
-	Synced  int `json:"synced"`
+	// Total is the number of repositories scheduled for processing.
+	Total int `json:"total"`
+	// Cloned is the number of repositories successfully cloned.
+	Cloned int `json:"cloned"`
+	// Synced is the number of repositories successfully synced.
+	Synced int `json:"synced"`
+	// Skipped is the number of repositories skipped.
 	Skipped int `json:"skipped"`
-	Failed  int `json:"failed"`
+	// Failed is the number of repositories that failed to process.
+	Failed int `json:"failed"`
 }
 
 var (

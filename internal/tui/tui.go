@@ -12,9 +12,12 @@ import (
 
 // LogMsg represents a log entry to be displayed in the TUI.
 type LogMsg struct {
+	// RepoName is the name of the repository the entry refers to.
 	RepoName string
-	Action   string
-	Message  string
+	// Action is the operation performed (for example CLONE, SYNC, SKIP, ERROR).
+	Action string
+	// Message is a human-readable description of the outcome.
+	Message string
 }
 
 // model represents the state of the Bubble Tea application.
@@ -69,6 +72,8 @@ func (m *model) processLogMsg(msg LogMsg) {
 	}
 }
 
+// Update handles incoming Bubble Tea messages, advancing progress and stats as
+// repository results arrive and quitting when the run completes or is cancelled.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -96,6 +101,8 @@ var (
 	logStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
 
+// View renders the current progress bar, recent log lines, and, once finished,
+// the final summary of the run.
 func (m model) View() string {
 	pad := strings.Repeat(" ", 2)
 	percent := 1.0

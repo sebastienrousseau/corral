@@ -20,37 +20,58 @@ import (
 
 // Repo represents a simplified repository structure returned by the GitHub API.
 type Repo struct {
-	Name          string
-	Language      string
-	Visibility    string
+	// Name is the repository name (without the owner prefix).
+	Name string
+	// Language is the primary programming language, or "Other" when unknown.
+	Language string
+	// Visibility is the normalized visibility, either "Public" or "Private".
+	Visibility string
+	// DefaultBranch is the repository's default branch name.
 	DefaultBranch string
-	CloneURL      string
-	SSHURL        string
-	Fork          bool
-	Archived      bool
+	// CloneURL is the HTTPS clone URL for the repository.
+	CloneURL string
+	// SSHURL is the SSH clone URL for the repository.
+	SSHURL string
+	// Fork reports whether the repository is a fork.
+	Fork bool
+	// Archived reports whether the repository is archived.
+	Archived bool
 }
 
 // AuthMode controls how GitHub API credentials are resolved.
 type AuthMode string
 
 const (
-	AuthModeAuto  AuthMode = "auto"
+	// AuthModeAuto resolves credentials from the environment first, then the gh CLI.
+	AuthModeAuto AuthMode = "auto"
+	// AuthModeToken resolves credentials only from environment variables.
 	AuthModeToken AuthMode = "token"
-	AuthModeGH    AuthMode = "gh"
+	// AuthModeGH resolves credentials only via the gh CLI (`gh auth token`).
+	AuthModeGH AuthMode = "gh"
 )
 
 // FetchOptions configures repository fetch behavior.
 type FetchOptions struct {
-	Limit            int
-	Visibility       string
-	IncludeForks     bool
-	IncludeArchived  bool
+	// Limit caps the number of repositories returned; 0 means no limit.
+	Limit int
+	// Visibility filters repositories by visibility ("all", "public", or "private").
+	Visibility string
+	// IncludeForks includes forked repositories when true.
+	IncludeForks bool
+	// IncludeArchived includes archived repositories when true.
+	IncludeArchived bool
+	// IncludeLanguages, when non-empty, keeps only repositories matching these languages.
 	IncludeLanguages []string
+	// ExcludeLanguages removes repositories matching these languages.
 	ExcludeLanguages []string
-	AuthMode         AuthMode
-	RetryMax         int
-	RetryMinBackoff  time.Duration
-	RetryMaxBackoff  time.Duration
+	// AuthMode selects how the GitHub token is resolved.
+	AuthMode AuthMode
+	// RetryMax is the maximum number of retry attempts for transient failures.
+	RetryMax int
+	// RetryMinBackoff is the minimum delay between retry attempts.
+	RetryMinBackoff time.Duration
+	// RetryMaxBackoff is the maximum delay between retry attempts.
+	RetryMaxBackoff time.Duration
 }
 
 const (
@@ -199,6 +220,9 @@ type retryTransport struct {
 	maxBackoff time.Duration
 }
 
+// RoundTrip implements http.RoundTripper, retrying transient failures and
+// rate-limit responses with backoff until the request succeeds, becomes
+// non-retryable, the retry budget is exhausted, or the context is cancelled.
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	if base == nil {
@@ -245,7 +269,8 @@ func (t *retryTransport) backoff(attempt int) time.Duration {
 	if backoff > maxBackoff {
 		backoff = maxBackoff
 	}
-	jitter := time.Duration(rand.Int63n(int64(minBackoff) + 1))
+	// Non-cryptographic randomness is acceptable for retry backoff jitter.
+	jitter := time.Duration(rand.Int63n(int64(minBackoff) + 1)) //nolint:gosec // G404: jitter does not require crypto/rand
 	return backoff + jitter
 }
 

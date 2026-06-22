@@ -31,7 +31,7 @@ Then verify the output:
 ls ~/Code/
 ```
 
-Requires `gh`, `git`, and Go 1.25+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
+Requires `gh`, `git`, and Go 1.26+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
 
 <details>
 <summary>Platform-specific prerequisites</summary>
@@ -151,10 +151,16 @@ graph TD
 
 | Option | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
+| `--base-dir` | — | `$HOME/Code` | Root directory for cloned repos |
+| `--limit` | `-l` | `1000` | Maximum repositories to fetch |
+| `--concurrency` | `-c` | `1` | Number of concurrent clone/sync operations |
 | `--dry-run` | `-n` | off | Preview actions without making changes |
+| `--orphans` | `-o` | off | Detect and list local repositories no longer on GitHub |
 | `--help` | `-h` | — | Show help message |
+| `--version` | `-v` | — | Print the Corral version and exit |
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
 | `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
+| `--recurse-submodules` | — | off | Initialise submodules on clone and sync |
 | `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
 | `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
 | `--visibility` | — | `all` | Filter repositories by visibility: `all`, `public`, `private` |
@@ -209,6 +215,42 @@ Use GitHub CLI auth explicitly and perform shallow single-branch clones:
 
 ```bash
 ./corral --auth gh --clone-single-branch --clone-depth 1 my-username
+```
+
+Detect local repositories that no longer exist on GitHub (orphans):
+
+```bash
+./corral --orphans my-username
+```
+
+Clone with submodules, raising concurrency for a large account:
+
+```bash
+./corral --recurse-submodules --concurrency 16 my-org
+```
+
+Include forks and archived repositories, excluding generated languages:
+
+```bash
+./corral --include-forks --include-archived --exclude-languages makefile,dockerfile my-username
+```
+
+Stream one NDJSON record per repository (ideal for piping into `jq`):
+
+```bash
+./corral --output ndjson my-org | jq -r 'select(.action=="CLONE") | .repo'
+```
+
+Use a fixed token and tune retry backoff for flaky networks:
+
+```bash
+GITHUB_TOKEN=ghp_xxx ./corral --auth token --retry-max 6 --retry-min-backoff 1s --retry-max-backoff 30s my-org
+```
+
+Print the version:
+
+```bash
+./corral --version
 ```
 
 By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then falls back to `gh auth token`.

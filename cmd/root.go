@@ -185,15 +185,25 @@ func ExecuteContext(ctx context.Context) {
 	}
 }
 
-func init() {
-	rootCmd.Version = Version
+// userHomeDir resolves the current user's home directory. It is indirected
+// through a variable so tests can exercise the fallback path.
+var userHomeDir = os.UserHomeDir
 
-	home, err := os.UserHomeDir()
+// defaultBaseDir returns the default root directory for cloned repositories,
+// falling back to the current directory when the home directory cannot be
+// determined.
+func defaultBaseDir() string {
+	home, err := userHomeDir()
 	if err != nil {
 		home = "." // fallback
 	}
-	defaultBaseDir := filepath.Join(home, "Code")
-	rootCmd.Flags().StringVar(&baseDir, "base-dir", defaultBaseDir, "root directory for cloned repos")
+	return filepath.Join(home, "Code")
+}
+
+func init() {
+	rootCmd.Version = Version
+
+	rootCmd.Flags().StringVar(&baseDir, "base-dir", defaultBaseDir(), "root directory for cloned repos")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 1000, "max repos to list")
 	rootCmd.Flags().IntVarP(&concurrency, "concurrency", "c", 1, "number of concurrent operations")
 	rootCmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "preview actions without making changes")
