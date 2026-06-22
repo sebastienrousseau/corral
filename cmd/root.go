@@ -15,6 +15,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Version is the build version of Corral. It is overridden at release time via
+// -ldflags "-X github.com/sebastienrousseau/corral/cmd.Version=<version>".
+var Version = "0.0.2"
+
 var (
 	baseDir             string
 	concurrency         int
@@ -182,6 +186,8 @@ func ExecuteContext(ctx context.Context) {
 }
 
 func init() {
+	rootCmd.Version = Version
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "." // fallback

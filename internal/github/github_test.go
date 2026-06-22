@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	gh "github.com/google/go-github/v60/github"
+	gh "github.com/google/go-github/v74/github"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

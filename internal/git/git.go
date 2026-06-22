@@ -33,7 +33,9 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	if opts.Depth > 0 {
 		args = append(args, "--depth", strconv.Itoa(opts.Depth))
 	}
-	args = append(args, url, targetDir)
+	// The "--" terminator prevents a URL or path beginning with "-" from being
+	// interpreted as a git option.
+	args = append(args, "--", url, targetDir)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

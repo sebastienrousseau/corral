@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	gh "github.com/google/go-github/v60/github"
+	gh "github.com/google/go-github/v74/github"
 )
 
 // Repo represents a simplified repository structure returned by the GitHub API.
