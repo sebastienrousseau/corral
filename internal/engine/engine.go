@@ -322,9 +322,10 @@ func normalizeLanguage(lang string) string {
 		return "other"
 	}
 	l := lang
-	if l == "C#" {
+	switch l {
+	case "C#":
 		l = "CSharp"
-	} else if l == "C++" {
+	case "C++":
 		l = "Cpp"
 	}
 	l = strings.ReplaceAll(l, " ", "_")
@@ -340,7 +341,7 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 		targetDir := filepath.Join(baseDir, visDir, langDir, repo.Name)
 
 		if info, err := os.Stat(legacyDir); err == nil && info.IsDir() {
-			if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
 				log.Printf("WARN: failed creating target parent for migration %s: %v", targetDir, err)
 				continue
 			}
@@ -384,7 +385,7 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	}
 
 	if !dryRun {
-		if err := os.MkdirAll(filepath.Dir(targetDir), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
 			result.Action = "ERROR"
 			result.Message = "failed creating target directory"
 			return result
@@ -458,7 +459,10 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 	}
 
 	var orphans []string
-	filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
+	// Per-entry walk errors are deliberately ignored inside the callback; the
+	// outer error only signals an unreadable base directory, which is non-fatal
+	// for best-effort orphan detection.
+	_ = filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

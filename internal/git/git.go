@@ -44,6 +44,8 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	// The "--" terminator prevents a URL or path beginning with "-" from being
 	// interpreted as a git option.
 	args = append(args, "--", url, targetDir)
+	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
+	// are constructed internally from controlled options, not shell input.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -59,6 +61,8 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	if recurseSubmodules {
 		args = append(args, "--recurse-submodules")
 	}
+	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
+	// are constructed internally from controlled options, not shell input.
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -69,6 +73,7 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 
 // CurrentBranch retrieves the name of the currently checked-out branch.
 func CurrentBranch(targetDir string) (string, error) {
+	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
 	cmd := exec.Command("git", "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
@@ -79,6 +84,7 @@ func CurrentBranch(targetDir string) (string, error) {
 
 // RemoteOrigin retrieves the remote origin URL of the target directory.
 func RemoteOrigin(targetDir string) (string, error) {
+	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
 	cmd := exec.Command("git", "-C", targetDir, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {

@@ -89,9 +89,9 @@ func TestEngineRunHeadlessErrors(t *testing.T) {
 	}
 
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_skip", ".git"), 0o755)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_skip", ".git"), 0o750)
 
 	oldIsTerminal := isTerminal
 	defer func() { isTerminal = oldIsTerminal }()
@@ -129,7 +129,7 @@ func TestEngineRunSuccess(t *testing.T) {
 	}
 
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Fetch.Limit = 2
@@ -152,7 +152,7 @@ func TestEngineRunSuccess(t *testing.T) {
 
 func TestProcessRepo(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	repo := github.Repo{
 		Name:          "repo1",
@@ -170,7 +170,7 @@ func TestProcessRepo(t *testing.T) {
 		t.Errorf("Expected dry run clone, got %v", msg)
 	}
 
-	os.MkdirAll(filepath.Join(targetDir, ".git"), 0o755)
+	_ = os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
 
 	msg = processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git pull" {
@@ -182,14 +182,14 @@ func TestProcessRepo(t *testing.T) {
 		t.Errorf("Expected SKIP, got %v", msg)
 	}
 
-	os.RemoveAll(targetDir)
-	os.MkdirAll(targetDir, 0o755)
+	_ = os.RemoveAll(targetDir)
+	_ = os.MkdirAll(targetDir, 0o750)
 	msg = processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, job)
 	if msg.Action != "SKIP" || !strings.Contains(msg.Message, "not a git repo") {
 		t.Errorf("Expected SKIP for non-git repo, got %v", msg)
 	}
 
-	os.RemoveAll(targetDir)
+	_ = os.RemoveAll(targetDir)
 	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" {
 		t.Errorf("Expected DRY-RUN for ssh, got %v", msg)
@@ -198,7 +198,7 @@ func TestProcessRepo(t *testing.T) {
 
 func TestProcessRepoFull(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	oldGitClone := gitClone
 	oldGitPull := gitPull
@@ -235,13 +235,13 @@ func TestProcessRepoFull(t *testing.T) {
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error {
 		return fmt.Errorf("err")
 	}
-	os.RemoveAll(targetDir)
+	_ = os.RemoveAll(targetDir)
 	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
-	os.MkdirAll(filepath.Join(targetDir, ".git"), 0o755)
+	_ = os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
 	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
 	if msg.Action != "SYNC" {
 		t.Errorf("Expected SYNC, got %v", msg)
@@ -261,7 +261,7 @@ func TestProcessRepoFull(t *testing.T) {
 
 	repo.SSHURL = ""
 	job = Job{Repo: repo, Target: targetDir}
-	os.RemoveAll(targetDir)
+	_ = os.RemoveAll(targetDir)
 	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, job)
 	if msg.Action != "DRY-RUN" || !strings.Contains(msg.Message, "git clone") {
 		t.Errorf("Expected DRY-RUN for ssh fallback, got %v", msg)
@@ -272,7 +272,7 @@ func TestProcessRepoFull(t *testing.T) {
 
 func TestProcessRepoCanceled(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	repo := github.Repo{
 		Name:          "repo1",
@@ -296,9 +296,9 @@ func TestDetectOrphansError(t *testing.T) {
 	detectOrphans("owner", "/invalid_dir_that_does_not_exist", []github.Repo{})
 
 	baseDir, _ := os.MkdirTemp("", "engine_test")
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo1", ".git"), 0o755)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo1", ".git"), 0o750)
 
 	oldGitRemoteOrigin := gitRemoteOrigin
 	defer func() { gitRemoteOrigin = oldGitRemoteOrigin }()
@@ -349,10 +349,10 @@ func TestMigrateLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	legacyDir := filepath.Join(baseDir, "go", "myrepo")
-	os.MkdirAll(legacyDir, 0o755)
+	_ = os.MkdirAll(legacyDir, 0o750)
 
 	repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
 	migrateLegacy(baseDir, repos)
@@ -441,7 +441,7 @@ func TestEngineRunNilContextAndDefaultOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = "" // exercise default-output branch
@@ -481,10 +481,10 @@ func TestEngineRunJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	// Pre-create an existing git repo so repo_sync triggers a SYNC action.
-	if err := os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_sync", ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_sync", ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -517,7 +517,7 @@ func TestEngineRunNDJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = OutputNDJSON
@@ -548,7 +548,7 @@ func TestEngineRunLimitWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Fetch.Limit = 1 // equals number of repos -> warning
@@ -587,7 +587,7 @@ func TestEngineRunCanceled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Fetch.Limit = len(repos)
@@ -650,7 +650,7 @@ func TestEngineRunJSONEncodeError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = OutputJSON
@@ -686,7 +686,7 @@ func TestEngineRunNDJSONEncodeError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = OutputNDJSON
@@ -705,15 +705,15 @@ func TestMigrateLegacyFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(baseDir)
+		defer func() { _ = os.RemoveAll(baseDir) }()
 
 		// Legacy dir: <base>/go/myrepo
-		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		// Target parent is <base>/Public/go. Create <base>/Public as a regular
 		// file so MkdirAll of the parent fails.
-		if err := os.WriteFile(filepath.Join(baseDir, "Public"), []byte("x"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(baseDir, "Public"), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 
@@ -728,18 +728,18 @@ func TestMigrateLegacyFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer os.RemoveAll(baseDir)
+		defer func() { _ = os.RemoveAll(baseDir) }()
 
 		// Legacy dir: <base>/go/myrepo
-		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(baseDir, "go", "myrepo"), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		// Target dir: <base>/Public/go/myrepo, pre-populated so rename fails.
 		target := filepath.Join(baseDir, "Public", "go", "myrepo")
-		if err := os.MkdirAll(target, 0o755); err != nil {
+		if err := os.MkdirAll(target, 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(target, "keep.txt"), []byte("data"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(target, "keep.txt"), []byte("data"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 
@@ -755,14 +755,14 @@ func TestProcessRepoMkdirFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	// Create <base>/Public/go as a regular file so MkdirAll of the target
 	// parent (<base>/Public/go) fails.
-	if err := os.MkdirAll(filepath.Join(baseDir, "Public"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(baseDir, "Public"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(baseDir, "Public", "go"), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "Public", "go"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -787,17 +787,17 @@ func TestCleanupEmptyFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(baseDir)
+	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	emptyDir := filepath.Join(baseDir, "empty")
-	os.MkdirAll(emptyDir, 0o755)
+	_ = os.MkdirAll(emptyDir, 0o750)
 
 	notEmptyDir := filepath.Join(baseDir, "not_empty")
-	os.MkdirAll(notEmptyDir, 0o755)
-	os.WriteFile(filepath.Join(notEmptyDir, "file.txt"), []byte("data"), 0o644)
+	_ = os.MkdirAll(notEmptyDir, 0o750)
+	_ = os.WriteFile(filepath.Join(notEmptyDir, "file.txt"), []byte("data"), 0o600)
 
-	os.MkdirAll(filepath.Join(baseDir, "Public"), 0o755)
-	os.MkdirAll(filepath.Join(baseDir, "Private"), 0o755)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Public"), 0o750)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Private"), 0o750)
 
 	cleanupEmptyFolders(baseDir)
 

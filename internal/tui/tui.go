@@ -64,9 +64,10 @@ func (m *model) processLogMsg(msg LogMsg) {
 	case "SKIP":
 		m.existing++
 	case "DRY-RUN":
-		if msg.Message == "git clone" {
+		switch msg.Message {
+		case "git clone":
 			m.cloned++
-		} else if msg.Message == "git pull" {
+		case "git pull":
 			m.synced++
 		}
 	}
