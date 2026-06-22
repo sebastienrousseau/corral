@@ -31,7 +31,7 @@ Then verify the output:
 ls ~/Code/
 ```
 
-Requires `gh`, `git`, and Go 1.25+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
+Requires `gh`, `git`, and Go 1.26+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
 
 <details>
 <summary>Platform-specific prerequisites</summary>
@@ -151,10 +151,29 @@ graph TD
 
 | Option | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
+| `--base-dir` | — | `$HOME/Code` | Root directory for cloned repos |
+| `--limit` | `-l` | `1000` | Maximum repositories to fetch |
+| `--concurrency` | `-c` | `1` | Number of concurrent clone/sync operations |
 | `--dry-run` | `-n` | off | Preview actions without making changes |
+| `--orphans` | `-o` | off | Detect and list local repositories no longer on GitHub |
 | `--help` | `-h` | — | Show help message |
+| `--version` | `-v` | — | Print the Corral version and exit |
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
 | `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
+| `--recurse-submodules` | — | off | Initialise submodules on clone and sync |
+| `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
+| `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
+| `--visibility` | — | `all` | Filter repositories by visibility: `all`, `public`, `private` |
+| `--include-forks` | — | off | Include forked repositories |
+| `--include-archived` | — | off | Include archived repositories |
+| `--languages` | — | — | Comma-separated language allow-list (for example: `go,rust`) |
+| `--exclude-languages` | — | — | Comma-separated language deny-list |
+| `--clone-blobless` | — | off | Use partial clone (`--filter=blob:none`) |
+| `--clone-single-branch` | — | off | Clone only the default branch |
+| `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
+| `--retry-max` | — | `4` | Max retries for transient GitHub API failures |
+| `--retry-min-backoff` | — | `500ms` | Minimum backoff between retries |
+| `--retry-max-backoff` | — | `8s` | Maximum backoff between retries |
 
 Clone a personal account:
 
@@ -186,7 +205,55 @@ Preview what would happen without making changes:
 ./corral --dry-run my-org
 ```
 
-Private repositories require a `gh` token with appropriate access. Public repositories from any account are always available.
+Fetch only private Go and Rust repositories, and emit machine-readable JSON:
+
+```bash
+./corral --visibility private --languages go,rust --output json my-org
+```
+
+Use GitHub CLI auth explicitly and perform shallow single-branch clones:
+
+```bash
+./corral --auth gh --clone-single-branch --clone-depth 1 my-username
+```
+
+Detect local repositories that no longer exist on GitHub (orphans):
+
+```bash
+./corral --orphans my-username
+```
+
+Clone with submodules, raising concurrency for a large account:
+
+```bash
+./corral --recurse-submodules --concurrency 16 my-org
+```
+
+Include forks and archived repositories, excluding generated languages:
+
+```bash
+./corral --include-forks --include-archived --exclude-languages makefile,dockerfile my-username
+```
+
+Stream one NDJSON record per repository (ideal for piping into `jq`):
+
+```bash
+./corral --output ndjson my-org | jq -r 'select(.action=="CLONE") | .repo'
+```
+
+Use a fixed token and tune retry backoff for flaky networks:
+
+```bash
+GITHUB_TOKEN=ghp_xxx ./corral --auth token --retry-max 6 --retry-min-backoff 1s --retry-max-backoff 30s my-org
+```
+
+Print the version:
+
+```bash
+./corral --version
+```
+
+By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then falls back to `gh auth token`.
 
 ---
 
@@ -215,7 +282,7 @@ Private repositories require a `gh` token with appropriate access. Public reposi
 | Message | Cause | Solution |
 | :--- | :--- | :--- |
 | `ERROR: Required command 'git' not found` | Git is not installed | See Install above |
-| `ERROR: GITHUB_TOKEN not set` | Environment variable missing | Run `export GITHUB_TOKEN=$(gh auth token)` |
+| `ERROR: GITHUB_TOKEN (or GH_TOKEN) environment variable not set` | `--auth token` was set and no token variable is present | Run `export GITHUB_TOKEN=$(gh auth token)` or switch to `--auth auto` |
 | `FAILED: owner/repo` | Network issue or private repo without token access | Check connectivity and verify `gh auth status` |
 </details>
 

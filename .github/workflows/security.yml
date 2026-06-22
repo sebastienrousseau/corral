@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: sebastienrousseau/pipelines/.github/workflows/security.yml@main
+    uses: sebastienrousseau/pipelines/.github/workflows/security.yml@99a39f7d02e76beb2b935fa07b7cd6a46d8bbc65
     with:
       language: 'go'
       severity-threshold: 'moderate'

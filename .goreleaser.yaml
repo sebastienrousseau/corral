@@ -14,7 +14,7 @@ builds:
     main: ./main.go
     binary: corral
     ldflags:
-      - -s -w -X main.version={{.Version}}
+      - -s -w -X github.com/sebastienrousseau/corral/cmd.Version={{.Version}}
 
 archives:
   - format: tar.gz

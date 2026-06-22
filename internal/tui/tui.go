@@ -12,9 +12,12 @@ import (
 
 // LogMsg represents a log entry to be displayed in the TUI.
 type LogMsg struct {
+	// RepoName is the name of the repository the entry refers to.
 	RepoName string
-	Action   string
-	Message  string
+	// Action is the operation performed (for example CLONE, SYNC, SKIP, ERROR).
+	Action string
+	// Message is a human-readable description of the outcome.
+	Message string
 }
 
 // model represents the state of the Bubble Tea application.
@@ -61,14 +64,17 @@ func (m *model) processLogMsg(msg LogMsg) {
 	case "SKIP":
 		m.existing++
 	case "DRY-RUN":
-		if msg.Message == "git clone" {
+		switch msg.Message {
+		case "git clone":
 			m.cloned++
-		} else if msg.Message == "git pull" {
+		case "git pull":
 			m.synced++
 		}
 	}
 }
 
+// Update handles incoming Bubble Tea messages, advancing progress and stats as
+// repository results arrive and quitting when the run completes or is cancelled.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -96,9 +102,14 @@ var (
 	logStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 )
 
+// View renders the current progress bar, recent log lines, and, once finished,
+// the final summary of the run.
 func (m model) View() string {
 	pad := strings.Repeat(" ", 2)
-	percent := float64(m.done) / float64(m.total)
+	percent := 1.0
+	if m.total > 0 {
+		percent = float64(m.done) / float64(m.total)
+	}
 	progBar := m.prog.ViewAs(percent)
 
 	out := titleStyle.Render("Corral - Organising Repositories") + "\n"
