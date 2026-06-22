@@ -13,7 +13,7 @@ jobs:
     name: Go CI
     permissions:
       contents: read
-    uses: sebastienrousseau/pipelines/.github/workflows/go-ci.yml@99a39f7d02e76beb2b935fa07b7cd6a46d8bbc65
+    uses: sebastienrousseau/pipelines/.github/workflows/go-ci.yml@186372a9033a4a2ab2c1157866a5a0bc37410683
     with:
       go-version: '1.26.1'
       run-cross-platform: true
