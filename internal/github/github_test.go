@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -513,6 +514,13 @@ func TestFetchReposWithClientOptionsGuards(t *testing.T) {
 }
 
 func TestRunGitHubCLIAuthToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// The fixture installs a POSIX shell script named "gh" on PATH, which
+		// Windows cannot execute (it requires a .exe/.bat/.cmd). The closure is
+		// fully covered on the POSIX CI runners.
+		t.Skip("fake gh PATH executable fixture is POSIX-specific")
+	}
+
 	// Snapshot the real default implementation so other tests that swap the
 	// package var cannot interfere with this one.
 	realRun := runGitHubCLIAuthToken
