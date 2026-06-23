@@ -34,6 +34,10 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
+          # PAT with read access to administrative settings so checks such as
+          # Branch-Protection can be evaluated (the default GITHUB_TOKEN cannot
+          # read them). Falls back to the default token if the secret is unset.
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
