@@ -56,8 +56,18 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 
 // Pull executes a git pull --rebase --autostash command in the target directory.
 // If recurseSubmodules is true, it appends the --recurse-submodules flag.
+//
+// Signature verification is explicitly disabled for the merge/rebase so an
+// unattended sync never aborts on unsigned or untrusted commits when the user
+// has merge.verifySignatures / rebase.verifySignatures enabled globally. This
+// overrides those settings for these invocations only and does not change the
+// user's configuration.
 func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
-	args := []string{"-C", targetDir, "pull", "--rebase", "--autostash"}
+	args := []string{
+		"-c", "merge.verifySignatures=false",
+		"-c", "rebase.verifySignatures=false",
+		"-C", targetDir, "pull", "--rebase", "--autostash",
+	}
 	if recurseSubmodules {
 		args = append(args, "--recurse-submodules")
 	}

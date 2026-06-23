@@ -158,3 +158,40 @@ func TestCloneOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestPullIgnoresSignatureVerification(t *testing.T) {
+	upstream, workDir := setupTestRepo(t)
+	defer cleanup(t, upstream)
+	defer cleanup(t, workDir)
+
+	targetDir, err := os.MkdirTemp("", "git_test_verify")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup(t, targetDir)
+	if err := os.RemoveAll(targetDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := Clone(context.Background(), upstream, targetDir, CloneOptions{}); err != nil {
+		t.Fatalf("clone failed: %v", err)
+	}
+
+	// Enable signature verification locally. The commits are unsigned, so a
+	// plain "git pull --rebase" would abort with a fatal error.
+	run(t, "git", "-C", targetDir, "config", "rebase.verifySignatures", "true")
+	run(t, "git", "-C", targetDir, "config", "merge.verifySignatures", "true")
+
+	// Create a new unsigned upstream commit to pull.
+	file := filepath.Join(workDir, "more.txt")
+	if err := os.WriteFile(file, []byte("more"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "git", "-C", workDir, "add", "more.txt")
+	run(t, "git", "-C", workDir, "commit", "-m", "more")
+	run(t, "git", "-C", workDir, "push", "origin", "main")
+
+	// Pull must succeed despite verifySignatures=true, because it overrides it.
+	if err := Pull(context.Background(), targetDir, false); err != nil {
+		t.Fatalf("Pull should ignore signature verification, got: %v", err)
+	}
+}
