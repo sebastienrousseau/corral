@@ -317,10 +317,32 @@ func TestDetectOrphansError(t *testing.T) {
 		return "git@github.com:owner/repo.git", nil
 	}
 	detectOrphans("owner", baseDir, []github.Repo{})
+
+	// The local directory name ("repo1") is unknown, but the remote URL resolves
+	// to a known repository, so it must NOT be flagged as an orphan.
+	gitRemoteOrigin = func(targetDir string) (string, error) {
+		return "https://github.com/owner/actualname.git", nil
+	}
+	detectOrphans("owner", baseDir, []github.Repo{{Name: "actualname"}})
 }
 
 func TestCleanupEmptyFoldersError(t *testing.T) {
-	cleanupEmptyFolders("/invalid_dir_that_does_not_exist")
+	cleanupEmptyFolders("/invalid_dir_that_does_not_exist", []github.Repo{{Language: "Go"}})
+}
+
+func TestRepoNameFromURL(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"https://github.com/owner/repo.git", "repo"},
+		{"git@github.com:owner/repo.git", "repo"},
+		{"https://github.com/owner/repo", "repo"},
+		{"plainname", "plainname"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := repoNameFromURL(tt.in); got != tt.want {
+			t.Errorf("repoNameFromURL(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
 }
 
 func TestNormalizeLanguage(t *testing.T) {
@@ -791,25 +813,63 @@ func TestCleanupEmptyFolders(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	emptyDir := filepath.Join(baseDir, "empty")
-	_ = os.MkdirAll(emptyDir, 0o750)
+	// The duplicate Go language exercises the seen-dedup path.
+	repos := []github.Repo{{Language: "Go"}, {Language: "Rust"}, {Language: "Go"}}
 
-	notEmptyDir := filepath.Join(baseDir, "not_empty")
-	_ = os.MkdirAll(notEmptyDir, 0o750)
-	_ = os.WriteFile(filepath.Join(notEmptyDir, "file.txt"), []byte("data"), 0o600)
+	// Empty legacy language dir for a known language: removed.
+	emptyLang := filepath.Join(baseDir, "go")
+	_ = os.MkdirAll(emptyLang, 0o750)
 
-	_ = os.MkdirAll(filepath.Join(baseDir, "Public"), 0o750)
-	_ = os.MkdirAll(filepath.Join(baseDir, "Private"), 0o750)
+	// Non-empty legacy language dir: os.Remove leaves it alone.
+	nonEmptyLang := filepath.Join(baseDir, "rust")
+	_ = os.MkdirAll(nonEmptyLang, 0o750)
+	_ = os.WriteFile(filepath.Join(nonEmptyLang, "leftover"), []byte("x"), 0o600)
 
-	cleanupEmptyFolders(baseDir)
+	// Unrelated dir that is not a repo language: must be left untouched.
+	unrelated := filepath.Join(baseDir, ".claude")
+	_ = os.MkdirAll(unrelated, 0o750)
 
-	if _, err := os.Stat(emptyDir); !os.IsNotExist(err) {
-		t.Errorf("Expected %s to be removed", emptyDir)
+	cleanupEmptyFolders(baseDir, repos)
+
+	if _, err := os.Stat(emptyLang); !os.IsNotExist(err) {
+		t.Errorf("Expected empty language dir %s to be removed", emptyLang)
 	}
-	if _, err := os.Stat(notEmptyDir); os.IsNotExist(err) {
-		t.Errorf("Expected %s to be kept", notEmptyDir)
+	if _, err := os.Stat(nonEmptyLang); os.IsNotExist(err) {
+		t.Errorf("Expected non-empty language dir %s to be kept", nonEmptyLang)
 	}
-	if _, err := os.Stat(filepath.Join(baseDir, "Public")); os.IsNotExist(err) {
-		t.Errorf("Expected Public to be kept")
+	if _, err := os.Stat(unrelated); os.IsNotExist(err) {
+		t.Errorf("Expected unrelated dir %s to be kept", unrelated)
+	}
+}
+
+func TestRunWiresGitTokenProvider(t *testing.T) {
+	oldFetch := fetchRepos
+	defer func() { fetchRepos = oldFetch }()
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return nil, nil
+	}
+	oldIsTerminal := isTerminal
+	defer func() { isTerminal = oldIsTerminal }()
+	isTerminal = func(fd uintptr) bool { return false }
+
+	oldTok, had := os.LookupEnv("GITHUB_TOKEN")
+	defer func() {
+		if had {
+			_ = os.Setenv("GITHUB_TOKEN", oldTok)
+		} else {
+			_ = os.Unsetenv("GITHUB_TOKEN")
+		}
+	}()
+	_ = os.Setenv("GITHUB_TOKEN", "tok-xyz")
+
+	baseDir, _ := os.MkdirTemp("", "engine_tok")
+	defer func() { _ = os.RemoveAll(baseDir) }()
+
+	Run(context.Background(), defaultRunOptions(baseDir))
+	if git.TokenProvider == nil {
+		t.Fatal("expected git.TokenProvider to be wired after Run")
+	}
+	if got := git.TokenProvider(); got != "tok-xyz" {
+		t.Errorf("git.TokenProvider() = %q, want tok-xyz", got)
 	}
 }

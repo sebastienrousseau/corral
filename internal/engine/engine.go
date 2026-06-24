@@ -4,7 +4,6 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -151,6 +150,10 @@ func Run(ctx context.Context, opts RunOptions) {
 		opts.Output = OutputText
 	}
 
+	// Allow git to authenticate HTTPS clones/pulls of private repositories using
+	// the same credential resolved for the GitHub API.
+	git.TokenProvider = func() string { return github.Token(ctx, opts.Fetch.AuthMode) }
+
 	isTTY := isTerminal(os.Stdout.Fd())
 	if !isTTY {
 		log.SetOutput(os.Stdout)
@@ -275,7 +278,7 @@ enqueueLoop:
 	close(results)
 	consumerWG.Wait()
 
-	cleanupEmptyFolders(opts.BaseDir)
+	cleanupEmptyFolders(opts.BaseDir, repos)
 
 	if opts.Orphans {
 		detectOrphans(opts.Owner, opts.BaseDir, repos)
@@ -352,18 +355,20 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 	}
 }
 
-func cleanupEmptyFolders(baseDir string) {
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != "Public" && entry.Name() != "Private" {
-			path := filepath.Join(baseDir, entry.Name())
-			if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
-				log.Printf("WARN: failed to remove legacy folder %s: %v", path, err)
-			}
+// cleanupEmptyFolders removes the now-empty legacy top-level language
+// directories left behind by migrateLegacy. It only targets directories whose
+// names match a repository language, and os.Remove deletes a directory only
+// when it is empty, so unrelated entries under baseDir (e.g. .claude, other
+// projects) are never touched.
+func cleanupEmptyFolders(baseDir string, repos []github.Repo) {
+	seen := make(map[string]struct{})
+	for _, repo := range repos {
+		lang := normalizeLanguage(repo.Language)
+		if _, ok := seen[lang]; ok {
+			continue
 		}
+		seen[lang] = struct{}{}
+		_ = os.Remove(filepath.Join(baseDir, lang)) // removes only when empty
 	}
 }
 
@@ -387,7 +392,7 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	if !dryRun {
 		if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
 			result.Action = "ERROR"
-			result.Message = "failed creating target directory"
+			result.Message = fmt.Sprintf("failed creating target directory: %v", err)
 			return result
 		}
 	}
@@ -410,7 +415,7 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 			err = gitPull(ctx, targetDir, cloneOpts.RecurseSubmodules)
 			if err != nil {
 				result.Action = "ERROR"
-				result.Message = "sync failed"
+				result.Message = fmt.Sprintf("sync failed: %v", err)
 				return result
 			}
 			result.Action = "SYNC"
@@ -443,12 +448,22 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	err := gitClone(ctx, url, targetDir, cloneOpts)
 	if err != nil {
 		result.Action = "ERROR"
-		result.Message = "clone failed"
+		result.Message = fmt.Sprintf("clone failed: %v", err)
 		return result
 	}
 	result.Action = "CLONE"
 	result.Message = "cloned successfully"
 	return result
+}
+
+// repoNameFromURL extracts the repository name from a git remote URL, stripping
+// any trailing ".git" suffix. It returns an empty string when no segment exists.
+func repoNameFromURL(url string) string {
+	url = strings.TrimSuffix(strings.TrimSpace(url), ".git")
+	if i := strings.LastIndexAny(url, "/:"); i >= 0 {
+		return url[i+1:]
+	}
+	return url
 }
 
 func detectOrphans(owner, baseDir string, repos []github.Repo) {
@@ -468,10 +483,12 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 		}
 		if d.IsDir() && d.Name() == ".git" {
 			repoDir := filepath.Dir(path)
-			repoName := filepath.Base(repoDir)
 			url, err := gitRemoteOrigin(repoDir)
 			if err == nil && (strings.Contains(url, "/"+owner+"/") || strings.Contains(url, ":"+owner+"/")) {
-				if !repoMap[repoName] {
+				// Match against both the directory name and the name encoded in
+				// the remote URL, so a locally-renamed directory whose remote
+				// still points at a known repository is not flagged as an orphan.
+				if !repoMap[filepath.Base(repoDir)] && !repoMap[repoNameFromURL(url)] {
 					orphans = append(orphans, repoDir)
 				}
 			}

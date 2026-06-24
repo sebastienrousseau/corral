@@ -17,7 +17,7 @@ import (
 
 // Version is the build version of Corral. It is overridden at release time via
 // -ldflags "-X github.com/sebastienrousseau/corral/cmd.Version=<version>".
-var Version = "0.0.4"
+var Version = "0.0.5"
 
 var (
 	baseDir             string
