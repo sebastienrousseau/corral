@@ -6,7 +6,7 @@ Corral is a compiled Go application with a Bubble Tea terminal user interface th
 
 1. Fork and clone the repository.
 2. Install development dependencies:
-   - **Go 1.21+**
+   - **Go 1.26+**
    - **Make**
    - **Git**
 

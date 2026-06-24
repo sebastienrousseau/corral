@@ -175,7 +175,7 @@ func TestExecute(t *testing.T) {
 
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"corral"}
+	os.Args = []string{"corralctl"}
 	rootCmd.SetArgs([]string{})
 	exitCode = 0
 	Execute()
@@ -183,7 +183,7 @@ func TestExecute(t *testing.T) {
 		t.Errorf("Expected Execute() to exit with code 1 when no args provided, got %d", exitCode)
 	}
 
-	os.Args = []string{"corral", "-h"}
+	os.Args = []string{"corralctl", "-h"}
 	rootCmd.SetArgs([]string{"-h"})
 	exitCode = 0
 	Execute()

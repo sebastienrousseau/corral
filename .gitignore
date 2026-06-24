@@ -12,5 +12,7 @@
 .vscode/
 
 # Build artifacts
-corralcoverage.*
+/corral
+/corralctl
+coverage.*
 dist/
