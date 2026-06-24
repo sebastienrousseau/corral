@@ -387,6 +387,17 @@ func envToken() string {
 	return ""
 }
 
+// Token resolves a GitHub token for the given auth mode, returning an empty
+// string when none can be obtained. It lets the git package authenticate HTTPS
+// clones and pulls of private repositories with the same credential as the API.
+func Token(ctx context.Context, authMode AuthMode) string {
+	tok, err := resolveToken(ctx, authMode)
+	if err != nil {
+		return ""
+	}
+	return tok
+}
+
 func resolveToken(ctx context.Context, authMode AuthMode) (string, error) {
 	switch normalizeAuthMode(authMode) {
 	case AuthModeToken:

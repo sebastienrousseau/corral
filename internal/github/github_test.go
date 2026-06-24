@@ -811,3 +811,23 @@ func TestFetchReposAuthenticatedUser(t *testing.T) {
 		t.Fatalf("expected fallback to public listing, got %+v", repos)
 	}
 }
+
+func TestToken(t *testing.T) {
+	oldGitHub, hadGitHub := os.LookupEnv("GITHUB_TOKEN")
+	oldGH, hadGH := os.LookupEnv("GH_TOKEN")
+	defer func() {
+		restoreEnv(t, "GITHUB_TOKEN", oldGitHub, hadGitHub)
+		restoreEnv(t, "GH_TOKEN", oldGH, hadGH)
+	}()
+
+	mustSetenv(t, "GITHUB_TOKEN", "tok-123")
+	if got := Token(context.Background(), AuthModeToken); got != "tok-123" {
+		t.Errorf("Token() = %q, want tok-123", got)
+	}
+
+	mustUnsetenv(t, "GITHUB_TOKEN")
+	mustUnsetenv(t, "GH_TOKEN")
+	if got := Token(context.Background(), AuthModeToken); got != "" {
+		t.Errorf("Token() with no credentials = %q, want empty", got)
+	}
+}

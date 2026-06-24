@@ -4,11 +4,48 @@ package git
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 )
+
+// TokenProvider, when set, returns a GitHub token used to authenticate HTTPS
+// operations against github.com so private repositories can be cloned and
+// pulled non-interactively. The token is supplied to git via GIT_CONFIG_*
+// environment variables (an http extraheader scoped to https://github.com/), so
+// it is never written to a repository's .git/config or exposed in the process
+// argument list.
+var TokenProvider func() string
+
+// authEnv returns the environment variables that inject an Authorization header
+// for github.com HTTPS requests, or nil when no token is available. The header
+// is scoped to https://github.com/, so it is harmless for SSH remotes.
+func authEnv() []string {
+	if TokenProvider == nil {
+		return nil
+	}
+	tok := TokenProvider()
+	if tok == "" {
+		return nil
+	}
+	cred := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + tok))
+	return []string{
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=http.https://github.com/.extraheader",
+		"GIT_CONFIG_VALUE_0=Authorization: Basic " + cred,
+	}
+}
+
+// withAuth attaches the github.com Authorization header environment to cmd when
+// a token is available, preserving the inherited environment otherwise.
+func withAuth(cmd *exec.Cmd) {
+	if env := authEnv(); env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+}
 
 // CloneOptions configures optional clone-time performance and layout flags.
 type CloneOptions struct {
@@ -47,6 +84,7 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
 	// are constructed internally from controlled options, not shell input.
 	cmd := exec.CommandContext(ctx, "git", args...)
+	withAuth(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -74,6 +112,7 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
 	// are constructed internally from controlled options, not shell input.
 	cmd := exec.CommandContext(ctx, "git", args...)
+	withAuth(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))

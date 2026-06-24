@@ -195,3 +195,42 @@ func TestPullIgnoresSignatureVerification(t *testing.T) {
 		t.Fatalf("Pull should ignore signature verification, got: %v", err)
 	}
 }
+
+func TestAuthEnv(t *testing.T) {
+	defer func() { TokenProvider = nil }()
+
+	TokenProvider = nil
+	if env := authEnv(); env != nil {
+		t.Errorf("expected nil env when TokenProvider is unset, got %v", env)
+	}
+
+	TokenProvider = func() string { return "" }
+	if env := authEnv(); env != nil {
+		t.Errorf("expected nil env for an empty token, got %v", env)
+	}
+
+	TokenProvider = func() string { return "secret" }
+	env := authEnv()
+	if len(env) != 3 || env[0] != "GIT_CONFIG_COUNT=1" {
+		t.Fatalf("expected three auth env vars, got %v", env)
+	}
+
+	cmd := exec.Command("git", "version")
+	withAuth(cmd)
+	found := false
+	for _, e := range cmd.Env {
+		if e == "GIT_CONFIG_COUNT=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected withAuth to inject GIT_CONFIG env, got %v", cmd.Env)
+	}
+
+	TokenProvider = nil
+	cmd2 := exec.Command("git", "version")
+	withAuth(cmd2)
+	if cmd2.Env != nil {
+		t.Errorf("expected withAuth to leave Env unset when no token is available")
+	}
+}
