@@ -18,12 +18,29 @@
 
 ## Install
 
+**Homebrew (macOS / Linux):**
+
+```bash
+brew install sebastienrousseau/tap/corralctl
+```
+
+**Arch Linux (AUR):**
+
+```bash
+yay -S corralctl-bin    # or: paru -S corralctl-bin
+```
+
+**From source** (requires Go 1.26+):
+
 ```bash
 git clone https://github.com/sebastienrousseau/corral.git
 cd corral
+make build              # produces ./corralctl
 gh auth login
-./corral <owner>
+./corralctl <owner>
 ```
+
+Prebuilt binaries and `.deb`/`.rpm` packages are also attached to each [GitHub release](https://github.com/sebastienrousseau/corral/releases/latest).
 
 Then verify the output:
 
@@ -32,6 +49,8 @@ ls ~/Code/
 ```
 
 Requires `gh`, `git`, and Go 1.26+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
+
+> The command is `corralctl` (the project is **Corral**); the `…ctl` binary name avoids a clash with the unrelated `corral` formula in homebrew-core.
 
 <details>
 <summary>Platform-specific prerequisites</summary>
@@ -67,7 +86,7 @@ The tool is idempotent and non-interactive. Safe to run on a schedule:
 
 ```bash
 # crontab -e
-0 2 * * * /path/to/corral my-username
+0 2 * * * /path/to/corralctl my-username
 ```
 
 Existing repositories are skipped. Only new ones are cloned.
@@ -178,79 +197,79 @@ graph TD
 Clone a personal account:
 
 ```bash
-./corral my-username
+./corralctl my-username
 ```
 
 Clone an organisation into a custom directory:
 
 ```bash
-./corral my-org ~/Projects 500
+./corralctl my-org ~/Projects 500
 ```
 
 Clone via SSH (key-based auth):
 
 ```bash
-./corral --protocol ssh my-username
+./corralctl --protocol ssh my-username
 ```
 
 Skip pulling updates for existing clones:
 
 ```bash
-./corral --no-sync my-username
+./corralctl --no-sync my-username
 ```
 
 Preview what would happen without making changes:
 
 ```bash
-./corral --dry-run my-org
+./corralctl --dry-run my-org
 ```
 
 Fetch only private Go and Rust repositories, and emit machine-readable JSON:
 
 ```bash
-./corral --visibility private --languages go,rust --output json my-org
+./corralctl --visibility private --languages go,rust --output json my-org
 ```
 
 Use GitHub CLI auth explicitly and perform shallow single-branch clones:
 
 ```bash
-./corral --auth gh --clone-single-branch --clone-depth 1 my-username
+./corralctl --auth gh --clone-single-branch --clone-depth 1 my-username
 ```
 
 Detect local repositories that no longer exist on GitHub (orphans):
 
 ```bash
-./corral --orphans my-username
+./corralctl --orphans my-username
 ```
 
 Clone with submodules, raising concurrency for a large account:
 
 ```bash
-./corral --recurse-submodules --concurrency 16 my-org
+./corralctl --recurse-submodules --concurrency 16 my-org
 ```
 
 Include forks and archived repositories, excluding generated languages:
 
 ```bash
-./corral --include-forks --include-archived --exclude-languages makefile,dockerfile my-username
+./corralctl --include-forks --include-archived --exclude-languages makefile,dockerfile my-username
 ```
 
 Stream one NDJSON record per repository (ideal for piping into `jq`):
 
 ```bash
-./corral --output ndjson my-org | jq -r 'select(.action=="CLONE") | .repo'
+./corralctl --output ndjson my-org | jq -r 'select(.action=="CLONE") | .repo'
 ```
 
 Use a fixed token and tune retry backoff for flaky networks:
 
 ```bash
-GITHUB_TOKEN=ghp_xxx ./corral --auth token --retry-max 6 --retry-min-backoff 1s --retry-max-backoff 30s my-org
+GITHUB_TOKEN=ghp_xxx ./corralctl --auth token --retry-max 6 --retry-min-backoff 1s --retry-max-backoff 30s my-org
 ```
 
 Print the version:
 
 ```bash
-./corral --version
+./corralctl --version
 ```
 
 By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then falls back to `gh auth token`.

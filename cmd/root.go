@@ -17,7 +17,7 @@ import (
 
 // Version is the build version of Corral. It is overridden at release time via
 // -ldflags "-X github.com/sebastienrousseau/corral/cmd.Version=<version>".
-var Version = "0.0.5"
+var Version = "0.0.6"
 
 var (
 	baseDir             string
@@ -46,7 +46,7 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "corral <owner> [base_dir] [limit]",
+	Use:   "corralctl <owner> [base_dir] [limit]",
 	Short: "Automatically clone and organise GitHub repositories by visibility and language.",
 	Args:  cobra.MinimumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
