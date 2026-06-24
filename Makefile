@@ -1,4 +1,4 @@
-BINARY_NAME=corral
+BINARY_NAME=corralctl
 
 .PHONY: all build test test-race vet lint clean format
 

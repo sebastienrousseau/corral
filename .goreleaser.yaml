@@ -1,6 +1,6 @@
 version: 2
 
-project_name: corral
+project_name: corralctl
 
 # Replace an existing GitHub release on re-run, so a release can be retried
 # after adding the Homebrew/AUR publishing secrets.
@@ -17,7 +17,7 @@ builds:
       - amd64
       - arm64
     main: ./main.go
-    binary: corral
+    binary: corralctl
     ldflags:
       - -s -w -X github.com/sebastienrousseau/corral/cmd.Version={{.Version}}
 
@@ -32,7 +32,7 @@ archives:
 
 # 1. Native Linux Packages (Debian, Ubuntu, WSL, Fedora, RHEL, openSUSE)
 nfpms:
-  - id: corral-packages
+  - id: corralctl-packages
     file_name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     homepage: "https://github.com/sebastienrousseau/corral"
     maintainer: "Sebastien Rousseau <sebastian.rousseau@gmail.com>"
@@ -54,23 +54,23 @@ brews:
     description: "Automatically clone and organise GitHub repositories by visibility and language."
     license: "GPL-3.0"
     test: |
-      system "#{bin}/corral --help"
+      system "#{bin}/corralctl --help"
 
 # 3. Arch Linux / CachyOS (AUR)
 aurs:
-  - name: corral-bin
+  - name: corralctl-bin
     homepage: "https://github.com/sebastienrousseau/corral"
     description: "Automatically clone and organise GitHub repositories by visibility and language."
     maintainers:
       - "Sebastien Rousseau"
     license: "GPL-3.0"
     private_key: '{{ .Env.AUR_KEY }}'
-    git_url: 'ssh://aur@aur.archlinux.org/corral-bin.git'
+    git_url: 'ssh://aur@aur.archlinux.org/corralctl-bin.git'
     package: |-
       # bin
-      install -Dm755 "./corral" "${pkgdir}/usr/bin/corral"
+      install -Dm755 "./corralctl" "${pkgdir}/usr/bin/corralctl"
       # license
-      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/corral/LICENSE"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/corralctl/LICENSE"
 
 checksum:
   name_template: 'checksums.txt'
