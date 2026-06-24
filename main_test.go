@@ -8,7 +8,7 @@ import (
 func TestMainExec(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"corral", "-h"}
+	os.Args = []string{"corralctl", "-h"}
 
 	// Redirect stdout/stderr
 	oldStdout := os.Stdout
