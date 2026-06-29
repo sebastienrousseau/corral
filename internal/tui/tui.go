@@ -259,22 +259,34 @@ func (m selectorModel) View() string {
 
 	for i := start; i < end; i++ {
 		r := filtered[i]
-		checked := "[ ]"
+		
+		// Checkbox state styling: filled coral circle (●) for checked, empty gray circle (○) for unchecked
+		var checked string
 		if m.selected[r.Name] {
-			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("[x]")
+			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render("●")
+		} else {
+			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○")
 		}
 
-		cursorStr := " "
+		// Repository name styling: highlighted bold white when active
+		nameStr := r.Name
+		if i == m.cursor {
+			nameStr = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(nameStr)
+		}
+
+		// Language tag styling: muted gray parenthesized language
 		langStr := ""
 		if r.Language != "" && r.Language != "Other" {
-			langStr = " (" + r.Language + ")"
+			langStr = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(" (" + r.Language + ")")
 		}
-		itemStr := fmt.Sprintf("%s %s%s", checked, r.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(langStr))
+
+		// Cursor arrow styling: coral triangle pointer (▸) when active
+		cursorStr := " "
 		if i == m.cursor {
-			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(">")
-			itemStr = lipgloss.NewStyle().Bold(true).Render(itemStr)
+			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Render("▸")
 		}
-		out += fmt.Sprintf(" %s %s\n", cursorStr, itemStr)
+
+		out += fmt.Sprintf(" %s %s %s%s\n", cursorStr, checked, nameStr, langStr)
 	}
 
 	if len(filtered) == 0 {
