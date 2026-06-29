@@ -38,6 +38,7 @@ var (
 	cloneBlobless       bool
 	cloneSingleBranch   bool
 	cloneDepth          int
+	forceSync           bool
 	retryMax            int
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
@@ -137,6 +138,9 @@ var rootCmd = &cobra.Command{
 				Blobless:          cloneBlobless,
 				Depth:             cloneDepth,
 			},
+			Sync: engine.SyncOptions{
+				Force: forceSync,
+			},
 		})
 	},
 }
@@ -221,6 +225,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&cloneBlobless, "clone-blobless", false, "use partial clone filter=blob:none")
 	rootCmd.Flags().BoolVar(&cloneSingleBranch, "clone-single-branch", false, "clone only the default branch")
 	rootCmd.Flags().IntVar(&cloneDepth, "clone-depth", 0, "perform shallow clone with the given depth (0 disables)")
+	rootCmd.Flags().BoolVar(&forceSync, "force-sync", false, "always run git pull, ignoring the cached pushed_at state")
 	rootCmd.Flags().IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
 	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	rootCmd.Flags().DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
