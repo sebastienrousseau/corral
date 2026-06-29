@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -217,9 +218,9 @@ func TestSelectorModel(t *testing.T) {
 
 func TestSlashCommands(t *testing.T) {
 	repos := []github.Repo{
-		{Name: "c-repo", Language: "Python", Visibility: "public"},
-		{Name: "a-repo", Language: "Go", Visibility: "private"},
-		{Name: "b-repo", Language: "Rust", Visibility: "public"},
+		{Name: "c-repo", Language: "Python", Visibility: "Public"},
+		{Name: "a-repo", Language: "Go", Visibility: "Private"},
+		{Name: "b-repo", Language: "Rust", Visibility: "Public"},
 	}
 	m := NewSelectorModel(func() ([]github.Repo, error) {
 		return repos, nil
@@ -308,3 +309,130 @@ func TestSlashCommands(t *testing.T) {
 	}
 }
 
+func TestSelectorModelCoverage(t *testing.T) {
+	repos := []github.Repo{
+		{Name: "c-repo", Language: "Python", Visibility: "Public"},
+		{Name: "a-repo", Language: "Go", Visibility: "Private"},
+		{Name: "b-repo", Language: "Rust", Visibility: "Public"},
+	}
+
+	// 1. Test View states: Loading and Error
+	mLoading := NewSelectorModel(func() ([]github.Repo, error) { return nil, nil })
+	mLoading.loading = true
+	viewLoad := mLoading.View()
+	if !strings.Contains(viewLoad, "Loading repositories...") {
+		t.Errorf("Expected Loading repositories view, got %q", viewLoad)
+	}
+
+	mErr := NewSelectorModel(func() ([]github.Repo, error) { return nil, nil })
+	mErr.loading = false
+	mErr.loadingErr = fmt.Errorf("my mock error")
+	viewErr := mErr.View()
+	if !strings.Contains(viewErr, "Error: my mock error") {
+		t.Errorf("Expected mock error view, got %q", viewErr)
+	}
+
+	// 2. Test Help Menu Rendering
+	mHelp := NewSelectorModel(func() ([]github.Repo, error) { return repos, nil })
+	mHelp.loading = false
+	mHelp.showHelp = true
+	viewHelp := mHelp.View()
+	if !strings.Contains(viewHelp, "In-Session Commands") {
+		t.Errorf("Expected In-Session Commands in help view, got %q", viewHelp)
+	}
+
+	// 3. Test Sorting Variants
+	mSort := NewSelectorModel(func() ([]github.Repo, error) { return repos, nil })
+	newM, _ := mSort.Update(fetchedReposMsg{repos: repos, err: nil})
+	model := newM.(*selectorModel)
+
+	// Sort private
+	model.executeSlashCommand("/sort private")
+	if model.filteredRepos[0].Name != "a-repo" {
+		t.Errorf("Expected private repo (a-repo) first, got %s", model.filteredRepos[0].Name)
+	}
+
+	// Sort public
+	model.executeSlashCommand("/sort public")
+	if model.filteredRepos[0].Name != "b-repo" {
+		t.Errorf("Expected public repo (b-repo) first, got %s", model.filteredRepos[0].Name)
+	}
+
+	// Sort vis / visibility
+	model.executeSlashCommand("/sort vis")
+	if model.filteredRepos[0].Visibility != "Private" {
+		t.Errorf("Expected visibility sorted (Private first), got %s", model.filteredRepos[0].Visibility)
+	}
+
+	// Sort lang
+	model.executeSlashCommand("/sort lang")
+	if model.filteredRepos[0].Language != "Go" {
+		t.Errorf("Expected Go first, got %s", model.filteredRepos[0].Language)
+	}
+
+	// Sort empty argument
+	model.executeSlashCommand("/sort")
+	if !strings.Contains(model.cmdErr, "Usage:") {
+		t.Errorf("Expected Usage error for empty sort")
+	}
+
+	// Sort invalid language
+	model.executeSlashCommand("/sort invalid_lang_name")
+	if !strings.Contains(model.cmdErr, "Unknown sort field, visibility or language") {
+		t.Errorf("Expected unknown field/language error, got %q", model.cmdErr)
+	}
+
+	// 4. Test Key Handlers Edge Cases
+	mKeys := NewSelectorModel(func() ([]github.Repo, error) { return repos, nil })
+	newM, _ = mKeys.Update(fetchedReposMsg{repos: repos, err: nil})
+	modelKeys := newM.(*selectorModel)
+
+	// Test Esc to clear help overlay
+	modelKeys.showHelp = true
+	newM, _ = modelKeys.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if newM.(*selectorModel).showHelp {
+		t.Errorf("Expected Esc to dismiss help menu")
+	}
+
+	// Test '?' to toggle help overlay
+	newM, _ = modelKeys.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if !newM.(*selectorModel).showHelp {
+		t.Errorf("Expected '?' key to show help menu")
+	}
+	newM, _ = newM.(*selectorModel).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if newM.(*selectorModel).showHelp {
+		t.Errorf("Expected '?' key to dismiss help menu when active")
+	}
+
+	// Test typing space into command filter
+	modelKeys.filter = "/sort"
+	newM, _ = modelKeys.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if newM.(*selectorModel).filter != "/sort " {
+		t.Errorf("Expected Space key to append space inside slash command mode, got %q", newM.(*selectorModel).filter)
+	}
+
+	// Test backspace when filter is empty
+	modelKeys.filter = ""
+	newM, _ = modelKeys.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	if newM.(*selectorModel).filter != "" {
+		t.Errorf("Expected empty filter to remain empty after Backspace")
+	}
+
+	// Test runes keypress when loading (should ignore)
+	mLoadKeys := NewSelectorModel(func() ([]github.Repo, error) { return repos, nil })
+	mLoadKeys.loading = true
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if newM.(*selectorModel).filter != "" {
+		t.Errorf("Expected runes to be ignored when loading is active")
+	}
+
+	// Test space keypress when loading (should ignore)
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeySpace})
+	// Test enter keypress when loading (should ignore)
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	// Test backspace when loading (should ignore)
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	// Test ctrl+a / ctrl+n when loading (should ignore)
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+}

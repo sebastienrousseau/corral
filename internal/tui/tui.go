@@ -649,27 +649,45 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) tea.Cmd {
 				return strings.ToLower(m.filteredRepos[i].Visibility) < strings.ToLower(m.filteredRepos[j].Visibility)
 			})
 		default:
-			hasLang := false
-			for _, r := range m.repos {
-				if strings.ToLower(r.Language) == field {
-					hasLang = true
-					break
+			if field == "public" || field == "private" {
+				normVis := "Public"
+				if field == "private" {
+					normVis = "Private"
 				}
-			}
-			if hasLang {
 				sort.Slice(m.filteredRepos, func(i, j int) bool {
-					iLang := strings.ToLower(m.filteredRepos[i].Language) == field
-					jLang := strings.ToLower(m.filteredRepos[j].Language) == field
-					if iLang && !jLang {
+					iVis := m.filteredRepos[i].Visibility == normVis
+					jVis := m.filteredRepos[j].Visibility == normVis
+					if iVis && !jVis {
 						return true
 					}
-					if !iLang && jLang {
+					if !iVis && jVis {
 						return false
 					}
 					return strings.ToLower(m.filteredRepos[i].Name) < strings.ToLower(m.filteredRepos[j].Name)
 				})
 			} else {
-				m.cmdErr = fmt.Sprintf("Unknown sort field or language: %s (choose name, language, visibility, or a language like python)", parts[1])
+				hasLang := false
+				for _, r := range m.repos {
+					if strings.ToLower(r.Language) == field {
+						hasLang = true
+						break
+					}
+				}
+				if hasLang {
+					sort.Slice(m.filteredRepos, func(i, j int) bool {
+						iLang := strings.ToLower(m.filteredRepos[i].Language) == field
+						jLang := strings.ToLower(m.filteredRepos[j].Language) == field
+						if iLang && !jLang {
+							return true
+						}
+						if !iLang && jLang {
+							return false
+						}
+						return strings.ToLower(m.filteredRepos[i].Name) < strings.ToLower(m.filteredRepos[j].Name)
+					})
+				} else {
+					m.cmdErr = fmt.Sprintf("Unknown sort field, visibility or language: %s (choose name, language, visibility, public, private, or a language like python)", parts[1])
+				}
 			}
 		}
 		m.updateTableRows()
