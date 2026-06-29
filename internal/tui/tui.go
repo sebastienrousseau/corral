@@ -2,11 +2,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,7 +47,7 @@ func NewModel(total int) tea.Model {
 	}
 }
 
-// Init initializes the Bubble Tea application (no-op).
+// // Init initializes the Bubble Tea application (no-op).
 func (m model) Init() tea.Cmd {
 	return nil
 }
@@ -117,7 +119,9 @@ func (m model) View() string {
 
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-		header = GetStyledLogo("Organising Repositories")
+		header = GetStyledLogo()
+		header += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ Organising Repositories") + "\n"
+		header += lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n"
 	} else {
 		header = titleStyle.Render("Corral - Organising Repositories") + "\n"
 	}
@@ -153,15 +157,18 @@ type selectorModel struct {
 	filter        string
 	selected      map[string]bool // key is repo.Name
 	table         table.Model
+	spinner       spinner.Model
+	loading       bool
+	loadingErr    error
 	confirmed     bool
 	quitting      bool
+	fetchFn       FetchFunc
 }
 
-func NewSelectorModel(repos []github.Repo) tea.Model {
+type FetchFunc func() ([]github.Repo, error)
+
+func NewSelectorModel(fetchFn FetchFunc) *selectorModel {
 	sel := make(map[string]bool)
-	for _, r := range repos {
-		sel[r.Name] = true // select all by default
-	}
 
 	columns := []table.Column{
 		{Title: " ", Width: 3},
@@ -179,7 +186,7 @@ func NewSelectorModel(repos []github.Repo) tea.Model {
 	s := table.DefaultStyles()
 	s.Header = s.Header.
 		BorderStyle(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color("238")). // subtle dark gray border
 		BorderBottom(true).
 		Bold(true)
 	s.Selected = s.Selected.
@@ -188,18 +195,33 @@ func NewSelectorModel(repos []github.Repo) tea.Model {
 		Bold(true)
 	t.SetStyles(s)
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E"))
+
 	m := &selectorModel{
-		repos:         repos,
-		filteredRepos: repos,
-		selected:      sel,
-		table:         t,
+		fetchFn:  fetchFn,
+		loading:  true,
+		selected: sel,
+		table:    t,
+		spinner:  sp,
 	}
-	m.updateTableRows()
 	return m
 }
 
-func (m selectorModel) Init() tea.Cmd {
-	return nil
+type fetchedReposMsg struct {
+	repos []github.Repo
+	err   error
+}
+
+func (m *selectorModel) Init() tea.Cmd {
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			repos, err := m.fetchFn()
+			return fetchedReposMsg{repos: repos, err: err}
+		},
+	)
 }
 
 func (m *selectorModel) applyFilter() {
@@ -225,9 +247,9 @@ func (m *selectorModel) applyFilter() {
 func (m *selectorModel) updateTableRows() {
 	var rows []table.Row
 	for _, r := range m.filteredRepos {
-		checkChar := "○"
+		checkChar := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○")
 		if m.selected[r.Name] {
-			checkChar = "●"
+			checkChar = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render("✔")
 		}
 		rows = append(rows, table.Row{
 			checkChar,
@@ -242,15 +264,39 @@ func (m *selectorModel) updateTableRows() {
 func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case fetchedReposMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.loadingErr = msg.err
+			return m, tea.Quit
+		}
+		m.repos = msg.repos
+		m.filteredRepos = msg.repos
+		for _, r := range msg.repos {
+			m.selected[r.Name] = true
+		}
+		m.updateTableRows()
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
+			if m.loading {
+				return m, nil
+			}
 			m.confirmed = true
 			return m, tea.Quit
 		case " ", "space":
+			if m.loading {
+				return m, nil
+			}
 			if len(m.filteredRepos) > 0 {
 				idx := m.table.Cursor()
 				if idx >= 0 && idx < len(m.filteredRepos) {
@@ -261,24 +307,36 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "backspace":
+			if m.loading {
+				return m, nil
+			}
 			if len(m.filter) > 0 {
 				m.filter = m.filter[:len(m.filter)-1]
 				m.applyFilter()
 			}
 			return m, nil
 		case "ctrl+a": // Select all filtered
+			if m.loading {
+				return m, nil
+			}
 			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = true
 			}
 			m.updateTableRows()
 			return m, nil
 		case "ctrl+n": // Select none filtered
+			if m.loading {
+				return m, nil
+			}
 			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = false
 			}
 			m.updateTableRows()
 			return m, nil
 		default:
+			if m.loading {
+				return m, nil
+			}
 			if len(msg.String()) == 1 && len(msg.Runes) > 0 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
 				m.filter += msg.String()
 				m.applyFilter()
@@ -294,14 +352,32 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *selectorModel) View() string {
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-		header = GetStyledLogo("Select Repositories")
+		header = GetStyledLogo()
 	} else {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Corral - Select Repositories") + "\n\n"
 	}
 
 	out := header
-	out += fmt.Sprintf("  Search/Filter: %s_\n", lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.filter))
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)", len(m.filteredRepos), m.table.Cursor()+1)) + "\n\n"
+
+	if m.loading {
+		out += fmt.Sprintf("   %s Loading repositories...\n\n", m.spinner.View())
+		out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("   [esc] cancel") + "\n"
+		return out
+	}
+
+	if m.loadingErr != nil {
+		out += fmt.Sprintf("   %s\n\n", lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("Error: "+m.loadingErr.Error()))
+		out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("   [esc] exit") + "\n"
+		return out
+	}
+
+	// Minimalist unified search input: Search repositories (138 found): █
+	searchPrompt := fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter)
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(searchPrompt) + "\n"
+	
+	// Subtle dark gray divider
+	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
+	out += divider + "\n\n"
 
 	tableStr := m.table.View()
 	indentedTable := ""
@@ -315,23 +391,26 @@ func (m *selectorModel) View() string {
 	return out
 }
 
-func RunSelector(repos []github.Repo) ([]github.Repo, bool) {
-	p := tea.NewProgram(NewSelectorModel(repos))
+func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOptions, fetchFn FetchFunc) ([]github.Repo, bool, error) {
+	p := tea.NewProgram(NewSelectorModel(fetchFn))
 	m, err := p.Run()
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
 	selModel := m.(*selectorModel)
+	if selModel.loadingErr != nil {
+		return nil, false, selModel.loadingErr
+	}
 	if !selModel.confirmed {
-		return nil, false
+		return nil, false, nil
 	}
 	var out []github.Repo
-	for _, r := range repos {
+	for _, r := range selModel.repos {
 		if selModel.selected[r.Name] {
 			out = append(out, r)
 		}
 	}
-	return out, true
+	return out, true, nil
 }
 
 var logoLines = []string{
@@ -347,7 +426,7 @@ var logoLines = []string{
 	`           ⢀⣠⡿⣷⣄⡀           `,
 }
 
-func GetStyledLogo(subtitle string) string {
+func GetStyledLogo() string {
 	colors := []string{
 		"#F87171",
 		"#FA5B4E",
@@ -366,10 +445,7 @@ func GetStyledLogo(subtitle string) string {
 		sb.WriteString("     " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString("   Say hello to " +
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(". All your repos. In perfect sync.") + "\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("⧇ "+subtitle) + "\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 53)) + "\n\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Hello.") + "\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("All your repos. In perfect sync.") + "\n\n")
 	return sb.String()
 }

@@ -104,8 +104,8 @@ func TestModelView(t *testing.T) {
 	m.processLogMsg(LogMsg{RepoName: "repo4", Action: "SKIP", Message: "skip"})
 
 	view := m.View()
-	if !strings.Contains(strings.ToLower(view), "corral") {
-		t.Errorf("Expected view to contain Corral")
+	if !strings.Contains(strings.ToLower(view), "perfect sync") && !strings.Contains(strings.ToLower(view), "organising repositories") {
+		t.Errorf("Expected view to contain branding text")
 	}
 
 	m.quitting = true
@@ -127,9 +127,15 @@ func TestSelectorModel(t *testing.T) {
 		{Name: "repo2", Language: "Rust"},
 	}
 
-	m := NewSelectorModel(repos).(*selectorModel)
-	if m.Init() != nil {
-		t.Errorf("Expected selector Init to return nil")
+	fetchFn := func() ([]github.Repo, error) {
+		return repos, nil
+	}
+	m := NewSelectorModel(fetchFn)
+	newM, _ := m.Update(fetchedReposMsg{repos: repos})
+	m = newM.(*selectorModel)
+
+	if m.Init() == nil {
+		t.Errorf("Expected selector Init to return non-nil loading commands")
 	}
 
 	// Test viewport filtering
@@ -138,7 +144,7 @@ func TestSelectorModel(t *testing.T) {
 	}
 
 	// Test typing/filtering
-	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	newM, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	m2 := newM.(*selectorModel)
 	if m2.filter != "g" {
 		t.Errorf("Expected filter to be 'g', got %q", m2.filter)
@@ -204,7 +210,7 @@ func TestSelectorModel(t *testing.T) {
 
 	// Test render View
 	view := m10.View()
-	if !strings.Contains(view, "CORRAL") && !strings.Contains(view, "Select Repositories") {
+	if !strings.Contains(view, "Hello.") && !strings.Contains(view, "Search repositories") {
 		t.Errorf("expected view to contain header elements, got %s", view)
 	}
 }

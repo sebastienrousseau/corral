@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
@@ -177,40 +178,51 @@ func Run(ctx context.Context, opts RunOptions) {
 		log.SetOutput(os.Stdout)
 	}
 
-	if opts.Output == OutputText {
-		if isTTY {
-			if os.Getenv("CORRAL_SHOW_LOGO") != "0" && !opts.Interactive {
-				fmt.Print(tui.GetStyledLogo("Organising Repositories"))
-			}
-			fmt.Println("Fetching repositories from GitHub...")
-		} else {
-			log.Println("Fetching repositories from GitHub...")
-		}
-	}
-
-	repos, err := fetchRepos(ctx, opts.Owner, opts.Fetch)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		osExit(1)
-		return
-	}
+	var repos []github.Repo
+	var err error
 
 	if opts.Interactive {
-		if selected, ok := tui.RunSelector(repos); ok {
-			repos = selected
-			if len(repos) == 0 {
-				if opts.Output == OutputText {
-					fmt.Println("No repositories selected.")
-				}
-				return
-			}
-			if opts.Output == OutputText && isTTY {
-				fmt.Print("\033[2J\033[H")
-			}
-		} else {
+		var ok bool
+		repos, ok, err = tui.RunSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
+			return fetchRepos(ctx, opts.Owner, opts.Fetch)
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			osExit(1)
+			return
+		}
+		if !ok {
 			if opts.Output == OutputText {
 				fmt.Println("Cancelled.")
 			}
+			return
+		}
+		if len(repos) == 0 {
+			if opts.Output == OutputText {
+				fmt.Println("No repositories selected.")
+			}
+			return
+		}
+		if opts.Output == OutputText && isTTY {
+			fmt.Print("\033[2J\033[H")
+		}
+	} else {
+		if opts.Output == OutputText {
+			if isTTY {
+				if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+					fmt.Print(tui.GetStyledLogo())
+					fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ Organising Repositories") + "\n")
+					fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n")
+				}
+				fmt.Println("Fetching repositories from GitHub...")
+			} else {
+				log.Println("Fetching repositories from GitHub...")
+			}
+		}
+		repos, err = fetchRepos(ctx, opts.Owner, opts.Fetch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			osExit(1)
 			return
 		}
 	}
