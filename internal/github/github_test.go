@@ -102,7 +102,7 @@ func TestFetchReposWithClientOptions(t *testing.T) {
 				]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="last"`}), nil
 			}
 			return jsonResp(req, http.StatusOK, `[
-				{"name":"repo1","language":"Go","visibility":"public","default_branch":"main","clone_url":"http://clone","ssh_url":"ssh","fork":false},
+				{"name":"repo1","language":"Go","visibility":"public","default_branch":"main","clone_url":"http://clone","ssh_url":"ssh","fork":false,"pushed_at":"2026-01-15T10:00:00Z"},
 				{"name":"repo2","visibility":"internal","fork":true}
 			]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="next"`}), nil
 		case "/users/user1/repos":
@@ -137,6 +137,14 @@ func TestFetchReposWithClientOptions(t *testing.T) {
 	}
 	if repos[1].Language != "Other" {
 		t.Fatalf("expected default language Other, got %q", repos[1].Language)
+	}
+
+	want := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
+	if !repos[0].PushedAt.Equal(want) {
+		t.Errorf("expected PushedAt %v on repo1, got %v", want, repos[0].PushedAt)
+	}
+	if !repos[1].PushedAt.IsZero() {
+		t.Errorf("expected zero PushedAt on repo2 (no pushed_at in fixture), got %v", repos[1].PushedAt)
 	}
 
 	repos, err = FetchReposWithClientOptions(context.Background(), client, "org1", FetchOptions{Limit: 10})

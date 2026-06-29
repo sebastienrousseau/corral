@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sebastienrousseau/corral/internal/git"
@@ -165,32 +166,32 @@ func TestProcessRepo(t *testing.T) {
 	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
-	msg := processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, job)
+	msg := processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git clone" {
 		t.Errorf("Expected dry run clone, got %v", msg)
 	}
 
 	_ = os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
 
-	msg = processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git pull" {
 		t.Errorf("Expected dry run pull, got %v", msg)
 	}
 
-	msg = processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "SKIP" {
 		t.Errorf("Expected SKIP, got %v", msg)
 	}
 
 	_ = os.RemoveAll(targetDir)
 	_ = os.MkdirAll(targetDir, 0o750)
-	msg = processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "SKIP" || !strings.Contains(msg.Message, "not a git repo") {
 		t.Errorf("Expected SKIP for non-git repo, got %v", msg)
 	}
 
 	_ = os.RemoveAll(targetDir)
-	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "DRY-RUN" {
 		t.Errorf("Expected DRY-RUN for ssh, got %v", msg)
 	}
@@ -227,7 +228,7 @@ func TestProcessRepoFull(t *testing.T) {
 	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
-	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "CLONE" {
 		t.Errorf("Expected CLONE, got %v", msg)
 	}
@@ -236,25 +237,25 @@ func TestProcessRepoFull(t *testing.T) {
 		return fmt.Errorf("err")
 	}
 	_ = os.RemoveAll(targetDir)
-	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
 	_ = os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
-	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "SYNC" {
 		t.Errorf("Expected SYNC, got %v", msg)
 	}
 
 	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error { return fmt.Errorf("err") }
-	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
 	gitCurrentBranch = func(targetDir string) (string, error) { return "feat", nil }
-	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "SKIP" {
 		t.Errorf("Expected SKIP, got %v", msg)
 	}
@@ -262,7 +263,7 @@ func TestProcessRepoFull(t *testing.T) {
 	repo.SSHURL = ""
 	job = Job{Repo: repo, Target: targetDir}
 	_ = os.RemoveAll(targetDir)
-	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, job)
+	msg = processRepo(context.Background(), "owner", "ssh", false, true, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "DRY-RUN" || !strings.Contains(msg.Message, "git clone") {
 		t.Errorf("Expected DRY-RUN for ssh fallback, got %v", msg)
 	}
@@ -286,7 +287,7 @@ func TestProcessRepoCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	msg := processRepo(ctx, "owner", "https", true, false, git.CloneOptions{}, job)
+	msg := processRepo(ctx, "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "ERROR" || !strings.Contains(msg.Message, "canceled") {
 		t.Fatalf("expected canceled error result, got %#v", msg)
 	}
@@ -800,7 +801,7 @@ func TestProcessRepoMkdirFail(t *testing.T) {
 	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
-	msg := processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, job)
+	msg := processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "ERROR" || !strings.Contains(msg.Message, "failed creating target directory") {
 		t.Fatalf("expected mkdir error result, got %#v", msg)
 	}
@@ -925,5 +926,235 @@ func TestRunWiresGitTokenProvider(t *testing.T) {
 	}
 	if got := git.TokenProvider(); got != "tok-xyz" {
 		t.Errorf("git.TokenProvider() = %q, want tok-xyz", got)
+	}
+}
+
+// --- Phase 2: smart-sync via PushedAt ---------------------------------------
+
+// withGitPullStub replaces gitPull and gitCurrentBranch with stubs that count
+// invocations, returning a restore function.
+func withGitPullStub(t *testing.T) (called *int, restore func()) {
+	t.Helper()
+	oldPull := gitPull
+	oldBranch := gitCurrentBranch
+	n := 0
+	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error {
+		n++
+		return nil
+	}
+	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	return &n, func() {
+		gitPull = oldPull
+		gitCurrentBranch = oldBranch
+	}
+}
+
+func mustExistingClone(t *testing.T, target string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(target, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessRepoSkipWhenPushedAtUnchanged(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	mustExistingClone(t, target)
+
+	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	// Pre-stamp the state with the same pushed_at the API will report.
+	if err := writeCloneState(target, cloneState{
+		LastSyncedPushedAt: pushed,
+		LastSyncedAt:       pushed,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	called, restore := withGitPullStub(t)
+	defer restore()
+
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", PushedAt: pushed,
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
+	if msg.Action != "SKIP" {
+		t.Fatalf("expected SKIP, got %s (%s)", msg.Action, msg.Message)
+	}
+	if !strings.Contains(msg.Message, "up-to-date") {
+		t.Errorf("expected up-to-date message, got %q", msg.Message)
+	}
+	if *called != 0 {
+		t.Errorf("gitPull must not be called when pushed_at unchanged, was called %d times", *called)
+	}
+}
+
+func TestProcessRepoSyncsWhenPushedAtAdvances(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	mustExistingClone(t, target)
+
+	old := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	newer := old.Add(time.Hour)
+	if err := writeCloneState(target, cloneState{LastSyncedPushedAt: old}); err != nil {
+		t.Fatal(err)
+	}
+
+	called, restore := withGitPullStub(t)
+	defer restore()
+
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", PushedAt: newer,
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
+	if msg.Action != "SYNC" {
+		t.Fatalf("expected SYNC, got %s (%s)", msg.Action, msg.Message)
+	}
+	if *called != 1 {
+		t.Errorf("gitPull must be called exactly once, was called %d times", *called)
+	}
+
+	got, err := readCloneState(target)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if !got.LastSyncedPushedAt.Equal(newer) {
+		t.Errorf("state should be re-stamped with new pushed_at, got %v", got.LastSyncedPushedAt)
+	}
+	if got.LastSyncedAt.IsZero() {
+		t.Errorf("LastSyncedAt should be set after a successful sync")
+	}
+}
+
+func TestProcessRepoForceSyncOverridesState(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	mustExistingClone(t, target)
+
+	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	// State matches the API value: ordinarily this would SKIP, but Force=true
+	// must pull anyway.
+	if err := writeCloneState(target, cloneState{LastSyncedPushedAt: pushed}); err != nil {
+		t.Fatal(err)
+	}
+
+	called, restore := withGitPullStub(t)
+	defer restore()
+
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", PushedAt: pushed,
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{Force: true}, job)
+	if msg.Action != "SYNC" {
+		t.Fatalf("expected SYNC under Force, got %s (%s)", msg.Action, msg.Message)
+	}
+	if *called != 1 {
+		t.Errorf("gitPull must be called under Force, was called %d times", *called)
+	}
+}
+
+func TestProcessRepoStateMissingFallsThrough(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	mustExistingClone(t, target)
+	// No state file at all -> the engine must pull (cannot know if upstream
+	// changed) and then stamp the state.
+
+	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	called, restore := withGitPullStub(t)
+	defer restore()
+
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", PushedAt: pushed,
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
+	if msg.Action != "SYNC" {
+		t.Fatalf("expected SYNC when state missing, got %s (%s)", msg.Action, msg.Message)
+	}
+	if *called != 1 {
+		t.Errorf("gitPull must be called when state missing, was called %d times", *called)
+	}
+	if _, err := os.Stat(filepath.Join(target, StateFileName)); err != nil {
+		t.Errorf("expected state file to be written after sync, got %v", err)
+	}
+}
+
+func TestProcessRepoZeroPushedAtFallsThrough(t *testing.T) {
+	// When the GitHub API does not report a pushed_at (rare but possible for
+	// brand-new empty repos), the engine must pull rather than mistakenly
+	// treat zero-value as "everything up to date".
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	mustExistingClone(t, target)
+	if err := writeCloneState(target, cloneState{LastSyncedPushedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	called, restore := withGitPullStub(t)
+	defer restore()
+
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", // PushedAt: zero
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
+	if msg.Action != "SYNC" {
+		t.Fatalf("expected SYNC when API pushed_at is zero, got %s", msg.Action)
+	}
+	if *called != 1 {
+		t.Errorf("gitPull must be called when API pushed_at is zero")
+	}
+}
+
+func TestProcessRepoCloneStampsState(t *testing.T) {
+	baseDir := t.TempDir()
+	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	// No pre-existing .git/, so processRepo will take the clone path.
+
+	oldClone := gitClone
+	defer func() { gitClone = oldClone }()
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error {
+		// Mimic a real clone by creating the .git dir so a follow-up
+		// processRepo call wouldn't try to clone again.
+		return os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
+	}
+
+	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	job := Job{
+		Repo: github.Repo{
+			Name: "repo1", Language: "Go", Visibility: "Public",
+			DefaultBranch: "main", PushedAt: pushed,
+			CloneURL: "http://clone",
+		},
+		Target: target,
+	}
+	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
+	if msg.Action != "CLONE" {
+		t.Fatalf("expected CLONE, got %s (%s)", msg.Action, msg.Message)
+	}
+	got, err := readCloneState(target)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if !got.LastSyncedPushedAt.Equal(pushed) {
+		t.Errorf("clone must stamp state with the API pushed_at, got %v", got.LastSyncedPushedAt)
 	}
 }

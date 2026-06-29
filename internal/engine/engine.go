@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-isatty"
@@ -54,6 +55,17 @@ type RunOptions struct {
 	Fetch github.FetchOptions
 	// Clone holds the options passed to each Git clone operation.
 	Clone git.CloneOptions
+	// Sync controls when an already-cloned repository is actually pulled.
+	Sync SyncOptions
+}
+
+// SyncOptions configures the engine's per-repo sync decision. Kept separate
+// from git.CloneOptions because forcing a sync is a corral-level policy
+// choice, not a clone-time git flag.
+type SyncOptions struct {
+	// Force, when true, runs `git pull` even when the cached state shows
+	// the upstream pushed_at is unchanged.
+	Force bool
 }
 
 // Job encapsulates a repository to be processed along with its target directories.
@@ -197,7 +209,7 @@ func Run(ctx context.Context, opts RunOptions) {
 					if !ok {
 						return
 					}
-					msg := processRepo(ctx, opts.Owner, opts.Protocol, opts.DoSync, opts.DryRun, opts.Clone, job)
+					msg := processRepo(ctx, opts.Owner, opts.Protocol, opts.DoSync, opts.DryRun, opts.Clone, opts.Sync, job)
 					select {
 					case <-ctx.Done():
 						return
@@ -434,7 +446,7 @@ func cleanupEmptyFolders(baseDir string, repos []github.Repo) {
 	}
 }
 
-func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun bool, cloneOpts git.CloneOptions, job Job) RepoResult {
+func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun bool, cloneOpts git.CloneOptions, syncOpts SyncOptions, job Job) RepoResult {
 	repo := job.Repo
 	targetDir := job.Target
 	result := RepoResult{
@@ -474,12 +486,28 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 				result.Message = fmt.Sprintf("on branch %s", branch)
 				return result
 			}
+			// Skip the network round-trip when the upstream pushed_at is
+			// unchanged since the last successful sync. The cached value
+			// lives in <targetDir>/.corral-state.json. A read error or a
+			// zero state falls through to the original pull-always
+			// behaviour, so a missing/corrupt sidecar can never cause a
+			// stale working tree.
+			if !syncOpts.Force && !repo.PushedAt.IsZero() {
+				if st, err := readCloneState(targetDir); err == nil &&
+					!st.LastSyncedPushedAt.IsZero() &&
+					!repo.PushedAt.After(st.LastSyncedPushedAt) {
+					result.Action = "SKIP"
+					result.Message = "up-to-date (pushed_at unchanged)"
+					return result
+				}
+			}
 			err = gitPull(ctx, targetDir, cloneOpts.RecurseSubmodules)
 			if err != nil {
 				result.Action = "ERROR"
 				result.Message = fmt.Sprintf("sync failed: %v", err)
 				return result
 			}
+			stampCloneState(targetDir, repo)
 			result.Action = "SYNC"
 			result.Message = "synced successfully"
 			return result
@@ -513,9 +541,24 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 		result.Message = fmt.Sprintf("clone failed: %v", err)
 		return result
 	}
+	stampCloneState(targetDir, repo)
 	result.Action = "CLONE"
 	result.Message = "cloned successfully"
 	return result
+}
+
+// stampCloneState records the upstream pushed_at in the per-clone state
+// sidecar so the next run can skip a no-op git pull. Best-effort: a write
+// failure is logged but does not fail the operation, since the sidecar is
+// purely an optimization (a missing or stale file falls through to the
+// pre-sidecar behaviour of always pulling).
+func stampCloneState(targetDir string, repo github.Repo) {
+	if err := writeCloneState(targetDir, cloneState{
+		LastSyncedPushedAt: repo.PushedAt,
+		LastSyncedAt:       time.Now().UTC(),
+	}); err != nil {
+		log.Printf("WARN: failed writing %s in %s: %v", StateFileName, targetDir, err)
+	}
 }
 
 // repoNameFromURL extracts the repository name from a git remote URL, stripping

@@ -36,6 +36,10 @@ type Repo struct {
 	Fork bool
 	// Archived reports whether the repository is archived.
 	Archived bool
+	// PushedAt is the timestamp of the last push to any branch. The engine
+	// compares this against the cached value in <repo>/.corral-state.json to
+	// skip a `git pull` when nothing has changed upstream.
+	PushedAt time.Time
 }
 
 // AuthMode controls how GitHub API credentials are resolved.
@@ -553,5 +557,6 @@ func mapRepository(r *gh.Repository) Repo {
 		SSHURL:        sshURL,
 		Fork:          r.GetFork(),
 		Archived:      r.GetArchived(),
+		PushedAt:      r.GetPushedAt().Time,
 	}
 }
