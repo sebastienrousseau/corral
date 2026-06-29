@@ -1,140 +1,127 @@
+<!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
+
 <p align="center">
-  <img src=".github/logo.svg" alt="Corral logo" width="160" height="160" />
+  <img src=".github/logo.svg" alt="Corral logo" width="128" />
 </p>
 
 <h1 align="center">Corral</h1>
 
 <p align="center">
-  <strong>Automatically clone and organise GitHub repositories by visibility and language.</strong>
+  Automatically clone and organise GitHub repositories by visibility and language.
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastienrousseau/corral/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/corral/ci.yml?style=for-the-badge&logo=github" alt="Build" /></a>
-  <a href="https://github.com/sebastienrousseau/corral/releases/latest"><img src="https://img.shields.io/github/v/release/sebastienrousseau/corral?style=for-the-badge" alt="Version" /></a>
+  <a href="https://github.com/sebastienrousseau/corral/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/corral/ci.yml?style=for-the-badge&logo=github" alt="Build Status" /></a>
+  <a href="https://github.com/sebastienrousseau/corral/releases/latest"><img src="https://img.shields.io/github/v/release/sebastienrousseau/corral?style=for-the-badge" alt="Release Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License" /></a>
 </p>
 
 <p align="center">
-  <img src=".github/demo.gif" alt="Corral Demo" width="600" />
+  <img src=".github/demo.gif" alt="Corral Demo" width="100%" />
 </p>
+
+---
+
+## Contents
+
+**Getting started**
+
+- [Install](#install) — Homebrew, Arch, source, or Docker
+- [Quick Start](#quick-start) — clone and organise in one command
+
+**Features & Capabilities**
+
+- [Features](#features) — structured layout, concurrency, and security
+- [Interactive TUI Mode](#interactive-tui-mode) — keybindings, commands, and autocomplete
+- [Layout Customization](#layout-customization) — templated visibility and language organization
+- [Smart Syncing](#smart-syncing) — network-optimised incremental updates
+- [Exec Mode](#exec-mode) — concurrent batch execution of Git commands
+
+**Reference & Operational**
+
+- [Usage & Flags](#usage--flags) — complete CLI parameter reference
+- [Examples](#examples) — index of runnable programmatic examples
+- [Troubleshooting](#troubleshooting) — quick solutions to common errors
+- [Frequently Asked Questions](#frequently-asked-questions) — design decisions and Windows/WSL support
+- [License](#license)
 
 ---
 
 ## Install
 
-**Homebrew (macOS / Linux):**
+### Homebrew (macOS / Linux)
 
 ```bash
 brew install sebastienrousseau/tap/corralctl
 ```
 
-**Arch Linux (AUR):**
+### Arch Linux (AUR)
 
 ```bash
 yay -S corralctl-bin    # or: paru -S corralctl-bin
 ```
 
-**From source** (requires Go 1.26+):
+### Build from source
+
+Requires Go 1.26+ and Git:
 
 ```bash
 git clone https://github.com/sebastienrousseau/corral.git
 cd corral
-make build              # produces ./corralctl
-gh auth login
-./corralctl <owner>
+make build              # compiles ./corralctl
 ```
 
-Prebuilt binaries and `.deb`/`.rpm` packages are also attached to each [GitHub release](https://github.com/sebastienrousseau/corral/releases/latest).
-
-Then verify the output:
-
-```bash
-ls ~/Code/
-```
-
-Requires `gh`, `git`, and Go 1.26+. Works on macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and WSL2.
-
-> The command is `corralctl` (the project is **Corral**); the `…ctl` binary name avoids a clash with the unrelated `corral` formula in homebrew-core.
+### Platform Prerequisites
 
 <details>
-<summary>Platform-specific prerequisites</summary>
-
-**macOS:**
+<summary><b>macOS</b></summary>
 
 ```bash
 brew install go git gh
 ```
+</details>
 
-**Ubuntu / Debian / WSL2:**
+<details>
+<summary><b>Ubuntu / Debian / WSL2</b></summary>
 
 ```bash
 sudo apt install golang git
 ```
 
-Install `gh` separately — see the [GitHub CLI install guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md) for your distribution.
+Install `gh` separately following the [GitHub CLI installation guide](https://github.com/cli/cli/blob/trunk/docs/install_linux.md).
+</details>
 
-**Fedora / RHEL:**
+<details>
+<summary><b>Fedora / RHEL</b></summary>
 
 ```bash
 sudo dnf install golang git gh
 ```
-
-> **WSL2 users:** Run all commands inside your Linux distribution, not from PowerShell or CMD. The script works identically to native Linux.
-
-</details>
-
-<details>
-<summary>Automation and cron</summary>
-
-The tool is idempotent and non-interactive. Safe to run on a schedule:
-
-```bash
-# crontab -e
-0 2 * * * /path/to/corralctl my-username
-```
-
-Existing repositories are skipped. Only new ones are cloned.
-
-Every `git` invocation runs with `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/true`, `SSH_ASKPASS=/bin/true`, `GCM_INTERACTIVE=Never`, and rebase replay overrides `commit.gpgsign=false` — so cron jobs cannot hang on a credential prompt, SSH passphrase, or GPG/SSH signing pinentry, even if you have `commit.gpgsign=true` set globally.
-
-</details>
-
-<details>
-<summary>Upgrade notes (v0.0.9+)</summary>
-
-Corral now supports **Smart Syncing** via a per-repository sidecar file (`.corral-state.json`):
-
-1. **Optimised Network Syncs.** When synchronising an existing repository, Corral compares the remote repository's `pushed_at` timestamp from the GitHub API with the cached timestamp in `.corral-state.json`. If no remote pushes have occurred since the last sync, Corral skips the `git pull` network operation entirely. This dramatically accelerates runs (typically 10x-50x faster) when most checkouts are up-to-date.
-2. **State Sidecar.** The sidecar file `.corral-state.json` is written atomically next to your repository's `.git/` folder. It is ignored by older Corral versions, and a missing or malformed file will safely fall back to performing a full `git pull`.
-3. **Always Sync.** To force Corral to pull updates regardless of the cached timestamp state, pass the `--force-sync` flag.
-
-</details>
-
-<details>
-<summary>Upgrade notes (v0.0.8+)</summary>
-
-If you are upgrading from `v0.0.6` or earlier, the first run after the upgrade will:
-
-1. **Normalise language directory case.** On case-insensitive filesystems (APFS, HFS+, NTFS), pre-existing title-case folders like `Public/JavaScript/`, `Public/Rust/`, `Public/HTML/` are renamed in place to the documented lowercase form (`Public/javascript/`, `Public/rust/`, `Public/html/`). Unrelated directories (e.g. `Public/Configurations/`) are left untouched. The rename uses a temporary name internally so it actually flips case on case-insensitive filesystems where a direct `mv` is a silent no-op. Idempotent — already-lowercase directories are skipped.
-2. **Fail fast on missing `git`.** The CLI now resolves `git` via `exec.LookPath` at startup and exits with a clear `ERROR: git not found on PATH` instead of surfacing a confusing error midway through a clone.
-
-Want to preview without cloning or pulling anything? Run `corralctl <owner> --dry-run` — the directory-case migration still executes (it's a local rename, not a clone), but no network traffic happens.
-
 </details>
 
 ---
 
-## Overview
+## Quick Start
 
-Most cloning tools dump every repository into a single flat directory. Finding anything means scrolling through hundreds of folders with no structure. Corral creates a clean, navigable local mirror — sorted by visibility and language — in one command. No config files.
+Run Corral with an owner name (GitHub username or organization) to clone and automatically sort all repositories into a clean local directory hierarchy:
+
+```bash
+# Log in to GitHub CLI first (or set GITHUB_TOKEN)
+gh auth login
+
+# Run Corral for your profile
+./corralctl my-username
+```
+
+This converges your local directory structure into a structured mirror:
 
 ```
 ~/Code/
 ├── Public/
+│   ├── go/
+│   │   └── corral/
 │   ├── rust/
 │   │   └── my-crate/
-│   ├── typescript/
-│   │   └── my-app/
 │   └── other/
 │       └── dotfiles/
 └── Private/
@@ -142,257 +129,165 @@ Most cloning tools dump every repository into a single flat directory. Finding a
         └── internal-tool/
 ```
 
-- **One command** to clone and organise every repository from a user or organisation
-- **Safe to re-run** at any time — new repos are cloned, and existing ones are pulled to their latest changes (unless `--no-sync` is passed)
-- **Automatic migration** from flat `~/Code/<Language>/` layouts to the new visibility-based structure
-- **Tested on macOS and Ubuntu** with automated tests, 100% coverage, and signed commits.
-
----
-
-## Architecture
-
-Run once or a hundred times, the directory tree converges on the same state.
-
-```mermaid
-graph TD
-    A[User Shell] --> B{Corral}
-    B --> C[Pre-flight: Git / GitHub API]
-    C -- Missing --> Z1[Exit: dependency error]
-    C -- OK --> D[GitHub API → Fetch Repos]
-    D -- Fails --> Z2[Exit: API error]
-    D -- OK --> E[Loop: each repo]
-    E --> F{Already cloned?}
-    F -- "Yes (default)" --> G1[git pull --rebase --autostash]
-    F -- "Yes + --no-sync" --> G2[Skip]
-    F -- No --> H{Legacy directory?}
-    H -- Yes --> I[Migrate to new layout]
-    H -- No --> J[git clone]
-    G1 & G2 & I & J --> E
-    E -- Done --> K[Remove empty legacy directories]
-    K --> L[Print summary]
-```
-
 ---
 
 ## Features
 
-| | |
+| Feature | Description |
 | :--- | :--- |
-| **Structured** | The only tool that sorts repositories into `Public/` and `Private/` trees, grouped by primary language |
-| **Idempotent** | Safe to run at any time — already-cloned repositories are skipped, only new ones are fetched |
-| **Smart Sync** | Compares remote `pushed_at` metadata to skip redundant `git pull` operations, reducing network usage and execution time |
-| **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure automatically |
-| **Platforms** | First-class support for macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and Windows via WSL2 |
-| **Zero-config** | No YAML, no `.env`, no config files — pass the owner name and run |
-| **Fail-safe** | Pre-flight checks for `git` and API connectivity with clear error messages on failure |
-| **Production-grade** | 100% test coverage, CI on Ubuntu and macOS, signed commits |
-| **Security** | All commits cryptographically signed (ED25519), CI actions pinned to immutable SHAs, Gitleaks secret scanning |
+| **Structured Layout** | Automatically sorts repositories into `Public/` and `Private/` trees, sub-grouped by primary language (e.g. `go`, `rust`, `python`). |
+| **Smart Syncing** | Compares remote `pushed_at` metadata to skip redundant network calls, speeding up syncs by 10x-50x. |
+| **Interactive Selection** | A fully featured Terminal UI (TUI) selector dashboard to search, preview, and select repositories to clone. |
+| **Legacy Migration** | Automatically moves existing flat directory layouts into the new structure and cleans up empty folders. |
+| **Concurrency** | Processes clones and pulls concurrently with configurable worker limits (`--concurrency`). |
+| **Batch Commands** | Batch execute Git commands concurrently across all cloned repositories using `exec`. |
+| **Zero Configuration** | No configuration files required — simple, sensible defaults that work out of the box. |
 
 ---
 
-## Usage
+## Interactive TUI Mode
 
-| Parameter | Required | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `owner` | Yes | — | GitHub username or organisation |
-| `base_dir` | No | `$HOME/Code` | Root directory for the cloned tree |
-| `limit` | No | `1000` | Maximum repositories to fetch |
-
-| Option | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--base-dir` | — | `$HOME/Code` | Root directory for cloned repos |
-| `--limit` | `-l` | `1000` | Maximum repositories to fetch |
-| `--concurrency` | `-c` | `1` | Number of concurrent clone/sync operations |
-| `--dry-run` | `-n` | off | Preview actions without making changes |
-| `--orphans` | `-o` | off | Detect and list local repositories no longer on GitHub |
-| `--help` | `-h` | — | Show help message |
-| `--version` | `-v` | — | Print the Corral version and exit |
-| `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
-| `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
-| `--force-sync` | — | off | Force git pull regardless of the cached pushed_at state |
-| `--layout` | — | `{{.Visibility}}/{{.Language}}/{{.Name}}` | Templated path structure for repositories |
-| `--interactive` | `-i` | off | Display an interactive selector dashboard to pick repositories |
-| `--recurse-submodules` | — | off | Initialise submodules on clone and sync |
-| `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
-| `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
-| `--visibility` | — | `all` | Filter repositories by visibility: `all`, `public`, `private` |
-| `--include-forks` | — | off | Include forked repositories |
-| `--include-archived` | — | off | Include archived repositories |
-| `--languages` | — | — | Comma-separated language allow-list (for example: `go,rust`) |
-| `--exclude-languages` | — | — | Comma-separated language deny-list |
-| `--clone-blobless` | — | off | Use partial clone (`--filter=blob:none`) |
-| `--clone-single-branch` | — | off | Clone only the default branch |
-| `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
-| `--retry-max` | — | `4` | Max retries for transient GitHub API failures |
-| `--retry-min-backoff` | — | `500ms` | Minimum backoff between retries |
-| `--retry-max-backoff` | — | `8s` | Maximum backoff between retries |
-
-Clone a personal account:
-
-```bash
-./corralctl my-username
-```
-
-Clone an organisation into a custom directory:
-
-```bash
-./corralctl my-org ~/Projects 500
-```
-
-Clone via SSH (key-based auth):
-
-```bash
-./corralctl --protocol ssh my-username
-```
-
-Skip pulling updates for existing clones:
-
-```bash
-./corralctl --no-sync my-username
-```
-
-Force syncing updates despite cached state:
-
-```bash
-./corralctl --force-sync my-username
-```
-
-Customize target folder layout (e.g. `owner/repo-name`):
-
-```bash
-./corralctl --layout "{{.Owner}}/{{.Name}}" my-org
-```
-
-Display interactive TUI checklist selector to select repositories:
+By passing the `-i` or `--interactive` flag, you can launch the selection dashboard:
 
 ```bash
 ./corralctl -i my-username
 ```
 
-Execute a git command concurrently in all cloned repositories matching a filter:
+### Keybindings
+
+- `[space]` — Toggle selection of the current repository.
+- `[ctrl+a]` — Select all currently filtered repositories.
+- `[ctrl+n]` — Deselect all currently filtered repositories.
+- `[/]` — Enter command / filter mode.
+- `[enter]` — Confirm selection and begin cloning/syncing.
+- `[esc]` — Exit the application silently.
+
+### In-Session Commands
+
+Press `/` inside the TUI to enter Command Mode. Commands support prefix-based autocompletion (press `[tab]` or `[right-arrow]` to autocomplete):
+
+- `/sort <field>` — Sort repositories. Fields:
+  - `name` — Alphabetical sort by repository name.
+  - `language` / `lang` — Alphabetical sort by language.
+  - `visibility` / `vis` — Alphabetical sort by visibility (Private/Public).
+  - `public` — Prioritize public repositories at the top.
+  - `private` — Prioritize private repositories at the top.
+- `/all` — Select all filtered repositories.
+- `/none` — Deselect all filtered repositories.
+- `/exit` / `/quit` — Cancel and exit silently.
+- `/help` — Display the in-session help panel overlay.
+
+---
+
+## Layout Customization
+
+By default, Corral uses the layout `{{.Visibility}}/{{.Language}}/{{.Name}}`. You can override this using the `--layout` flag:
 
 ```bash
+./corralctl --layout "{{.Owner}}/{{.Name}}" my-org
+```
+
+Supported placeholders:
+* `{{.Owner}}` — GitHub owner name.
+* `{{.Name}}` — Repository name.
+* `{{.Language}}` — Primary language normalized to lowercase.
+* `{{.Visibility}}` — Repository visibility (`Public` or `Private`).
+
+---
+
+## Smart Syncing
+
+Corral stores synchronization metadata next to each repository's `.git/` folder inside a `.corral-state.json` sidecar file:
+* **No Redundant Pulls:** If the remote repository has not received new pushes since the last sync, `git pull` is skipped completely.
+* **Overrides:** To bypass smart checks and force Corral to perform a full `git pull`, pass the `--force-sync` flag.
+* **Skip Syncing entirely:** Pass `--no-sync` to skip updates on all cloned repositories.
+
+---
+
+## Exec Mode
+
+Execute arbitrary shell commands concurrently across your organized repositories:
+
+```bash
+# Check git status for all Go/Rust private repositories
 ./corralctl exec "git status -s" --languages go,rust --visibility private
 ```
 
-Preview what would happen without making changes:
+---
+
+## Usage & Flags
+
+### Positional Arguments
 
 ```bash
-./corralctl --dry-run my-org
+corralctl <owner> [base_dir] [limit]
 ```
 
-Fetch only private Go and Rust repositories, and emit machine-readable JSON:
+- `<owner>` — GitHub username or organization (Required).
+- `[base_dir]` — Root directory to save repositories (Default: `$HOME/Code`).
+- `[limit]` — Maximum repositories to fetch (Default: `1000`).
 
-```bash
-./corralctl --visibility private --languages go,rust --output json my-org
-```
+### Command Options
 
-Use GitHub CLI auth explicitly and perform shallow single-branch clones:
-
-```bash
-./corralctl --auth gh --clone-single-branch --clone-depth 1 my-username
-```
-
-Detect local repositories that no longer exist on GitHub (orphans):
-
-```bash
-./corralctl --orphans my-username
-```
-
-Clone with submodules, raising concurrency for a large account:
-
-```bash
-./corralctl --recurse-submodules --concurrency 16 my-org
-```
-
-Include forks and archived repositories, excluding generated languages:
-
-```bash
-./corralctl --include-forks --include-archived --exclude-languages makefile,dockerfile my-username
-```
-
-Stream one NDJSON record per repository (ideal for piping into `jq`):
-
-```bash
-./corralctl --output ndjson my-org | jq -r 'select(.action=="CLONE") | .repo'
-```
-
-Use a fixed token and tune retry backoff for flaky networks:
-
-```bash
-GITHUB_TOKEN=ghp_xxx ./corralctl --auth token --retry-max 6 --retry-min-backoff 1s --retry-max-backoff 30s my-org
-```
-
-Print the version:
-
-```bash
-./corralctl --version
-```
-
-By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then falls back to `gh auth token`.
+| Option | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--base-dir` | — | `$HOME/Code` | Root directory for cloned repos |
+| `--limit` | `-l` | `1000` | Maximum repositories to fetch |
+| `--concurrency` | `-c` | `1` | Number of concurrent worker threads |
+| `--dry-run` | `-n` | off | Preview actions without making changes |
+| `--orphans` | `-o` | off | Detect local repositories no longer on GitHub |
+| `--protocol` | `-p` | `https` | Protocol to clone: `ssh` or `https` |
+| `--no-sync` | — | off | Skip pulling latest changes for existing clones |
+| `--force-sync` | — | off | Force git pull regardless of cached state |
+| `--layout` | — | `...` | Templated path layout for repositories |
+| `--interactive` | `-i` | off | Launch the interactive selector TUI dashboard |
+| `--recurse-submodules`| — | off | Initialise submodules on clone and sync |
+| `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
+| `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
+| `--visibility` | — | `all` | Filter by visibility: `all`, `public`, `private` |
+| `--include-forks` | — | off | Include forked repositories |
+| `--include-archived` | — | off | Include archived repositories |
+| `--languages` | — | — | Comma-separated language filter (e.g. `go,rust`) |
+| `--exclude-languages`| — | — | Comma-separated language exclude list |
+| `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
 
 ---
 
-## What's Included
+## Examples
 
-<details>
-<summary><b>Organisation and Layout</b></summary>
+To inspect the package layout and programmatically run Corral modules, see the self-contained, copy-pasteable Go code examples in the [examples](file:///Users/seb/Code/Public/go/corral/examples) directory:
 
-- **Visibility sorting** separates repositories into `Public/` and `Private/` trees based on GitHub metadata. GitHub Enterprise `INTERNAL` repositories are securely routed to the `Private/` tree.
-- **Language grouping** places each repository under its primary language directory, normalised to lowercase
-- **Special characters** are handled cleanly — C# becomes `csharp`, C++ becomes `cpp`, spaces and slashes become underscores
-- **Null languages** default to `other/` so every repository has a home
-</details>
+1. **[Interactive Selector](file:///Users/seb/Code/Public/go/corral/examples/interactive_selector/main.go)** — Programmatically configure and launch the selection checklist TUI in AltScreen mode.
+2. **[GitHub Repository Fetcher](file:///Users/seb/Code/Public/go/corral/examples/github_fetch/main.go)** — Query the GitHub REST API using `github.FetchReposWithOptions` with stars sorting and language constraints.
+3. **[Git Syncing](file:///Users/seb/Code/Public/go/corral/examples/git_clone/main.go)** — Call the `git` helper package to perform clones, query branches, and resolve origin URLs.
+4. **[Engine Orchestrator](file:///Users/seb/Code/Public/go/corral/examples/engine_run/main.go)** — Integrate the core engine `engine.Run` to run repository syncing with custom filters, layout structures, and dry-run pre-flights.
 
-<details>
-<summary><b>Legacy Migration</b></summary>
+---
 
-- **Flat layouts** from earlier versions (`~/Code/<Language>/<repo>`) are detected and moved into the new `<Visibility>/<Language>/<repo>` structure
-- **Empty directories** left behind after migration are removed automatically
-- **Existing clones** are never overwritten or deleted — the script only adds, never subtracts
-</details>
+## Troubleshooting
 
-<details>
-<summary><b>Troubleshooting</b></summary>
-
-| Message | Cause | Solution |
+| Error Message | Cause | Solution |
 | :--- | :--- | :--- |
-| `ERROR: git not found on PATH` | Git is not installed, or `PATH` does not include it for this shell/cron environment | See Install above; for cron, set `PATH` explicitly in the crontab |
-| `ERROR: GITHUB_TOKEN (or GH_TOKEN) environment variable not set` | `--auth token` was set and no token variable is present | Run `export GITHUB_TOKEN=$(gh auth token)` or switch to `--auth auto` |
-| `FAILED: owner/repo` | Network issue or private repo without token access | Check connectivity and verify `gh auth status` |
-</details>
-
-<details>
-<summary><b>Frequently Asked Questions</b></summary>
-
-- **Can it back up private repositories?** Yes. Any repository visible to the authenticated `GITHUB_TOKEN` is cloned. `PRIVATE` and GitHub Enterprise `INTERNAL` repositories land in the `Private/` tree.
-- **Does it work with organisations?** Yes. Pass the organisation name as the first argument. Both user accounts and organisations are supported.
-- **What happens if a repository is deleted on GitHub?** The local clone remains untouched. The script never deletes existing directories.
-- **What happens if I have uncommitted changes when it syncs?** Your local uncommitted work is kept safe. Git automatically stashes your changes (`--autostash`), rebases the latest commits from the remote branch, and then reapplies your stash. If there is a direct conflict, the sync is cleanly aborted for that specific repository.
-- **Does it work on Windows?** Yes, through WSL2. Install a Linux distribution from the Microsoft Store, open its terminal, and run the script there. It behaves identically to native Linux.
-- **Is it safe to run on a schedule?** Yes. The tool is idempotent — existing repos are skipped, only new ones are cloned. No interactive prompts.
-</details>
-
-<details>
-<summary><b>How It Compares</b></summary>
-
-| Feature | Corral | [ghorg](https://github.com/gabrie30/ghorg) | [ghcloneall](https://pypi.org/project/ghcloneall/) | Gist scripts |
-| :--- | :--- | :--- | :--- | :--- |
-| Organises by language | Yes | No | No | No |
-| Organises by visibility | Yes | No | No | No |
-| macOS, Linux, and WSL2 | Yes (CI on both) | Yes | Linux only | Varies |
-| Zero configuration | Yes | No | No | Yes |
-| Idempotent re-runs | Yes | Yes | Yes | No |
-| Concurrent operations | Yes | Yes | Yes | No |
-| Legacy layout migration | Yes | No | No | No |
-| Test suite | 100% coverage, CI on 2 OS | Yes | Limited | None |
-</details>
-
-For security policy and vulnerability reporting, see [SECURITY.md](SECURITY.md).
+| `ERROR: git not found on PATH` | Git is not installed or missing from the current PATH environment. | Install git via your package manager. |
+| `ERROR: GITHUB_TOKEN environment variable not set` | `--auth token` was specified but no environment variable is present. | Run `export GITHUB_TOKEN=$(gh auth token)` or switch to `--auth auto`. |
+| `FAILED: owner/repo` | Authentication error or network failure during clone/pull. | Check connectivity and confirm `gh auth status` displays a valid session. |
 
 ---
 
-**THE ARCHITECT** ᛫ [Sebastien Rousseau](https://sebastienrousseau.com)
+## Frequently Asked Questions
+
+- **Does it work with GitLab or other hosts?**  
+  No. Corral is specifically built to integrate with the GitHub API and GitHub CLI (`gh`).
+- **What happens to repositories deleted on GitHub?**  
+  Corral never deletes your local checkouts. To see repositories that no longer exist upstream, run Corral with the `--orphans` flag.
+- **Can I run it inside Cron or systemd timers?**  
+  Yes. The command runs non-interactively by default. All Git command credential prompts are bypassed to ensure automated jobs never hang.
+- **How are repositories with no primary language stored?**  
+  They default to the `other/` language category (e.g. `Public/other/my-repo`).
+
+---
+
+**THE ARCHITECT** ᛫ [Sebastien Rousseau](https://sebastienrousseau.com)  
 **THE ENGINE** ᛞ [EUXIS](https://euxis.co) ᛫ Enterprise Unified Execution Intelligence System
 
 ---
