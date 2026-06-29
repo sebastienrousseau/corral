@@ -14,6 +14,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License" /></a>
 </p>
 
+<p align="center">
+  <img src=".github/demo.gif" alt="Corral Demo" width="600" />
+</p>
+
 ---
 
 ## Install
