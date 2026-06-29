@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v74/github"
@@ -174,66 +175,133 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 		}
 	}
 
-	var allRepos []Repo
-	page := 1
-	for {
-		var (
-			repos []*gh.Repository
-			resp  *gh.Response
-			err   error
-		)
-
+	fetchPage := func(p int) ([]*gh.Repository, *gh.Response, error) {
 		switch {
 		case isOrg:
-			repos, resp, err = client.Repositories.ListByOrg(ctx, owner, &gh.RepositoryListByOrgOptions{
+			return client.Repositories.ListByOrg(ctx, owner, &gh.RepositoryListByOrgOptions{
 				Type: orgTypeForVisibility(opts.Visibility),
 				Sort: "updated",
 				ListOptions: gh.ListOptions{
-					Page:    page,
+					Page:    p,
 					PerPage: 100,
 				},
 			})
 		case isAuthenticatedUser:
-			repos, resp, err = client.Repositories.ListByAuthenticatedUser(ctx, &gh.RepositoryListByAuthenticatedUserOptions{
+			return client.Repositories.ListByAuthenticatedUser(ctx, &gh.RepositoryListByAuthenticatedUserOptions{
 				Visibility:  opts.Visibility,
 				Affiliation: "owner",
 				Sort:        "updated",
 				ListOptions: gh.ListOptions{
-					Page:    page,
+					Page:    p,
 					PerPage: 100,
 				},
 			})
 		default:
-			repos, resp, err = client.Repositories.ListByUser(ctx, owner, &gh.RepositoryListByUserOptions{
+			return client.Repositories.ListByUser(ctx, owner, &gh.RepositoryListByUserOptions{
 				Type: "owner",
 				Sort: "updated",
 				ListOptions: gh.ListOptions{
-					Page:    page,
+					Page:    p,
 					PerPage: 100,
 				},
 			})
 		}
+	}
 
-		if err != nil {
-			return nil, fmt.Errorf("failed listing repositories for '%s': %w", owner, err)
-		}
-
-		for _, r := range repos {
-			if opts.Limit > 0 && len(allRepos) >= opts.Limit {
-				break
-			}
-
-			repo := mapRepository(r)
-			if !matchesFilters(repo, includeLang, excludeLang, opts) {
-				continue
-			}
-			allRepos = append(allRepos, repo)
-		}
-
-		if resp.NextPage == 0 || (opts.Limit > 0 && len(allRepos) >= opts.Limit) {
+	// Fetch first page to learn total page count
+	repos, resp, err := fetchPage(1)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing repositories for '%s': %w", owner, err)
+	}
+	var allRepos []Repo
+	for _, r := range repos {
+		if opts.Limit > 0 && len(allRepos) >= opts.Limit {
 			break
 		}
-		page = resp.NextPage
+		repo := mapRepository(r)
+		if !matchesFilters(repo, includeLang, excludeLang, opts) {
+			continue
+		}
+		allRepos = append(allRepos, repo)
+	}
+
+	if resp.LastPage > 1 && (opts.Limit == 0 || len(allRepos) < opts.Limit) {
+		lastPageToFetch := resp.LastPage
+
+		var (
+			mu         sync.Mutex
+			errs       []error
+			resultsMap = make(map[int][]*gh.Repository)
+			sem        = make(chan struct{}, 5) // semaphore: limit to 5 concurrent requests
+			wg         sync.WaitGroup
+		)
+
+		for p := 2; p <= lastPageToFetch; p++ {
+			wg.Add(1)
+			go func(pNum int) {
+				defer wg.Done()
+				select {
+				case <-ctx.Done():
+					mu.Lock()
+					errs = append(errs, ctx.Err())
+					mu.Unlock()
+					return
+				case sem <- struct{}{}:
+				}
+				defer func() { <-sem }()
+
+				pRepos, _, pErr := fetchPage(pNum)
+
+				mu.Lock()
+				defer mu.Unlock()
+				if pErr != nil {
+					errs = append(errs, pErr)
+					return
+				}
+				resultsMap[pNum] = pRepos
+			}(p)
+		}
+		wg.Wait()
+
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("failed listing repositories for '%s' (concurrent fetch failed): %w", owner, errs[0])
+		}
+
+		for p := 2; p <= lastPageToFetch; p++ {
+			for _, r := range resultsMap[p] {
+				if opts.Limit > 0 && len(allRepos) >= opts.Limit {
+					break
+				}
+				repo := mapRepository(r)
+				if !matchesFilters(repo, includeLang, excludeLang, opts) {
+					continue
+				}
+				allRepos = append(allRepos, repo)
+			}
+		}
+	} else if resp.NextPage > 0 && (opts.Limit == 0 || len(allRepos) < opts.Limit) {
+		// Fallback to sequential fetch if LastPage isn't provided but NextPage is
+		page := resp.NextPage
+		for {
+			pRepos, pResp, pErr := fetchPage(page)
+			if pErr != nil {
+				return nil, fmt.Errorf("failed listing repositories for '%s' (fallback fetch failed): %w", owner, pErr)
+			}
+			for _, r := range pRepos {
+				if opts.Limit > 0 && len(allRepos) >= opts.Limit {
+					break
+				}
+				repo := mapRepository(r)
+				if !matchesFilters(repo, includeLang, excludeLang, opts) {
+					continue
+				}
+				allRepos = append(allRepos, repo)
+			}
+			if pResp.NextPage == 0 || (opts.Limit > 0 && len(allRepos) >= opts.Limit) {
+				break
+			}
+			page = pResp.NextPage
+		}
 	}
 
 	return allRepos, nil

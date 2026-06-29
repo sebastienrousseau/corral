@@ -1158,3 +1158,86 @@ func TestProcessRepoCloneStampsState(t *testing.T) {
 		t.Errorf("clone must stamp state with the API pushed_at, got %v", got.LastSyncedPushedAt)
 	}
 }
+
+func TestEvaluateLayout(t *testing.T) {
+	repo := github.Repo{
+		Name:          "repo1",
+		Language:      "Go",
+		Visibility:    "Public",
+		DefaultBranch: "main",
+	}
+
+	tests := []struct {
+		name       string
+		layout     string
+		repo       github.Repo
+		owner      string
+		want       string
+		wantErrSub string
+	}{
+		{
+			name:   "default empty layout",
+			layout: "",
+			repo:   repo,
+			owner:  "user1",
+			want:   "public/go/repo1",
+		},
+		{
+			name:   "custom flat layout",
+			layout: "{{.Owner}}/{{.Name}}",
+			repo:   repo,
+			owner:  "user1",
+			want:   "user1/repo1",
+		},
+		{
+			name:   "custom language-only layout",
+			layout: "{{.Language}}/{{.Name}}",
+			repo:   repo,
+			owner:  "user1",
+			want:   "go/repo1",
+		},
+		{
+			name:       "escape folder path directory traversal",
+			layout:     "../{{.Name}}",
+			repo:       repo,
+			owner:      "user1",
+			wantErrSub: "escapes base directory",
+		},
+		{
+			name:       "escape folder path absolute path",
+			layout:     "/{{.Name}}",
+			repo:       repo,
+			owner:      "user1",
+			wantErrSub: "escapes base directory",
+		},
+		{
+			name:       "invalid template syntax",
+			layout:     "{{.Name",
+			repo:       repo,
+			owner:      "user1",
+			wantErrSub: "unclosed action",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := evaluateLayout(tt.layout, tt.repo, tt.owner)
+			if tt.wantErrSub != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Fatalf("expected error containing %q, got: %v", tt.wantErrSub, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+

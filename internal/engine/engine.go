@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,9 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
@@ -50,6 +53,8 @@ type RunOptions struct {
 	DoSync bool
 	// Output selects the result emission format (text, json, or ndjson).
 	Output OutputFormat
+	// Interactive, when true, displays an interactive selector before processing.
+	Interactive bool
 
 	// Fetch holds the options passed to the GitHub repository listing call.
 	Fetch github.FetchOptions
@@ -57,6 +62,8 @@ type RunOptions struct {
 	Clone git.CloneOptions
 	// Sync controls when an already-cloned repository is actually pulled.
 	Sync SyncOptions
+	// Layout specifies the templated path structure for repositories.
+	Layout string
 }
 
 // SyncOptions configures the engine's per-repo sync decision. Kept separate
@@ -173,6 +180,12 @@ func Run(ctx context.Context, opts RunOptions) {
 
 	if opts.Output == OutputText {
 		if isTTY {
+			if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+				logo := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
+					lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories\n  ") +
+					lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n"
+				fmt.Println(logo)
+			}
 			fmt.Println("Fetching repositories from GitHub...")
 		} else {
 			log.Println("Fetching repositories from GitHub...")
@@ -186,12 +199,40 @@ func Run(ctx context.Context, opts RunOptions) {
 		return
 	}
 
+	if opts.Interactive {
+		if selected, ok := tui.RunSelector(repos); ok {
+			repos = selected
+			if len(repos) == 0 {
+				if opts.Output == OutputText {
+					fmt.Println("No repositories selected.")
+				}
+				return
+			}
+		} else {
+			if opts.Output == OutputText {
+				fmt.Println("Cancelled.")
+			}
+			return
+		}
+	}
+
 	if opts.Fetch.Limit > 0 && len(repos) == opts.Fetch.Limit && opts.Output == OutputText {
 		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
 	}
 
-	migrateLegacy(opts.BaseDir, repos)
-	normalizeLanguageDirCase(opts.BaseDir, repos)
+	// Pre-validate layout template if provided
+	if opts.Layout != "" {
+		if _, err := template.New("layout").Parse(opts.Layout); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
+			osExit(1)
+			return
+		}
+	}
+
+	if opts.Layout == "" || opts.Layout == "{{.Visibility}}/{{.Language}}/{{.Name}}" {
+		migrateLegacy(opts.BaseDir, repos)
+		normalizeLanguageDirCase(opts.BaseDir, repos)
+	}
 
 	jobs := make(chan Job, len(repos))
 	results := make(chan RepoResult, len(repos))
@@ -223,10 +264,13 @@ func Run(ctx context.Context, opts RunOptions) {
 	scheduled := 0
 enqueueLoop:
 	for _, repo := range repos {
-		langDir := normalizeLanguage(repo.Language)
-		visDir := repo.Visibility
-		targetDir := filepath.Join(opts.BaseDir, visDir, langDir, repo.Name)
-		legacyDir := filepath.Join(opts.BaseDir, langDir, repo.Name)
+		relPath, err := evaluateLayout(opts.Layout, repo, opts.Owner)
+		if err != nil {
+			log.Printf("WARN: failed to evaluate layout for %s: %v", repo.Name, err)
+			continue
+		}
+		targetDir := filepath.Join(opts.BaseDir, relPath)
+		legacyDir := filepath.Join(opts.BaseDir, normalizeLanguage(repo.Language), repo.Name)
 		select {
 		case <-ctx.Done():
 			break enqueueLoop
@@ -297,7 +341,9 @@ enqueueLoop:
 	close(results)
 	consumerWG.Wait()
 
-	cleanupEmptyFolders(opts.BaseDir, repos)
+	if opts.Layout == "" || opts.Layout == "{{.Visibility}}/{{.Language}}/{{.Name}}" {
+		cleanupEmptyFolders(opts.BaseDir, repos)
+	}
 
 	if opts.Orphans {
 		detectOrphans(opts.Owner, opts.BaseDir, repos)
@@ -608,4 +654,36 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 	if len(orphans) == 0 {
 		fmt.Printf("No orphaned repositories found for %s.\n", owner)
 	}
+}
+
+func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, error) {
+	if layoutTpl == "" {
+		layoutTpl = "{{.Visibility}}/{{.Language}}/{{.Name}}"
+	}
+	tmpl, err := template.New("layout").Parse(layoutTpl)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	data := struct {
+		Visibility    string
+		Language      string
+		Name          string
+		Owner         string
+		DefaultBranch string
+	}{
+		Visibility:    strings.ToLower(repo.Visibility),
+		Language:      normalizeLanguage(repo.Language),
+		Name:          repo.Name,
+		Owner:         owner,
+		DefaultBranch: repo.DefaultBranch,
+	}
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	cleanPath := filepath.Clean(buf.String())
+	if strings.HasPrefix(cleanPath, "..") || cleanPath == "." || filepath.IsAbs(cleanPath) {
+		return "", fmt.Errorf("layout escapes base directory: %s", cleanPath)
+	}
+	return cleanPath, nil
 }

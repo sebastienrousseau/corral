@@ -206,6 +206,8 @@ graph TD
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
 | `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
 | `--force-sync` | — | off | Force git pull regardless of the cached pushed_at state |
+| `--layout` | — | `{{.Visibility}}/{{.Language}}/{{.Name}}` | Templated path structure for repositories |
+| `--interactive` | `-i` | off | Display an interactive selector dashboard to pick repositories |
 | `--recurse-submodules` | — | off | Initialise submodules on clone and sync |
 | `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
 | `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
@@ -249,6 +251,24 @@ Force syncing updates despite cached state:
 
 ```bash
 ./corralctl --force-sync my-username
+```
+
+Customize target folder layout (e.g. `owner/repo-name`):
+
+```bash
+./corralctl --layout "{{.Owner}}/{{.Name}}" my-org
+```
+
+Display interactive TUI checklist selector to select repositories:
+
+```bash
+./corralctl -i my-username
+```
+
+Execute a git command concurrently in all cloned repositories matching a filter:
+
+```bash
+./corralctl exec "git status -s" --languages go,rust --visibility private
 ```
 
 Preview what would happen without making changes:

@@ -3,11 +3,13 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sebastienrousseau/corral/internal/github"
 )
 
 // LogMsg represents a log entry to be displayed in the TUI.
@@ -112,7 +114,16 @@ func (m model) View() string {
 	}
 	progBar := m.prog.ViewAs(percent)
 
-	out := titleStyle.Render("Corral - Organising Repositories") + "\n"
+	var header string
+	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories\n  ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
+	} else {
+		header = titleStyle.Render("Corral - Organising Repositories") + "\n"
+	}
+
+	out := header
 	out += pad + progBar + fmt.Sprintf(" %d/%d", m.done, m.total) + "\n\n"
 
 	for _, l := range m.logs {
@@ -135,4 +146,162 @@ func (m model) View() string {
 	}
 
 	return out
+}
+
+type selectorModel struct {
+	repos     []github.Repo
+	filter    string
+	cursor    int
+	selected  map[string]bool // key is repo.Name
+	confirmed bool
+	quitting  bool
+}
+
+func NewSelectorModel(repos []github.Repo) tea.Model {
+	sel := make(map[string]bool)
+	for _, r := range repos {
+		sel[r.Name] = true // select all by default
+	}
+	return selectorModel{
+		repos:    repos,
+		selected: sel,
+	}
+}
+
+func (m selectorModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m selectorModel) getFiltered() []github.Repo {
+	if m.filter == "" {
+		return m.repos
+	}
+	var out []github.Repo
+	for _, r := range m.repos {
+		if strings.Contains(strings.ToLower(r.Name), strings.ToLower(m.filter)) ||
+			strings.Contains(strings.ToLower(r.Language), strings.ToLower(m.filter)) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	filtered := m.getFiltered()
+
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc":
+			m.quitting = true
+			return m, tea.Quit
+		case "enter":
+			m.confirmed = true
+			return m, tea.Quit
+		case "up":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down":
+			if m.cursor < len(filtered)-1 {
+				m.cursor++
+			}
+		case " ", "space":
+			if len(filtered) > 0 && m.cursor < len(filtered) {
+				name := filtered[m.cursor].Name
+				m.selected[name] = !m.selected[name]
+			}
+		case "backspace":
+			if len(m.filter) > 0 {
+				m.filter = m.filter[:len(m.filter)-1]
+				m.cursor = 0
+			}
+		case "a": // Select all
+			for _, r := range filtered {
+				m.selected[r.Name] = true
+			}
+		case "n": // Select none / clear all
+			for _, r := range filtered {
+				m.selected[r.Name] = false
+			}
+		default:
+			// Append to filter if it is a printable character
+			if len(msg.String()) == 1 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
+				m.filter += msg.String()
+				m.cursor = 0
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m selectorModel) View() string {
+	filtered := m.getFiltered()
+
+	var header string
+	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Select Repositories\n  ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
+	} else {
+		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Corral - Select Repositories") + "\n\n"
+	}
+
+	out := header
+	out += fmt.Sprintf("  Search/Filter: %s_\n", lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.filter))
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)\n\n", len(filtered), m.cursor+1))
+
+	// Display viewport of repositories (limit to 12 items to prevent overflow)
+	start := 0
+	if m.cursor >= 10 {
+		start = m.cursor - 9
+	}
+	end := start + 12
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	for i := start; i < end; i++ {
+		r := filtered[i]
+		checked := "[ ]"
+		if m.selected[r.Name] {
+			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("[x]")
+		}
+
+		cursorStr := " "
+		itemStr := fmt.Sprintf("%s %s  %s", checked, r.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("("+r.Language+")"))
+		if i == m.cursor {
+			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(">")
+			itemStr = lipgloss.NewStyle().Bold(true).Render(itemStr)
+		}
+		out += fmt.Sprintf(" %s %s\n", cursorStr, itemStr)
+	}
+
+	if len(filtered) == 0 {
+		out += "  No repositories match your filter.\n"
+	}
+
+	out += "\n"
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [Space] toggle • [a] select all • [n] select none • [Enter] confirm • [Esc] cancel\n")
+
+	return out
+}
+
+func RunSelector(repos []github.Repo) ([]github.Repo, bool) {
+	p := tea.NewProgram(NewSelectorModel(repos))
+	m, err := p.Run()
+	if err != nil {
+		return nil, false
+	}
+	selModel := m.(selectorModel)
+	if !selModel.confirmed {
+		return nil, false
+	}
+	var out []github.Repo
+	for _, r := range repos {
+		if selModel.selected[r.Name] {
+			out = append(out, r)
+		}
+	}
+	return out, true
 }

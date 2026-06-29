@@ -39,6 +39,8 @@ var (
 	cloneSingleBranch   bool
 	cloneDepth          int
 	forceSync           bool
+	layout              string
+	interactive         bool
 	retryMax            int
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
@@ -120,6 +122,7 @@ var rootCmd = &cobra.Command{
 			Protocol:    protocol,
 			DoSync:      !noSync,
 			Output:      engine.OutputFormat(output),
+			Interactive: interactive,
 			Fetch: github.FetchOptions{
 				Limit:            lim,
 				Visibility:       visibility,
@@ -141,6 +144,7 @@ var rootCmd = &cobra.Command{
 			Sync: engine.SyncOptions{
 				Force: forceSync,
 			},
+			Layout: layout,
 		})
 	},
 }
@@ -207,10 +211,10 @@ func defaultBaseDir() string {
 func init() {
 	rootCmd.Version = Version
 
-	rootCmd.Flags().StringVar(&baseDir, "base-dir", defaultBaseDir(), "root directory for cloned repos")
+	rootCmd.PersistentFlags().StringVar(&baseDir, "base-dir", defaultBaseDir(), "root directory for cloned repos")
 	rootCmd.Flags().IntVarP(&limit, "limit", "l", 1000, "max repos to list")
 	rootCmd.Flags().IntVarP(&concurrency, "concurrency", "c", 1, "number of concurrent operations")
-	rootCmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "preview actions without making changes")
+	rootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "preview actions without making changes")
 	rootCmd.Flags().BoolVarP(&orphans, "orphans", "o", false, "detect and list local repositories not on GitHub")
 	rootCmd.Flags().StringVarP(&protocol, "protocol", "p", "https", "clone protocol (ssh or https)")
 	rootCmd.Flags().BoolVar(&noSync, "no-sync", false, "skip pulling latest changes for existing repos")
@@ -220,12 +224,14 @@ func init() {
 	rootCmd.Flags().StringVar(&visibility, "visibility", "all", "repository visibility filter: all, public, private")
 	rootCmd.Flags().BoolVar(&includeForks, "include-forks", false, "include forked repositories")
 	rootCmd.Flags().BoolVar(&includeArchived, "include-archived", false, "include archived repositories")
+	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "display an interactive selector dashboard to pick repositories to clone/sync")
 	rootCmd.Flags().StringVar(&includeLanguagesCSV, "languages", "", "comma-separated language allow list")
 	rootCmd.Flags().StringVar(&excludeLanguagesCSV, "exclude-languages", "", "comma-separated language deny list")
 	rootCmd.Flags().BoolVar(&cloneBlobless, "clone-blobless", false, "use partial clone filter=blob:none")
 	rootCmd.Flags().BoolVar(&cloneSingleBranch, "clone-single-branch", false, "clone only the default branch")
 	rootCmd.Flags().IntVar(&cloneDepth, "clone-depth", 0, "perform shallow clone with the given depth (0 disables)")
 	rootCmd.Flags().BoolVar(&forceSync, "force-sync", false, "always run git pull, ignoring the cached pushed_at state")
+	rootCmd.Flags().StringVar(&layout, "layout", "", "templated path structure for repositories (e.g. {{.Visibility}}/{{.Language}}/{{.Name}})")
 	rootCmd.Flags().IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
 	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	rootCmd.Flags().DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")

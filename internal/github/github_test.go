@@ -104,7 +104,7 @@ func TestFetchReposWithClientOptions(t *testing.T) {
 			return jsonResp(req, http.StatusOK, `[
 				{"name":"repo1","language":"Go","visibility":"public","default_branch":"main","clone_url":"http://clone","ssh_url":"ssh","fork":false,"pushed_at":"2026-01-15T10:00:00Z"},
 				{"name":"repo2","visibility":"internal","fork":true}
-			]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="next"`}), nil
+			]`, map[string]string{"Link": `<https://api.test/orgs/org1/repos?page=2>; rel="next", <https://api.test/orgs/org1/repos?page=2>; rel="last"`}), nil
 		case "/users/user1/repos":
 			return jsonResp(req, http.StatusOK, `[
 				{"name":"userrepo","language":"Rust","visibility":"public","default_branch":"main"}
