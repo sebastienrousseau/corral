@@ -281,7 +281,7 @@ func (m *selectorModel) renderCustomTable() string {
 		if m.selected[r.Name] {
 			checkChar = "✔"
 		} else {
-			checkChar = "○"
+			checkChar = "·"
 		}
 
 		repoVal := r.Name
@@ -350,9 +350,6 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repos = msg.repos
 		m.filteredRepos = msg.repos
-		for _, r := range msg.repos {
-			m.selected[r.Name] = true
-		}
 		m.updateTableRows()
 		return m, nil
 
@@ -389,7 +386,7 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyFilter()
 			}
 			return m, nil
-		case "a": // Select all filtered
+		case "ctrl+a": // Select all filtered
 			if m.loading {
 				return m, nil
 			}
@@ -398,7 +395,7 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.updateTableRows()
 			return m, nil
-		case "n": // Select none filtered
+		case "ctrl+n": // Select none filtered
 			if m.loading {
 				return m, nil
 			}
@@ -458,7 +455,7 @@ func (m *selectorModel) View() string {
 	}
 	out += indentedTable + "\n"
 
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [a] all • [n] none • [enter] confirm • [esc] cancel") + "\n"
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [ctrl+a] all • [ctrl+n] none • [enter] confirm • [esc] cancel") + "\n"
 
 	return out
 }

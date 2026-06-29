@@ -173,25 +173,25 @@ func TestSelectorModel(t *testing.T) {
 		t.Errorf("Expected cursor at 0 after up key, got %d", m5.table.Cursor())
 	}
 
-	// Test toggle selection
+	// Test toggle selection (initially false, toggled to true)
 	newM, _ = m5.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m6 := newM.(*selectorModel)
-	if m6.selected["repo1"] != false {
-		t.Errorf("Expected repo1 selected to toggle to false")
+	if m6.selected["repo1"] != true {
+		t.Errorf("Expected repo1 selected to toggle to true")
 	}
 
-	// Test select none ('n')
-	newM, _ = m6.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	// Test select none ('ctrl+n')
+	newM, _ = m6.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	m7 := newM.(*selectorModel)
-	if m7.selected["repo2"] != false {
-		t.Errorf("Expected repo2 selected to toggle to false after 'n'")
+	if m7.selected["repo1"] != false {
+		t.Errorf("Expected repo1 selected to toggle to false after 'ctrl+n'")
 	}
 
-	// Test select all ('a')
-	newM, _ = m7.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	// Test select all ('ctrl+a')
+	newM, _ = m7.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	m8 := newM.(*selectorModel)
 	if m8.selected["repo1"] != true || m8.selected["repo2"] != true {
-		t.Errorf("Expected both to be selected after 'a'")
+		t.Errorf("Expected both to be selected after 'ctrl+a'")
 	}
 
 	// Test cancel
