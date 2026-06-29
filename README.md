@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/sebastienrousseau/corral/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/corral/ci.yml?style=for-the-badge&logo=github" alt="Build Status" /></a>
   <a href="https://pkg.go.dev/github.com/sebastienrousseau/corral"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?style=for-the-badge&logo=go&logoColor=white" alt="Go Reference" /></a>
-  <a href="https://goreportcard.com/report/github.com/sebastienrousseau/corral"><img src="https://goreportcard.com/badge/github.com/sebastienrousseau/corral?style=for-the-badge" alt="Go Report Card" /></a>
+  <a href="https://goreportcard.com/report/github.com/sebastienrousseau/corral"><img src="https://img.shields.io/goreportcard/report/github.com/sebastienrousseau/corral?style=for-the-badge" alt="Go Report Card" /></a>
   <a href="https://codecov.io/gh/sebastienrousseau/corral"><img src="https://img.shields.io/codecov/c/github/sebastienrousseau/corral?style=for-the-badge&logo=codecov" alt="Code Coverage" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/corral"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/corral?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
   <a href="https://sebastienrousseau.github.io/corral/"><img src="https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?style=for-the-badge&logo=github" alt="Documentation" /></a>
