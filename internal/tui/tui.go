@@ -535,7 +535,18 @@ func (m *selectorModel) View() string {
 		out += indentedTable + "\n"
 	}
 
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [ctrl+a] all • [ctrl+n] none • [/command] • [enter] confirm") + "\n"
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Bold(true)
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+
+	shortcutBar := fmt.Sprintf("  %s %s %s  %s %s %s  %s %s %s  %s %s %s  %s %s",
+		keyStyle.Render("[space]"), descStyle.Render("toggle"), sepStyle.Render("•"),
+		keyStyle.Render("[ctrl+a]"), descStyle.Render("all"), sepStyle.Render("•"),
+		keyStyle.Render("[ctrl+n]"), descStyle.Render("none"), sepStyle.Render("•"),
+		keyStyle.Render("[/]"), descStyle.Render("command"), sepStyle.Render("•"),
+		keyStyle.Render("[enter]"), descStyle.Render("confirm"),
+	)
+	out += shortcutBar + "\n"
 	out += "\n" + m.renderFooter()
 
 	return out
@@ -713,7 +724,7 @@ func (m *selectorModel) renderHelpPanel() string {
 	}
 
 	for _, c := range commands {
-		cmdStr := fmt.Sprintf("  %-16s", c[0])
+		cmdStr := fmt.Sprintf("   %-16s", c[0])
 		descStr := c[1]
 		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render(cmdStr))
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(descStr) + "\n")
