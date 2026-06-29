@@ -182,7 +182,7 @@ func Run(ctx context.Context, opts RunOptions) {
 		if isTTY {
 			if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
 				logo := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-					lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories\n  ") +
+					lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories") + "\n  " +
 					lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n"
 				fmt.Println(logo)
 			}

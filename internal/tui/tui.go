@@ -117,7 +117,7 @@ func (m model) View() string {
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories\n  ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories") + "\n  " +
 			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
 	} else {
 		header = titleStyle.Render("Corral - Organising Repositories") + "\n"
@@ -241,7 +241,7 @@ func (m selectorModel) View() string {
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Select Repositories\n  ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Select Repositories") + "\n  " +
 			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
 	} else {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Corral - Select Repositories") + "\n\n"
@@ -249,7 +249,7 @@ func (m selectorModel) View() string {
 
 	out := header
 	out += fmt.Sprintf("  Search/Filter: %s_\n", lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.filter))
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)\n\n", len(filtered), m.cursor+1))
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)", len(filtered), m.cursor+1)) + "\n\n"
 
 	// Display viewport of repositories (limit to 12 items to prevent overflow)
 	start := 0
@@ -269,7 +269,11 @@ func (m selectorModel) View() string {
 		}
 
 		cursorStr := " "
-		itemStr := fmt.Sprintf("%s %s  %s", checked, r.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("("+r.Language+")"))
+		langStr := ""
+		if r.Language != "" && r.Language != "Other" {
+			langStr = " (" + r.Language + ")"
+		}
+		itemStr := fmt.Sprintf("%s %s%s", checked, r.Name, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(langStr))
 		if i == m.cursor {
 			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(">")
 			itemStr = lipgloss.NewStyle().Bold(true).Render(itemStr)
@@ -282,7 +286,7 @@ func (m selectorModel) View() string {
 	}
 
 	out += "\n"
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [Space] toggle • [a] select all • [n] select none • [Enter] confirm • [Esc] cancel\n")
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [a] all • [n] none • [enter] confirm • [esc] cancel") + "\n"
 
 	return out
 }
