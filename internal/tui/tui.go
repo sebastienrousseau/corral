@@ -366,8 +366,10 @@ func GetStyledLogo(subtitle string) string {
 		sb.WriteString("     " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("  ⧇ CORRAL") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  "+subtitle) + "\n")
-	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  "+strings.Repeat("─", 38)) + "\n\n")
+	sb.WriteString("   Welcome to the " +
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral CLI") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(". Multi-repo Git organization made effortless.") + "\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("⧇ "+subtitle) + "\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 58)) + "\n\n")
 	return sb.String()
 }
