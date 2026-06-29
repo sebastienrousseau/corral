@@ -173,11 +173,11 @@ func TestSelectorModel(t *testing.T) {
 		t.Errorf("Expected cursor at 0 after up key, got %d", m5.table.Cursor())
 	}
 
-	// Test toggle selection (initially false, toggled to true)
+	// Test toggle selection (initially true, toggled to false)
 	newM, _ = m5.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	m6 := newM.(*selectorModel)
-	if m6.selected["repo1"] != true {
-		t.Errorf("Expected repo1 selected to toggle to true")
+	if m6.selected["repo1"] != false {
+		t.Errorf("Expected repo1 selected to toggle to false")
 	}
 
 	// Test select none ('ctrl+n')

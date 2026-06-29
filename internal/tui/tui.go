@@ -353,6 +353,9 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.repos = msg.repos
 		m.filteredRepos = msg.repos
+		for _, r := range msg.repos {
+			m.selected[r.Name] = true
+		}
 		m.updateTableRows()
 		return m, nil
 
