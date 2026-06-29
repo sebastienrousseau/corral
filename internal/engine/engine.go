@@ -179,6 +179,7 @@ func Run(ctx context.Context, opts RunOptions) {
 	}
 
 	migrateLegacy(opts.BaseDir, repos)
+	normalizeLanguageDirCase(opts.BaseDir, repos)
 
 	jobs := make(chan Job, len(repos))
 	results := make(chan RepoResult, len(repos))
@@ -350,6 +351,61 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 			}
 			if err := os.Rename(legacyDir, targetDir); err != nil {
 				log.Printf("WARN: failed migrating %s to %s: %v", legacyDir, targetDir, err)
+			}
+		}
+	}
+}
+
+// normalizeLanguageDirCase renames any case-variant language subdirectory
+// under each visibility directory to its lowercase form. On case-insensitive
+// filesystems (APFS, HFS+, NTFS) a direct os.Rename("JavaScript","javascript")
+// is a silent no-op, so the rename is performed via a temporary name. Only
+// directories whose lowercased name matches a normalized language from the
+// fetched repos are touched, so unrelated entries (e.g. "Configurations") are
+// left alone.
+func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
+	languages := make(map[string]struct{}, len(repos))
+	for _, r := range repos {
+		languages[normalizeLanguage(r.Language)] = struct{}{}
+	}
+	if len(languages) == 0 {
+		return
+	}
+	visEntries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return
+	}
+	for _, ve := range visEntries {
+		if !ve.IsDir() {
+			continue
+		}
+		visDir := filepath.Join(baseDir, ve.Name())
+		langEntries, err := os.ReadDir(visDir)
+		if err != nil {
+			continue
+		}
+		for _, le := range langEntries {
+			if !le.IsDir() {
+				continue
+			}
+			name := le.Name()
+			lower := strings.ToLower(name)
+			if name == lower {
+				continue
+			}
+			if _, ok := languages[lower]; !ok {
+				continue
+			}
+			src := filepath.Join(visDir, name)
+			dst := filepath.Join(visDir, lower)
+			tmp := filepath.Join(visDir, lower+".corral-rename-tmp")
+			if err := os.Rename(src, tmp); err != nil {
+				log.Printf("WARN: failed normalizing case for %s: %v", src, err)
+				continue
+			}
+			if err := os.Rename(tmp, dst); err != nil {
+				log.Printf("WARN: failed normalizing case for %s -> %s: %v", tmp, dst, err)
+				_ = os.Rename(tmp, src) // best-effort revert
 			}
 		}
 	}
