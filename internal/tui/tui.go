@@ -307,21 +307,33 @@ func RunSelector(repos []github.Repo) ([]github.Repo, bool) {
 }
 
 var logoLines = []string{
-	`   ____  ___   ____   ____    _     _     `,
-	`  / ___|/ _ \ |  _ \ |  _ \  / \   | |    `,
-	` | |   | | | || |_) || |_) |/ _ \  | |    `,
-	` | |___| |_| ||  _ < |  _ < / ___ \ | |___ `,
-	`  \____|\___/ |_| \_\|_| \_/_/   \_\|_____|`,
+	`      ▄▀ ▄▀  ▀▄ ▀▄      `,
+	`       ▀▄▀ ██ ▀▄▀       `,
+	`     ▄▄▄█▄ ▀▀ ▄█▄▄▄     `,
+	`    ▄█▄ ▀▀▄▄▄█▀▀ ▄█▄    `,
+	`     ██▄▄▄▀██▀▄▄▄██     `,
+	`       ▀▀ ████ ▀▀       `,
+	`           ██           `,
 }
 
 func GetStyledLogo(subtitle string) string {
-	colors := []string{"205", "169", "133", "97", "61"}
+	colors := []string{
+		"#F87171",
+		"#FA5B4E",
+		"#E14F44",
+		"#C93F36",
+		"#B02E28",
+		"#9F1239",
+		"#800E2B",
+	}
 	var sb strings.Builder
 	sb.WriteString("\n")
 	for i, line := range logoLines {
-		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render("  "+line) + "\n")
+		sb.WriteString("    " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
-	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ CORRAL  •  "+subtitle) + "\n")
-	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("   "+strings.Repeat("─", 38)) + "\n\n")
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("  ⧇ CORRAL") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  "+subtitle) + "\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  "+strings.Repeat("─", 38)) + "\n\n")
 	return sb.String()
 }
