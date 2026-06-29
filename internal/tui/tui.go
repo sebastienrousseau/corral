@@ -273,9 +273,9 @@ func (m *selectorModel) renderCustomTable() string {
 	headerLang := fmt.Sprintf("%-15s", "Language")
 	headerVis := fmt.Sprintf("%-10s", "Visibility")
 
-	headerRow := fmt.Sprintf(" %s  %s  %s  %s", headerCheck, headerRepo, headerLang, headerVis)
+	headerRow := fmt.Sprintf("%s  %s  %s  %s", headerCheck, headerRepo, headerLang, headerVis)
 	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252")).Render(headerRow) + "\n")
-	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(" "+strings.Repeat("─", 69)) + "\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("─"+strings.Repeat("─", 69)) + "\n")
 
 	cursor := m.table.Cursor()
 	start := 0
@@ -319,7 +319,7 @@ func (m *selectorModel) renderCustomTable() string {
 			repoStr := fmt.Sprintf("%-35s", repoVal)
 			langStr := fmt.Sprintf("%-15s", langVal)
 			visStr := fmt.Sprintf("%-10s", visVal)
-			rowContent := fmt.Sprintf(" %s    %s  %s  %s", checkChar, repoStr, langStr, visStr)
+			rowContent := fmt.Sprintf("%s    %s  %s  %s", checkChar, repoStr, langStr, visStr)
 
 			sb.WriteString(lipgloss.NewStyle().
 				Foreground(lipgloss.Color("255")).
@@ -336,7 +336,7 @@ func (m *selectorModel) renderCustomTable() string {
 			langStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-15s", langVal))
 			visStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-10s", visVal))
 
-			sb.WriteString(fmt.Sprintf(" %s    %s  %s  %s\n", styledCheck, repoStr, langStr, visStr))
+			sb.WriteString(fmt.Sprintf("%s    %s  %s  %s\n", styledCheck, repoStr, langStr, visStr))
 		}
 	}
 
@@ -553,7 +553,7 @@ func (m *selectorModel) View() string {
 }
 
 func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOptions, fetchFn FetchFunc) ([]github.Repo, bool, error) {
-	p := tea.NewProgram(NewSelectorModel(fetchFn))
+	p := tea.NewProgram(NewSelectorModel(fetchFn), tea.WithAltScreen())
 	m, err := p.Run()
 	if err != nil {
 		return nil, false, err
@@ -562,7 +562,7 @@ func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOption
 	if selModel.loadingErr != nil {
 		return nil, false, selModel.loadingErr
 	}
-	if !selModel.confirmed {
+	if selModel.quitting || !selModel.confirmed {
 		return nil, false, nil
 	}
 	var out []github.Repo
@@ -603,11 +603,11 @@ func GetStyledLogo() string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	for i, line := range logoLines {
-		sb.WriteString("     " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
+		sb.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral.") + "\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("All your repos. In perfect sync.") + "\n\n")
+	sb.WriteString("  " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral.") + "\n")
+	sb.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("All your repos. In perfect sync.") + "\n\n")
 	return sb.String()
 }
 

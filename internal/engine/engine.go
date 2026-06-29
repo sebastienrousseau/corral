@@ -195,9 +195,6 @@ func Run(ctx context.Context, opts RunOptions) {
 			return
 		}
 		if !ok {
-			if opts.Output == OutputText {
-				fmt.Println("Cancelled.")
-			}
 			return
 		}
 		if len(repos) == 0 {
