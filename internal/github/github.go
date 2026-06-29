@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sort"
 	"sync"
 	"time"
 
@@ -41,6 +42,14 @@ type Repo struct {
 	// compares this against the cached value in <repo>/.corral-state.json to
 	// skip a `git pull` when nothing has changed upstream.
 	PushedAt time.Time
+	// Stars reports the stargazers count for the repository.
+	Stars int
+	// IsTemplate reports whether the repository is a template.
+	IsTemplate bool
+	// IsMirror reports whether the repository is a mirror.
+	IsMirror bool
+	// CanBeSponsored reports whether the repository has sponsorships enabled.
+	CanBeSponsored bool
 }
 
 // AuthMode controls how GitHub API credentials are resolved.
@@ -71,6 +80,10 @@ type FetchOptions struct {
 	ExcludeLanguages []string
 	// AuthMode selects how the GitHub token is resolved.
 	AuthMode AuthMode
+	// Type filters repositories by specific category (e.g. "sources", "forks", "archived", "mirrors", etc.).
+	Type string
+	// Sort specifies how the returned repositories list should be ordered.
+	Sort string
 	// RetryMax is the maximum number of retry attempts for transient failures.
 	RetryMax int
 	// RetryMinBackoff is the minimum delay between retry attempts.
@@ -318,6 +331,24 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 				break
 			}
 			page = pResp.NextPage
+		}
+	}
+
+	// Apply post-fetch sorting if requested
+	if opts.Sort != "" {
+		switch strings.ToLower(opts.Sort) {
+		case "name":
+			sort.Slice(allRepos, func(i, j int) bool {
+				return strings.ToLower(allRepos[i].Name) < strings.ToLower(allRepos[j].Name)
+			})
+		case "stars":
+			sort.Slice(allRepos, func(i, j int) bool {
+				return allRepos[i].Stars > allRepos[j].Stars
+			})
+		case "last updated", "updated":
+			sort.Slice(allRepos, func(i, j int) bool {
+				return allRepos[i].PushedAt.After(allRepos[j].PushedAt)
+			})
 		}
 	}
 
@@ -593,6 +624,44 @@ func matchesFilters(repo Repo, includeLang, excludeLang map[string]struct{}, opt
 		return false
 	}
 
+	// Apply post-fetch Type filtering
+	if opts.Type != "" {
+		switch strings.ToLower(opts.Type) {
+		case "public":
+			if repo.Visibility != "Public" {
+				return false
+			}
+		case "private":
+			if repo.Visibility != "Private" {
+				return false
+			}
+		case "sources":
+			if repo.Fork {
+				return false
+			}
+		case "forks":
+			if !repo.Fork {
+				return false
+			}
+		case "archived":
+			if !repo.Archived {
+				return false
+			}
+		case "can be sponsored", "sponsored":
+			if !repo.CanBeSponsored {
+				return false
+			}
+		case "mirrors":
+			if !repo.IsMirror {
+				return false
+			}
+		case "templates":
+			if !repo.IsTemplate {
+				return false
+			}
+		}
+	}
+
 	lang := strings.ToLower(strings.TrimSpace(repo.Language))
 	if includeLang != nil {
 		if _, ok := includeLang[lang]; !ok {
@@ -634,14 +703,18 @@ func mapRepository(r *gh.Repository) Repo {
 	}
 
 	return Repo{
-		Name:          r.GetName(),
-		Language:      lang,
-		Visibility:    visibility,
-		DefaultBranch: defaultBranch,
-		CloneURL:      cloneURL,
-		SSHURL:        sshURL,
-		Fork:          r.GetFork(),
-		Archived:      r.GetArchived(),
-		PushedAt:      r.GetPushedAt().Time,
+		Name:           r.GetName(),
+		Language:       lang,
+		Visibility:     visibility,
+		DefaultBranch:  defaultBranch,
+		CloneURL:       cloneURL,
+		SSHURL:         sshURL,
+		Fork:           r.GetFork(),
+		Archived:       r.GetArchived(),
+		PushedAt:       r.GetPushedAt().Time,
+		Stars:          r.GetStargazersCount(),
+		IsTemplate:     r.GetIsTemplate(),
+		IsMirror:       r.GetMirrorURL() != "",
+		CanBeSponsored: false,
 	}
 }

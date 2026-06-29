@@ -549,6 +549,46 @@ func TestFetchReposSearch(t *testing.T) {
 	}
 }
 
+func TestFetchReposTypeAndSort(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := `{
+			"total_count": 3,
+			"items": [
+				{"id": 1, "name": "c-repo", "stargazers_count": 10, "fork": false, "archived": false, "pushed_at": "2026-06-29T10:00:00Z"},
+				{"id": 2, "name": "a-repo", "stargazers_count": 50, "fork": true, "archived": false, "pushed_at": "2026-06-29T12:00:00Z"},
+				{"id": 3, "name": "b-repo", "stargazers_count": 30, "fork": false, "archived": true, "pushed_at": "2026-06-29T11:00:00Z"}
+			]
+		}`
+		return jsonResp(req, http.StatusOK, body, nil), nil
+	}))
+
+	// Test type filter (sources - filters out forks)
+	repos, err := FetchReposWithClientOptions(context.Background(), client, "topic:ai", FetchOptions{Type: "sources"})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if len(repos) != 1 || repos[0].Name != "c-repo" {
+		t.Errorf("expected only c-repo, got %+v", repos)
+	}
+
+	// Test sort by stars (descending)
+	repos, err = FetchReposWithClientOptions(context.Background(), client, "topic:ai", FetchOptions{
+		Type: "all",
+		Sort: "stars",
+		IncludeArchived: true,
+		IncludeForks: true,
+	})
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if len(repos) != 3 {
+		t.Fatalf("expected 3 repos, got %d", len(repos))
+	}
+	if repos[0].Name != "a-repo" || repos[1].Name != "b-repo" || repos[2].Name != "c-repo" {
+		t.Errorf("expected order: a-repo, b-repo, c-repo; got %+v", repos)
+	}
+}
+
 func TestRunGitHubCLIAuthToken(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		// The fixture installs a POSIX shell script named "gh" on PATH, which

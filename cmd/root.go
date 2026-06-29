@@ -95,13 +95,48 @@ var rootCmd = &cobra.Command{
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		owner := args[0]
+		var filterType string
+		var filterSort string
 		bDir := baseDir
-		if len(args) > 1 {
-			bDir = args[1]
-		}
 		lim := limit
-		if len(args) > 2 {
-			if _, err := fmt.Sscanf(args[2], "%d", &lim); err != nil {
+
+		argIdx := 1
+
+		// 1. Check if args[argIdx] is a known <type>
+		if len(args) > argIdx {
+			val := strings.ToLower(args[argIdx])
+			isType := false
+			switch val {
+			case "all", "public", "private", "sources", "forks", "archived", "can be sponsored", "sponsored", "mirrors", "templates":
+				isType = true
+			}
+			if isType {
+				filterType = val
+				argIdx++
+			}
+		}
+
+		// 2. Check if args[argIdx] is a known <sort>
+		if len(args) > argIdx {
+			val := strings.ToLower(args[argIdx])
+			isSort := false
+			switch val {
+			case "last updated", "updated", "name", "stars":
+				isSort = true
+			}
+			if isSort {
+				filterSort = val
+				argIdx++
+			}
+		}
+
+		// 3. Parse remaining optional positional arguments (base_dir, limit)
+		if len(args) > argIdx {
+			bDir = args[argIdx]
+			argIdx++
+		}
+		if len(args) > argIdx {
+			if _, err := fmt.Sscanf(args[argIdx], "%d", &lim); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: limit must be a valid integer\n")
 				osExit(1)
 				return
@@ -111,6 +146,7 @@ var rootCmd = &cobra.Command{
 				osExit(1)
 				return
 			}
+			argIdx++
 		}
 
 		engineRun(cmdContext(cmd), engine.RunOptions{
@@ -134,6 +170,8 @@ var rootCmd = &cobra.Command{
 				RetryMax:         retryMax,
 				RetryMinBackoff:  retryMinBackoff,
 				RetryMaxBackoff:  retryMaxBackoff,
+				Type:             filterType,
+				Sort:             filterSort,
 			},
 			Clone: git.CloneOptions{
 				RecurseSubmodules: recurseSubmodules,
