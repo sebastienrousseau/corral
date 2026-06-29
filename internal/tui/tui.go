@@ -676,7 +676,7 @@ func (m *selectorModel) renderHelpPanel() string {
 	for _, c := range commands {
 		cmdStr := fmt.Sprintf("  %-16s", c[0])
 		descStr := c[1]
-		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(cmdStr))
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render(cmdStr))
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(descStr) + "\n")
 	}
 
