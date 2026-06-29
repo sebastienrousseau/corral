@@ -246,19 +246,79 @@ func (m *selectorModel) applyFilter() {
 
 func (m *selectorModel) updateTableRows() {
 	var rows []table.Row
-	for _, r := range m.filteredRepos {
+	for range m.filteredRepos {
+		rows = append(rows, table.Row{"", "", "", ""})
+	}
+	m.table.SetRows(rows)
+}
+
+func (m *selectorModel) renderCustomTable() string {
+	var sb strings.Builder
+
+	headerCheck := "   "
+	headerRepo := fmt.Sprintf("%-35s", "Repository")
+	headerLang := fmt.Sprintf("%-15s", "Language")
+	headerVis := fmt.Sprintf("%-10s", "Visibility")
+
+	headerRow := fmt.Sprintf(" %s  %s  %s  %s", headerCheck, headerRepo, headerLang, headerVis)
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252")).Render(headerRow) + "\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(" "+strings.Repeat("─", 69)) + "\n")
+
+	cursor := m.table.Cursor()
+	start := 0
+	if cursor >= 10 {
+		start = cursor - 9
+	}
+	end := start + 12
+	if end > len(m.filteredRepos) {
+		end = len(m.filteredRepos)
+	}
+
+	for i := start; i < end; i++ {
+		r := m.filteredRepos[i]
+
 		checkChar := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○")
 		if m.selected[r.Name] {
 			checkChar = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render("✔")
 		}
-		rows = append(rows, table.Row{
-			checkChar,
-			r.Name,
-			r.Language,
-			strings.ToLower(r.Visibility),
-		})
+
+		repoVal := r.Name
+		if len(repoVal) > 35 {
+			repoVal = repoVal[:32] + "..."
+		}
+		repoStr := fmt.Sprintf("%-35s", repoVal)
+
+		langVal := r.Language
+		if len(langVal) > 15 {
+			langVal = langVal[:12] + "..."
+		}
+		langStr := fmt.Sprintf("%-15s", langVal)
+
+		visVal := strings.ToLower(r.Visibility)
+		if len(visVal) > 10 {
+			visVal = visVal[:7] + "..."
+		}
+		visStr := fmt.Sprintf("%-10s", visVal)
+
+		rowContent := fmt.Sprintf(" %s    %s  %s  %s", checkChar, repoStr, langStr, visStr)
+
+		if i == cursor {
+			sb.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("255")).
+				Background(lipgloss.Color("#F56B5E")).
+				Bold(true).
+				Render(rowContent) + "\n")
+		} else {
+			sb.WriteString(rowContent + "\n")
+		}
 	}
-	m.table.SetRows(rows)
+
+	visibleRows := end - start
+	for i := visibleRows; i < 12; i++ {
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -371,15 +431,13 @@ func (m *selectorModel) View() string {
 		return out
 	}
 
-	// Minimalist unified search input: Search repositories (138 found): █
 	searchPrompt := fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter)
 	out += lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(searchPrompt) + "\n"
 	
-	// Subtle dark gray divider
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
 	out += divider + "\n\n"
 
-	tableStr := m.table.View()
+	tableStr := m.renderCustomTable()
 	indentedTable := ""
 	for _, line := range strings.Split(tableStr, "\n") {
 		indentedTable += "  " + line + "\n"
