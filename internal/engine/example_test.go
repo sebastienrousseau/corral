@@ -32,6 +32,9 @@ func ExampleRun() {
 			SingleBranch: true,
 			Depth:        1,
 		},
+		Sync: engine.SyncOptions{
+			Force: false, // set to true to bypass cache and force pull
+		},
 	})
 }
 

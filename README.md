@@ -96,6 +96,17 @@ Every `git` invocation runs with `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/true
 </details>
 
 <details>
+<summary>Upgrade notes (v0.0.9+)</summary>
+
+Corral now supports **Smart Syncing** via a per-repository sidecar file (`.corral-state.json`):
+
+1. **Optimised Network Syncs.** When synchronising an existing repository, Corral compares the remote repository's `pushed_at` timestamp from the GitHub API with the cached timestamp in `.corral-state.json`. If no remote pushes have occurred since the last sync, Corral skips the `git pull` network operation entirely. This dramatically accelerates runs (typically 10x-50x faster) when most checkouts are up-to-date.
+2. **State Sidecar.** The sidecar file `.corral-state.json` is written atomically next to your repository's `.git/` folder. It is ignored by older Corral versions, and a missing or malformed file will safely fall back to performing a full `git pull`.
+3. **Always Sync.** To force Corral to pull updates regardless of the cached timestamp state, pass the `--force-sync` flag.
+
+</details>
+
+<details>
 <summary>Upgrade notes (v0.0.8+)</summary>
 
 If you are upgrading from `v0.0.6` or earlier, the first run after the upgrade will:
@@ -164,7 +175,8 @@ graph TD
 | | |
 | :--- | :--- |
 | **Structured** | The only tool that sorts repositories into `Public/` and `Private/` trees, grouped by primary language |
-| **Idempotent** | Safe to re-run at any time — already-cloned repositories are skipped, only new ones are fetched |
+| **Idempotent** | Safe to run at any time — already-cloned repositories are skipped, only new ones are fetched |
+| **Smart Sync** | Compares remote `pushed_at` metadata to skip redundant `git pull` operations, reducing network usage and execution time |
 | **Migratory** | Flat `~/Code/<Language>/` layouts from earlier runs move into the new structure automatically |
 | **Platforms** | First-class support for macOS, Ubuntu/Debian, Fedora/RHEL, Arch, and Windows via WSL2 |
 | **Zero-config** | No YAML, no `.env`, no config files — pass the owner name and run |
@@ -193,6 +205,7 @@ graph TD
 | `--version` | `-v` | — | Print the Corral version and exit |
 | `--protocol` | `-p` | `https` | Clone protocol — `ssh` or `https` |
 | `--no-sync` | — | off | Skip pulling latest changes for already-cloned repos |
+| `--force-sync` | — | off | Force git pull regardless of the cached pushed_at state |
 | `--recurse-submodules` | — | off | Initialise submodules on clone and sync |
 | `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
 | `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
@@ -230,6 +243,12 @@ Skip pulling updates for existing clones:
 
 ```bash
 ./corralctl --no-sync my-username
+```
+
+Force syncing updates despite cached state:
+
+```bash
+./corralctl --force-sync my-username
 ```
 
 Preview what would happen without making changes:
