@@ -842,6 +842,60 @@ func TestCleanupEmptyFolders(t *testing.T) {
 	}
 }
 
+func TestNormalizeLanguageDirCase(t *testing.T) {
+	baseDir, err := os.MkdirTemp("", "engine_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.RemoveAll(baseDir) }()
+
+	// Existing title-case language dir under a visibility dir.
+	mixed := filepath.Join(baseDir, "Public", "JavaScript", "repo1")
+	if err := os.MkdirAll(mixed, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Already-lowercase dir: idempotent no-op.
+	already := filepath.Join(baseDir, "Public", "go", "repo2")
+	if err := os.MkdirAll(already, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unrelated dir whose name doesn't match any fetched language: untouched.
+	unrelated := filepath.Join(baseDir, "Public", "Configurations", "stuff")
+	if err := os.MkdirAll(unrelated, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// A stray file at base-level (not a visibility dir) must be tolerated.
+	if err := os.WriteFile(filepath.Join(baseDir, ".DS_Store"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	repos := []github.Repo{
+		{Name: "repo1", Language: "JavaScript", Visibility: "Public"},
+		{Name: "repo2", Language: "Go", Visibility: "Public"},
+	}
+	normalizeLanguageDirCase(baseDir, repos)
+
+	lowered := filepath.Join(baseDir, "Public", "javascript", "repo1")
+	if _, err := os.Stat(lowered); err != nil {
+		t.Errorf("expected %s to exist after case normalization: %v", lowered, err)
+	}
+	if _, err := os.Stat(already); err != nil {
+		t.Errorf("expected idempotent dir %s to remain: %v", already, err)
+	}
+	if _, err := os.Stat(unrelated); err != nil {
+		t.Errorf("expected unrelated dir %s to remain untouched: %v", unrelated, err)
+	}
+
+	// Empty repos list short-circuits without error.
+	normalizeLanguageDirCase(baseDir, nil)
+
+	// Unreadable base dir is a no-op (just exercising the early-return).
+	normalizeLanguageDirCase("/invalid_dir_that_does_not_exist", repos)
+}
+
 func TestRunWiresGitTokenProvider(t *testing.T) {
 	oldFetch := fetchRepos
 	defer func() { fetchRepos = oldFetch }()
