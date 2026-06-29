@@ -366,10 +366,10 @@ func GetStyledLogo(subtitle string) string {
 		sb.WriteString("     " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString("   Welcome to the " +
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral CLI") +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(". Multi-repo Git organization made effortless.") + "\n")
+	sb.WriteString("   Say hello to " +
+		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(". All your repos. In perfect sync.") + "\n")
 	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("⧇ "+subtitle) + "\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 58)) + "\n\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 53)) + "\n\n")
 	return sb.String()
 }
