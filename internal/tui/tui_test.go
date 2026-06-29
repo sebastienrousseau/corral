@@ -285,5 +285,22 @@ func TestSlashCommands(t *testing.T) {
 	if model.selected["a-repo"] || model.selected["b-repo"] || model.selected["c-repo"] {
 		t.Errorf("Expected all repos to be deselected after typed /none and Enter")
 	}
+
+	// 5. Test typing '/e' and pressing 'tab'
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if model.filter != "/exit" {
+		t.Errorf("Expected Tab key to autocomplete '/e' to '/exit', got %q", model.filter)
+	}
+
+	// 6. Test typing '/a' and pressing 'enter' (prefix execution)
+	model.filter = ""
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.selected["a-repo"] || !model.selected["b-repo"] || !model.selected["c-repo"] {
+		t.Errorf("Expected all repos to be selected after typing /a and Enter")
+	}
 }
 

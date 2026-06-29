@@ -387,12 +387,30 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = !m.showHelp
 				return m, nil
 			}
+		case "right", "tab":
+			if strings.HasPrefix(m.filter, "/") {
+				commands := []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
+				for _, cmd := range commands {
+					if len(cmd) > len(m.filter) && strings.HasPrefix(cmd, m.filter) {
+						m.filter = cmd
+						return m, nil
+					}
+				}
+			}
 		case "enter":
 			if m.loading {
 				return m, nil
 			}
 			if strings.HasPrefix(m.filter, "/") {
-				cmd := m.executeSlashCommand(m.filter)
+				target := m.filter
+				commands := []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
+				for _, cmd := range commands {
+					if strings.HasPrefix(cmd, m.filter) {
+						target = cmd
+						break
+					}
+				}
+				cmd := m.executeSlashCommand(target)
 				m.filter = ""
 				return m, cmd
 			}
@@ -484,7 +502,16 @@ func (m *selectorModel) View() string {
 	if strings.HasPrefix(m.filter, "/") {
 		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 		cmdStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E"))
-		promptStr = labelStyle.Render("  Command: ") + cmdStyle.Render(m.filter) + labelStyle.Render("_")
+		suggStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		var suggestion string
+		commands := []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
+		for _, cmd := range commands {
+			if len(cmd) > len(m.filter) && strings.HasPrefix(cmd, m.filter) {
+				suggestion = cmd[len(m.filter):]
+				break
+			}
+		}
+		promptStr = labelStyle.Render("  Command: ") + cmdStyle.Render(m.filter) + labelStyle.Render("_") + suggStyle.Render(suggestion)
 	} else {
 		promptStr = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter))
 	}
