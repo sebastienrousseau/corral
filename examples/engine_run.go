@@ -1,3 +1,5 @@
+//go:build ignore
+
 package main
 
 import (
@@ -11,12 +13,11 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// 1. Setup options for a concurrency-limited dry run
 	opts := engine.RunOptions{
 		Owner:       "sebastienrousseau",
 		BaseDir:     "./my_local_mirror",
 		Concurrency: 4,
-		DryRun:      true, // Preview actions only, no changes will be written
+		DryRun:      true,
 		Protocol:    "https",
 		DoSync:      true,
 		Output:      engine.OutputText,
@@ -31,9 +32,6 @@ func main() {
 	}
 
 	fmt.Println("Running Corral organization engine in dry-run mode...")
-	
-	// 2. Execute the engine
 	engine.Run(ctx, opts)
-
 	fmt.Println("\nDry run completed successfully.")
 }

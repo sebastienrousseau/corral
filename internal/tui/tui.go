@@ -16,6 +16,7 @@ import (
 	"github.com/sebastienrousseau/corral/internal/github"
 )
 
+// Version is the build version of Corral.
 var Version = "0.0.6"
 
 // LogMsg represents a log entry to be displayed in the TUI.
@@ -174,8 +175,10 @@ type selectorModel struct {
 	cmdErr        string
 }
 
+// FetchFunc represents the function signature used by the selector to fetch repositories.
 type FetchFunc func() ([]github.Repo, error)
 
+// NewSelectorModel creates and initializes a new Bubble Tea model for the repository selector.
 func NewSelectorModel(fetchFn FetchFunc) *selectorModel {
 	sel := make(map[string]bool)
 
@@ -552,6 +555,7 @@ func (m *selectorModel) View() string {
 	return out
 }
 
+// RunSelector launches the interactive terminal selector program to choose repositories.
 func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOptions, fetchFn FetchFunc) ([]github.Repo, bool, error) {
 	p := tea.NewProgram(NewSelectorModel(fetchFn), tea.WithAltScreen())
 	m, err := p.Run()
@@ -587,6 +591,7 @@ var logoLines = []string{
 	`           ⢀⣠⡿⣷⣄⡀           `,
 }
 
+// GetStyledLogo returns the colored ASCII logo art as a string.
 func GetStyledLogo() string {
 	colors := []string{
 		"#F87171",

@@ -18,3 +18,16 @@ jobs:
       go-version: '1.26.1'
       run-cross-platform: true
       run-coverage: true
+
+  docs-check:
+    name: Documentation Coverage Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+      - name: Enforce 100% Doc Coverage
+        run: go run scripts/doc_coverage.go

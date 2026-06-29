@@ -427,12 +427,12 @@ func TestSelectorModelCoverage(t *testing.T) {
 	}
 
 	// Test space keypress when loading (should ignore)
-	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeySpace})
+	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeySpace})
 	// Test enter keypress when loading (should ignore)
-	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	// Test backspace when loading (should ignore)
-	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	// Test ctrl+a / ctrl+n when loading (should ignore)
-	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
-	newM, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 }

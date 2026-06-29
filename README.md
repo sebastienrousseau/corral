@@ -12,6 +12,11 @@
 
 <p align="center">
   <a href="https://github.com/sebastienrousseau/corral/actions"><img src="https://img.shields.io/github/actions/workflow/status/sebastienrousseau/corral/ci.yml?style=for-the-badge&logo=github" alt="Build Status" /></a>
+  <a href="https://pkg.go.dev/github.com/sebastienrousseau/corral"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?style=for-the-badge&logo=go&logoColor=white" alt="Go Reference" /></a>
+  <a href="https://goreportcard.com/report/github.com/sebastienrousseau/corral"><img src="https://goreportcard.com/badge/github.com/sebastienrousseau/corral?style=for-the-badge" alt="Go Report Card" /></a>
+  <a href="https://codecov.io/gh/sebastienrousseau/corral"><img src="https://img.shields.io/codecov/c/github/sebastienrousseau/corral?style=for-the-badge&logo=codecov" alt="Code Coverage" /></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/corral"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/corral?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
+  <a href="https://sebastienrousseau.github.io/corral/"><img src="https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?style=for-the-badge&logo=github" alt="Documentation" /></a>
   <a href="https://github.com/sebastienrousseau/corral/releases/latest"><img src="https://img.shields.io/github/v/release/sebastienrousseau/corral?style=for-the-badge" alt="Release Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License" /></a>
 </p>
@@ -257,10 +262,10 @@ corralctl <owner> [base_dir] [limit]
 
 To inspect the package layout and programmatically run Corral modules, see the self-contained, copy-pasteable Go code examples in the [examples](file:///Users/seb/Code/Public/go/corral/examples) directory:
 
-1. **[Interactive Selector](file:///Users/seb/Code/Public/go/corral/examples/interactive_selector/main.go)** — Programmatically configure and launch the selection checklist TUI in AltScreen mode.
-2. **[GitHub Repository Fetcher](file:///Users/seb/Code/Public/go/corral/examples/github_fetch/main.go)** — Query the GitHub REST API using `github.FetchReposWithOptions` with stars sorting and language constraints.
-3. **[Git Syncing](file:///Users/seb/Code/Public/go/corral/examples/git_clone/main.go)** — Call the `git` helper package to perform clones, query branches, and resolve origin URLs.
-4. **[Engine Orchestrator](file:///Users/seb/Code/Public/go/corral/examples/engine_run/main.go)** — Integrate the core engine `engine.Run` to run repository syncing with custom filters, layout structures, and dry-run pre-flights.
+1. **[Interactive Selector](file:///Users/seb/Code/Public/go/corral/examples/interactive_selection.go)** — Programmatically configure and launch the selection checklist TUI in AltScreen mode.
+2. **[GitHub Repository Fetcher](file:///Users/seb/Code/Public/go/corral/examples/github_fetch.go)** — Query the GitHub REST API using `github.FetchReposWithOptions` with stars sorting and language constraints.
+3. **[Git Syncing](file:///Users/seb/Code/Public/go/corral/examples/git_clone.go)** — Call the `git` helper package to perform clones, query branches, and resolve origin URLs.
+4. **[Engine Orchestrator](file:///Users/seb/Code/Public/go/corral/examples/engine_run.go)** — Integrate the core engine `engine.Run` to run repository syncing with custom filters, layout structures, and dry-run pre-flights.
 
 ---
 
