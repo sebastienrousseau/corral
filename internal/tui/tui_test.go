@@ -215,3 +215,47 @@ func TestSelectorModel(t *testing.T) {
 	}
 }
 
+func TestSlashCommands(t *testing.T) {
+	repos := []github.Repo{
+		{Name: "c-repo", Language: "Python", Visibility: "public"},
+		{Name: "a-repo", Language: "Go", Visibility: "private"},
+		{Name: "b-repo", Language: "Rust", Visibility: "public"},
+	}
+	m := NewSelectorModel(func() ([]github.Repo, error) {
+		return repos, nil
+	})
+	
+	newM, _ := m.Update(fetchedReposMsg{repos: repos, err: nil})
+	model := newM.(*selectorModel)
+	
+	// Test /all
+	model.executeSlashCommand("/all")
+	if !model.selected["a-repo"] || !model.selected["b-repo"] || !model.selected["c-repo"] {
+		t.Errorf("Expected all repos to be selected")
+	}
+
+	// Test /none
+	model.executeSlashCommand("/none")
+	if model.selected["a-repo"] || model.selected["b-repo"] || model.selected["c-repo"] {
+		t.Errorf("Expected all repos to be deselected")
+	}
+
+	// Test /sort name
+	model.executeSlashCommand("/sort name")
+	if model.filteredRepos[0].Name != "a-repo" || model.filteredRepos[1].Name != "b-repo" || model.filteredRepos[2].Name != "c-repo" {
+		t.Errorf("Expected sorted by name: a-repo, b-repo, c-repo; got order: %s, %s, %s", model.filteredRepos[0].Name, model.filteredRepos[1].Name, model.filteredRepos[2].Name)
+	}
+
+	// Test /sort language
+	model.executeSlashCommand("/sort language")
+	if model.filteredRepos[0].Name != "a-repo" || model.filteredRepos[1].Name != "c-repo" || model.filteredRepos[2].Name != "b-repo" {
+		t.Errorf("Expected sorted by language: a-repo (Go), c-repo (Python), b-repo (Rust)")
+	}
+
+	// Test unknown command
+	model.executeSlashCommand("/invalid")
+	if !strings.Contains(model.cmdErr, "Unknown command") {
+		t.Errorf("Expected unknown command error, got %q", model.cmdErr)
+	}
+}
+

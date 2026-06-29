@@ -64,6 +64,8 @@ type RunOptions struct {
 	Sync SyncOptions
 	// Layout specifies the templated path structure for repositories.
 	Layout string
+	// Version is the build version of Corral.
+	Version string
 }
 
 // SyncOptions configures the engine's per-repo sync decision. Kept separate
@@ -183,6 +185,7 @@ func Run(ctx context.Context, opts RunOptions) {
 
 	if opts.Interactive {
 		var ok bool
+		tui.Version = opts.Version
 		repos, ok, err = tui.RunSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
 			return fetchRepos(ctx, opts.Owner, opts.Fetch)
 		})

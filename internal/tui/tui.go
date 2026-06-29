@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
@@ -14,6 +15,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sebastienrousseau/corral/internal/github"
 )
+
+var Version = "0.0.6"
 
 // LogMsg represents a log entry to be displayed in the TUI.
 type LogMsg struct {
@@ -166,6 +169,9 @@ type selectorModel struct {
 	confirmed     bool
 	quitting      bool
 	fetchFn       FetchFunc
+
+	showHelp      bool
+	cmdErr        string
 }
 
 type FetchFunc func() ([]github.Repo, error)
@@ -360,18 +366,40 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		m.cmdErr = ""
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "esc":
+			if m.showHelp {
+				m.showHelp = false
+				return m, nil
+			}
+			m.quitting = true
+			return m, tea.Quit
+		case "?":
+			if !m.loading {
+				m.showHelp = !m.showHelp
+				return m, nil
+			}
 		case "enter":
 			if m.loading {
+				return m, nil
+			}
+			if strings.HasPrefix(m.filter, "/") {
+				m.executeSlashCommand(m.filter)
+				m.filter = ""
 				return m, nil
 			}
 			m.confirmed = true
 			return m, tea.Quit
 		case " ", "space":
 			if m.loading {
+				return m, nil
+			}
+			if strings.HasPrefix(m.filter, "/") {
+				m.filter += " "
 				return m, nil
 			}
 			if len(m.filteredRepos) > 0 {
@@ -448,20 +476,33 @@ func (m *selectorModel) View() string {
 		return out
 	}
 
-	searchPrompt := fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter)
+	promptLabel := "Search repositories"
+	if strings.HasPrefix(m.filter, "/") {
+		promptLabel = "Command"
+	}
+	searchPrompt := fmt.Sprintf("  %s (%d found): %s_", promptLabel, len(m.filteredRepos), m.filter)
 	out += lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(searchPrompt) + "\n"
 	
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
 	out += divider + "\n\n"
 
-	tableStr := m.renderCustomTable()
-	indentedTable := ""
-	for _, line := range strings.Split(tableStr, "\n") {
-		indentedTable += "  " + line + "\n"
+	if m.cmdErr != "" {
+		out += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.cmdErr) + "\n\n"
 	}
-	out += indentedTable + "\n"
 
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [ctrl+a] all • [ctrl+n] none • [enter] confirm • [esc] cancel") + "\n"
+	if m.showHelp {
+		out += m.renderHelpPanel() + "\n"
+	} else {
+		tableStr := m.renderCustomTable()
+		indentedTable := ""
+		for _, line := range strings.Split(tableStr, "\n") {
+			indentedTable += "  " + line + "\n"
+		}
+		out += indentedTable + "\n"
+	}
+
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [ctrl+a] all • [ctrl+n] none • [/command] • [enter] confirm") + "\n"
+	out += "\n" + m.renderFooter()
 
 	return out
 }
@@ -523,4 +564,115 @@ func GetStyledLogo() string {
 	sb.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral.") + "\n")
 	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("All your repos. In perfect sync.") + "\n\n")
 	return sb.String()
+}
+
+func (m *selectorModel) executeSlashCommand(cmdStr string) {
+	m.cmdErr = ""
+	parts := strings.Fields(strings.TrimSpace(cmdStr))
+	if len(parts) == 0 {
+		return
+	}
+	cmd := parts[0]
+
+	switch cmd {
+	case "/exit", "/quit":
+		m.quitting = true
+		m.confirmed = false
+		m.table.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	case "/help":
+		m.showHelp = true
+
+	case "/all":
+		for _, r := range m.filteredRepos {
+			m.selected[r.Name] = true
+		}
+		m.updateTableRows()
+
+	case "/none":
+		for _, r := range m.filteredRepos {
+			m.selected[r.Name] = false
+		}
+		m.updateTableRows()
+
+	case "/sort":
+		if len(parts) < 2 {
+			m.cmdErr = "Usage: /sort <name|language|visibility>"
+			return
+		}
+		field := strings.ToLower(parts[1])
+		switch field {
+		case "name":
+			sort.Slice(m.filteredRepos, func(i, j int) bool {
+				return strings.ToLower(m.filteredRepos[i].Name) < strings.ToLower(m.filteredRepos[j].Name)
+			})
+		case "language", "lang":
+			sort.Slice(m.filteredRepos, func(i, j int) bool {
+				return strings.ToLower(m.filteredRepos[i].Language) < strings.ToLower(m.filteredRepos[j].Language)
+			})
+		case "visibility", "vis":
+			sort.Slice(m.filteredRepos, func(i, j int) bool {
+				return strings.ToLower(m.filteredRepos[i].Visibility) < strings.ToLower(m.filteredRepos[j].Visibility)
+			})
+		default:
+			m.cmdErr = fmt.Sprintf("Unknown sort field: %s (choose name, language, visibility)", field)
+		}
+		m.updateTableRows()
+
+	default:
+		m.cmdErr = fmt.Sprintf("Unknown command: %s. Type /help for help.", cmd)
+	}
+}
+
+func (m *selectorModel) renderHelpPanel() string {
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("   In-Session Commands") + "\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n")
+
+	commands := [][]string{
+		{"/sort <field>", "Sort list by name, language (lang), or visibility (vis)"},
+		{"/all", "Select all filtered repositories"},
+		{"/none", "Deselect all filtered repositories"},
+		{"/exit, /quit", "Exit the CLI immediately"},
+		{"/help", "Show this command help menu"},
+	}
+
+	for _, c := range commands {
+		cmdStr := fmt.Sprintf("  %-16s", c[0])
+		descStr := c[1]
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(cmdStr))
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(descStr) + "\n")
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("   Press [?] or [esc] to return to the repository list.") + "\n")
+	
+	for i := len(commands) + 5; i < 15; i++ {
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func (m *selectorModel) renderFooter() string {
+	vStr := Version
+	if vStr == "" {
+		vStr = "0.0.6"
+	}
+	left := " ? for commands"
+	right := fmt.Sprintf("Made with ❤️ in London, UK (v%s)", vStr)
+	
+	leftLen := len(left)
+	rightRunes := []rune(right)
+	rightLenVisual := len(rightRunes)
+	
+	totalWidth := 71
+	spacesCount := totalWidth - leftLen - rightLenVisual + 1
+	if spacesCount < 1 {
+		spacesCount = 2
+	}
+	
+	spaces := strings.Repeat(" ", spacesCount)
+	footerText := fmt.Sprintf(" %s%s%s", left, spaces, right)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render(footerText) + "\n"
 }

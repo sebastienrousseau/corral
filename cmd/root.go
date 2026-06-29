@@ -182,7 +182,8 @@ var rootCmd = &cobra.Command{
 			Sync: engine.SyncOptions{
 				Force: forceSync,
 			},
-			Layout: layout,
+			Layout:  layout,
+			Version: Version,
 		})
 	},
 }
