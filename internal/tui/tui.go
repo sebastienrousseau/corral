@@ -234,6 +234,10 @@ func (m *selectorModel) Init() tea.Cmd {
 }
 
 func (m *selectorModel) applyFilter() {
+	if strings.HasPrefix(m.filter, "/") {
+		return
+	}
+
 	var filtered []github.Repo
 	for _, r := range m.repos {
 		nameMatch := strings.Contains(strings.ToLower(r.Name), strings.ToLower(m.filter))

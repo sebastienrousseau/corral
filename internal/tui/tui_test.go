@@ -257,5 +257,29 @@ func TestSlashCommands(t *testing.T) {
 	if !strings.Contains(model.cmdErr, "Unknown command") {
 		t.Errorf("Expected unknown command error, got %q", model.cmdErr)
 	}
+
+	// Test character-by-character typing simulation of "/none" and "/all"
+	// 1. Reset all to true
+	for i := range model.repos {
+		model.selected[model.repos[i].Name] = true
+	}
+	// 2. Type '/'
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if len(model.filteredRepos) != 3 {
+		t.Errorf("Expected filteredRepos not to be wiped on slash prefix, got %d", len(model.filteredRepos))
+	}
+	// 3. Type 'n', 'o', 'n', 'e'
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	if model.filter != "/none" {
+		t.Errorf("Expected filter to be '/none', got %q", model.filter)
+	}
+	// 4. Press Enter
+	model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if model.selected["a-repo"] || model.selected["b-repo"] || model.selected["c-repo"] {
+		t.Errorf("Expected all repos to be deselected after typed /none and Enter")
+	}
 }
 
