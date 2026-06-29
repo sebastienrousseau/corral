@@ -133,9 +133,8 @@ func TestSelectorModel(t *testing.T) {
 	}
 
 	// Test viewport filtering
-	filtered := m.getFiltered()
-	if len(filtered) != 2 {
-		t.Errorf("Expected 2 repos, got %d", len(filtered))
+	if len(m.filteredRepos) != 2 {
+		t.Errorf("Expected 2 repos, got %d", len(m.filteredRepos))
 	}
 
 	// Test typing/filtering
@@ -144,8 +143,8 @@ func TestSelectorModel(t *testing.T) {
 	if m2.filter != "g" {
 		t.Errorf("Expected filter to be 'g', got %q", m2.filter)
 	}
-	if len(m2.getFiltered()) != 1 || m2.getFiltered()[0].Name != "repo1" {
-		t.Errorf("Expected only repo1 to match filter 'g', got %v", m2.getFiltered())
+	if len(m2.filteredRepos) != 1 || m2.filteredRepos[0].Name != "repo1" {
+		t.Errorf("Expected only repo1 to match filter 'g', got %v", m2.filteredRepos)
 	}
 
 	// Test backspace
@@ -158,14 +157,14 @@ func TestSelectorModel(t *testing.T) {
 	// Test navigation (down/up)
 	newM, _ = m3.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m4 := newM.(selectorModel)
-	if m4.cursor != 1 {
-		t.Errorf("Expected cursor at 1 after down key, got %d", m4.cursor)
+	if m4.table.Cursor() != 1 {
+		t.Errorf("Expected cursor at 1 after down key, got %d", m4.table.Cursor())
 	}
 
 	newM, _ = m4.Update(tea.KeyMsg{Type: tea.KeyUp})
 	m5 := newM.(selectorModel)
-	if m5.cursor != 0 {
-		t.Errorf("Expected cursor at 0 after up key, got %d", m5.cursor)
+	if m5.table.Cursor() != 0 {
+		t.Errorf("Expected cursor at 0 after up key, got %d", m5.table.Cursor())
 	}
 
 	// Test toggle selection

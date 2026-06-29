@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sebastienrousseau/corral/internal/github"
@@ -147,12 +148,13 @@ func (m model) View() string {
 }
 
 type selectorModel struct {
-	repos     []github.Repo
-	filter    string
-	cursor    int
-	selected  map[string]bool // key is repo.Name
-	confirmed bool
-	quitting  bool
+	repos         []github.Repo
+	filteredRepos []github.Repo
+	filter        string
+	selected      map[string]bool // key is repo.Name
+	table         table.Model
+	confirmed     bool
+	quitting      bool
 }
 
 func NewSelectorModel(repos []github.Repo) tea.Model {
@@ -160,33 +162,85 @@ func NewSelectorModel(repos []github.Repo) tea.Model {
 	for _, r := range repos {
 		sel[r.Name] = true // select all by default
 	}
-	return selectorModel{
-		repos:    repos,
-		selected: sel,
+
+	columns := []table.Column{
+		{Title: " ", Width: 3},
+		{Title: "Repository", Width: 35},
+		{Title: "Language", Width: 15},
+		{Title: "Visibility", Width: 10},
 	}
+
+	t := table.New(
+		table.WithColumns(columns),
+		table.WithFocused(true),
+		table.WithHeight(12),
+	)
+
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		BorderBottom(true).
+		Bold(true)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("255")).
+		Background(lipgloss.Color("#F56B5E")). // bright coral background!
+		Bold(true)
+	t.SetStyles(s)
+
+	m := selectorModel{
+		repos:         repos,
+		filteredRepos: repos,
+		selected:      sel,
+		table:         t,
+	}
+	m.updateTableRows()
+	return m
 }
 
 func (m selectorModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m selectorModel) getFiltered() []github.Repo {
-	if m.filter == "" {
-		return m.repos
-	}
-	var out []github.Repo
+func (m *selectorModel) applyFilter() {
+	var filtered []github.Repo
 	for _, r := range m.repos {
-		if strings.Contains(strings.ToLower(r.Name), strings.ToLower(m.filter)) ||
-			strings.Contains(strings.ToLower(r.Language), strings.ToLower(m.filter)) {
-			out = append(out, r)
+		nameMatch := strings.Contains(strings.ToLower(r.Name), strings.ToLower(m.filter))
+		langMatch := strings.Contains(strings.ToLower(r.Language), strings.ToLower(m.filter))
+		if m.filter == "" || nameMatch || langMatch {
+			filtered = append(filtered, r)
 		}
 	}
-	return out
+	m.filteredRepos = filtered
+	m.updateTableRows()
+
+	if m.table.Cursor() >= len(filtered) {
+		m.table.SetCursor(len(filtered) - 1)
+	}
+	if m.table.Cursor() < 0 && len(filtered) > 0 {
+		m.table.SetCursor(0)
+	}
+}
+
+func (m *selectorModel) updateTableRows() {
+	var rows []table.Row
+	for _, r := range m.filteredRepos {
+		checkChar := "○"
+		if m.selected[r.Name] {
+			checkChar = "●"
+		}
+		rows = append(rows, table.Row{
+			checkChar,
+			r.Name,
+			r.Language,
+			strings.ToLower(r.Visibility),
+		})
+	}
+	m.table.SetRows(rows)
 }
 
 func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	filtered := m.getFiltered()
-
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -196,46 +250,48 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			m.confirmed = true
 			return m, tea.Quit
-		case "up":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down":
-			if m.cursor < len(filtered)-1 {
-				m.cursor++
-			}
 		case " ", "space":
-			if len(filtered) > 0 && m.cursor < len(filtered) {
-				name := filtered[m.cursor].Name
-				m.selected[name] = !m.selected[name]
+			if len(m.filteredRepos) > 0 {
+				idx := m.table.Cursor()
+				if idx >= 0 && idx < len(m.filteredRepos) {
+					name := m.filteredRepos[idx].Name
+					m.selected[name] = !m.selected[name]
+					m.updateTableRows()
+				}
 			}
+			return m, nil
 		case "backspace":
 			if len(m.filter) > 0 {
 				m.filter = m.filter[:len(m.filter)-1]
-				m.cursor = 0
+				m.applyFilter()
 			}
-		case "a": // Select all
-			for _, r := range filtered {
+			return m, nil
+		case "a": // Select all filtered
+			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = true
 			}
-		case "n": // Select none / clear all
-			for _, r := range filtered {
+			m.updateTableRows()
+			return m, nil
+		case "n": // Select none filtered
+			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = false
 			}
+			m.updateTableRows()
+			return m, nil
 		default:
-			// Append to filter if it is a printable character
-			if len(msg.String()) == 1 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
+			if len(msg.String()) == 1 && len(msg.Runes) > 0 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
 				m.filter += msg.String()
-				m.cursor = 0
+				m.applyFilter()
+				return m, nil
 			}
 		}
 	}
-	return m, nil
+
+	m.table, cmd = m.table.Update(msg)
+	return m, cmd
 }
 
 func (m selectorModel) View() string {
-	filtered := m.getFiltered()
-
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
 		header = GetStyledLogo("Select Repositories")
@@ -245,55 +301,15 @@ func (m selectorModel) View() string {
 
 	out := header
 	out += fmt.Sprintf("  Search/Filter: %s_\n", lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Render(m.filter))
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)", len(filtered), m.cursor+1)) + "\n\n"
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(fmt.Sprintf("  (Found %d repositories, cursor at %d)", len(m.filteredRepos), m.table.Cursor()+1)) + "\n\n"
 
-	// Display viewport of repositories (limit to 12 items to prevent overflow)
-	start := 0
-	if m.cursor >= 10 {
-		start = m.cursor - 9
+	tableStr := m.table.View()
+	indentedTable := ""
+	for _, line := range strings.Split(tableStr, "\n") {
+		indentedTable += "  " + line + "\n"
 	}
-	end := start + 12
-	if end > len(filtered) {
-		end = len(filtered)
-	}
+	out += indentedTable + "\n"
 
-	for i := start; i < end; i++ {
-		r := filtered[i]
-		
-		// Checkbox state styling: filled coral circle (●) for checked, empty gray circle (○) for unchecked
-		var checked string
-		if m.selected[r.Name] {
-			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render("●")
-		} else {
-			checked = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○")
-		}
-
-		// Repository name styling: highlighted bold white when active
-		nameStr := r.Name
-		if i == m.cursor {
-			nameStr = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255")).Render(nameStr)
-		}
-
-		// Language tag styling: muted gray parenthesized language
-		langStr := ""
-		if r.Language != "" && r.Language != "Other" {
-			langStr = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(" (" + r.Language + ")")
-		}
-
-		// Cursor arrow styling: coral triangle pointer (▸) when active
-		cursorStr := " "
-		if i == m.cursor {
-			cursorStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#F87171")).Render("▸")
-		}
-
-		out += fmt.Sprintf(" %s %s %s%s\n", cursorStr, checked, nameStr, langStr)
-	}
-
-	if len(filtered) == 0 {
-		out += "  No repositories match your filter.\n"
-	}
-
-	out += "\n"
 	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [a] all • [n] none • [enter] confirm • [esc] cancel") + "\n"
 
 	return out
