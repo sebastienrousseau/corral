@@ -179,7 +179,7 @@ func Run(ctx context.Context, opts RunOptions) {
 
 	if opts.Output == OutputText {
 		if isTTY {
-			if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+			if os.Getenv("CORRAL_SHOW_LOGO") != "0" && !opts.Interactive {
 				fmt.Print(tui.GetStyledLogo("Organising Repositories"))
 			}
 			fmt.Println("Fetching repositories from GitHub...")
@@ -203,6 +203,9 @@ func Run(ctx context.Context, opts RunOptions) {
 					fmt.Println("No repositories selected.")
 				}
 				return
+			}
+			if opts.Output == OutputText && isTTY {
+				fmt.Print("\033[2J\033[H")
 			}
 		} else {
 			if opts.Output == OutputText {
