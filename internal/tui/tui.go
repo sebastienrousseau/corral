@@ -480,13 +480,15 @@ func (m *selectorModel) View() string {
 		return out
 	}
 
-	var searchPrompt string
+	var promptStr string
 	if strings.HasPrefix(m.filter, "/") {
-		searchPrompt = fmt.Sprintf("  Command: %s_", m.filter)
+		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+		cmdStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E"))
+		promptStr = labelStyle.Render("  Command: ") + cmdStyle.Render(m.filter) + labelStyle.Render("_")
 	} else {
-		searchPrompt = fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter)
+		promptStr = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter))
 	}
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(searchPrompt) + "\n"
+	out += promptStr + "\n"
 	
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
 	out += divider + "\n\n"
