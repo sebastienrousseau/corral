@@ -251,7 +251,11 @@ func TestSlashCommands(t *testing.T) {
 	if model.filteredRepos[0].Name != "a-repo" || model.filteredRepos[1].Name != "c-repo" || model.filteredRepos[2].Name != "b-repo" {
 		t.Errorf("Expected sorted by language: a-repo (Go), c-repo (Python), b-repo (Rust)")
 	}
-
+	// Test /sort python
+	model.executeSlashCommand("/sort python")
+	if model.filteredRepos[0].Name != "c-repo" || model.filteredRepos[1].Name != "a-repo" || model.filteredRepos[2].Name != "b-repo" {
+		t.Errorf("Expected sorted by Python priority: c-repo (Python), a-repo (Go), b-repo (Rust); got order: %s, %s, %s", model.filteredRepos[0].Name, model.filteredRepos[1].Name, model.filteredRepos[2].Name)
+	}
 	// Test unknown command
 	model.executeSlashCommand("/invalid")
 	if !strings.Contains(model.cmdErr, "Unknown command") {

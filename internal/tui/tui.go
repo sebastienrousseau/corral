@@ -631,7 +631,7 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) tea.Cmd {
 
 	case "/sort":
 		if len(parts) < 2 {
-			m.cmdErr = "Usage: /sort <name|language|visibility>"
+			m.cmdErr = "Usage: /sort <name|language|visibility|language_name>"
 			return nil
 		}
 		field := strings.ToLower(parts[1])
@@ -649,7 +649,28 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) tea.Cmd {
 				return strings.ToLower(m.filteredRepos[i].Visibility) < strings.ToLower(m.filteredRepos[j].Visibility)
 			})
 		default:
-			m.cmdErr = fmt.Sprintf("Unknown sort field: %s (choose name, language, visibility)", field)
+			hasLang := false
+			for _, r := range m.repos {
+				if strings.ToLower(r.Language) == field {
+					hasLang = true
+					break
+				}
+			}
+			if hasLang {
+				sort.Slice(m.filteredRepos, func(i, j int) bool {
+					iLang := strings.ToLower(m.filteredRepos[i].Language) == field
+					jLang := strings.ToLower(m.filteredRepos[j].Language) == field
+					if iLang && !jLang {
+						return true
+					}
+					if !iLang && jLang {
+						return false
+					}
+					return strings.ToLower(m.filteredRepos[i].Name) < strings.ToLower(m.filteredRepos[j].Name)
+				})
+			} else {
+				m.cmdErr = fmt.Sprintf("Unknown sort field or language: %s (choose name, language, visibility, or a language like python)", parts[1])
+			}
 		}
 		m.updateTableRows()
 
