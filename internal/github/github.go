@@ -155,28 +155,45 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 		return nil, errors.New("owner must not be empty")
 	}
 
-	u, _, err := client.Users.Get(ctx, owner)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user/org '%s': %w", owner, err)
+	isSearch := strings.HasPrefix(owner, "topic:") || strings.HasPrefix(owner, "language:")
+
+	var isOrg bool
+	var isAuthenticatedUser bool
+	if !isSearch {
+		u, _, err := client.Users.Get(ctx, owner)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user/org '%s': %w", owner, err)
+		}
+		isOrg = u.GetType() == "Organization"
+
+		// When the requested owner is the authenticated user, list via the
+		// authenticated-user endpoint, which returns private repositories that the
+		// public ListByUser endpoint omits.
+		if !isOrg {
+			if authedUser, _, authErr := client.Users.Get(ctx, ""); authErr == nil {
+				login := authedUser.GetLogin()
+				isAuthenticatedUser = login != "" && login == u.GetLogin()
+			}
+		}
 	}
 
 	includeLang := toLookupSet(opts.IncludeLanguages)
 	excludeLang := toLookupSet(opts.ExcludeLanguages)
-	isOrg := u.GetType() == "Organization"
-
-	// When the requested owner is the authenticated user, list via the
-	// authenticated-user endpoint, which returns private repositories that the
-	// public ListByUser endpoint omits.
-	isAuthenticatedUser := false
-	if !isOrg {
-		if authedUser, _, authErr := client.Users.Get(ctx, ""); authErr == nil {
-			login := authedUser.GetLogin()
-			isAuthenticatedUser = login != "" && login == u.GetLogin()
-		}
-	}
 
 	fetchPage := func(p int) ([]*gh.Repository, *gh.Response, error) {
 		switch {
+		case isSearch:
+			result, resp, err := client.Search.Repositories(ctx, owner, &gh.SearchOptions{
+				Sort: "stars",
+				ListOptions: gh.ListOptions{
+					Page:    p,
+					PerPage: 100,
+				},
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return result.Repositories, resp, nil
 		case isOrg:
 			return client.Repositories.ListByOrg(ctx, owner, &gh.RepositoryListByOrgOptions{
 				Type: orgTypeForVisibility(opts.Visibility),

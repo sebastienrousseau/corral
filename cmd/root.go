@@ -49,8 +49,8 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "corralctl <owner> [base_dir] [limit]",
-	Short: "Automatically clone and organise GitHub repositories by visibility and language.",
+	Use:   "corralctl <owner|topic:<topic>|language:<language>> [base_dir] [limit]",
+	Short: "Automatically clone and organise GitHub repositories by owner, topic, or language.",
 	Args:  cobra.MinimumNArgs(1),
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		protocol = strings.ToLower(strings.TrimSpace(protocol))

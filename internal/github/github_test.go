@@ -521,6 +521,34 @@ func TestFetchReposWithClientOptionsGuards(t *testing.T) {
 	}
 }
 
+func TestFetchReposSearch(t *testing.T) {
+	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "/search/repositories") {
+			body := `{
+				"total_count": 2,
+				"incomplete_results": false,
+				"items": [
+					{"id": 1, "name": "repo1", "clone_url": "https://github.com/owner/repo1", "visibility": "public"},
+					{"id": 2, "name": "repo2", "clone_url": "https://github.com/owner/repo2", "visibility": "public"}
+				]
+			}`
+			return jsonResp(req, http.StatusOK, body, nil), nil
+		}
+		return jsonResp(req, http.StatusBadRequest, `{}`, nil), nil
+	}))
+
+	repos, err := FetchReposWithClientOptions(context.Background(), client, "topic:ai", FetchOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("expected search to succeed, got %v", err)
+	}
+	if len(repos) != 2 {
+		t.Errorf("expected 2 repos, got %d", len(repos))
+	}
+	if repos[0].Name != "repo1" || repos[1].Name != "repo2" {
+		t.Errorf("expected repo1 and repo2, got %+v", repos)
+	}
+}
+
 func TestRunGitHubCLIAuthToken(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		// The fixture installs a POSIX shell script named "gh" on PATH, which

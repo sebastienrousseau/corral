@@ -43,7 +43,10 @@ type model struct {
 func NewModel(total int) tea.Model {
 	return model{
 		total: total,
-		prog:  progress.New(progress.WithDefaultGradient()),
+		prog: progress.New(
+			progress.WithoutPercentage(),
+			progress.WithGradient("#F56B5E", "#FF8A7A"),
+		),
 	}
 }
 
