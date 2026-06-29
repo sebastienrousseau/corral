@@ -91,6 +91,20 @@ The tool is idempotent and non-interactive. Safe to run on a schedule:
 
 Existing repositories are skipped. Only new ones are cloned.
 
+Every `git` invocation runs with `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/true`, `SSH_ASKPASS=/bin/true`, `GCM_INTERACTIVE=Never`, and rebase replay overrides `commit.gpgsign=false` — so cron jobs cannot hang on a credential prompt, SSH passphrase, or GPG/SSH signing pinentry, even if you have `commit.gpgsign=true` set globally.
+
+</details>
+
+<details>
+<summary>Upgrade notes (v0.0.8+)</summary>
+
+If you are upgrading from `v0.0.6` or earlier, the first run after the upgrade will:
+
+1. **Normalise language directory case.** On case-insensitive filesystems (APFS, HFS+, NTFS), pre-existing title-case folders like `Public/JavaScript/`, `Public/Rust/`, `Public/HTML/` are renamed in place to the documented lowercase form (`Public/javascript/`, `Public/rust/`, `Public/html/`). Unrelated directories (e.g. `Public/Configurations/`) are left untouched. The rename uses a temporary name internally so it actually flips case on case-insensitive filesystems where a direct `mv` is a silent no-op. Idempotent — already-lowercase directories are skipped.
+2. **Fail fast on missing `git`.** The CLI now resolves `git` via `exec.LookPath` at startup and exits with a clear `ERROR: git not found on PATH` instead of surfacing a confusing error midway through a clone.
+
+Want to preview without cloning or pulling anything? Run `corralctl <owner> --dry-run` — the directory-case migration still executes (it's a local rename, not a clone), but no network traffic happens.
+
 </details>
 
 ---
@@ -300,7 +314,7 @@ By default (`--auth auto`), Corral checks `GITHUB_TOKEN`/`GH_TOKEN` first, then 
 
 | Message | Cause | Solution |
 | :--- | :--- | :--- |
-| `ERROR: Required command 'git' not found` | Git is not installed | See Install above |
+| `ERROR: git not found on PATH` | Git is not installed, or `PATH` does not include it for this shell/cron environment | See Install above; for cron, set `PATH` explicitly in the crontab |
 | `ERROR: GITHUB_TOKEN (or GH_TOKEN) environment variable not set` | `--auth token` was set and no token variable is present | Run `export GITHUB_TOKEN=$(gh auth token)` or switch to `--auth auto` |
 | `FAILED: owner/repo` | Network issue or private repo without token access | Check connectivity and verify `gh auth status` |
 </details>

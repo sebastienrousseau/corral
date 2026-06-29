@@ -8,15 +8,18 @@ The canonical source of truth for all runtime dependencies, version constraints,
 
 ## Core Dependencies
 
-| Component | Purpose | License |
-|:----------|:--------|:--------|
-| `github.com/spf13/cobra` | CLI Framework | Apache 2.0 |
-| `github.com/google/go-github/v60` | GitHub API Client | BSD-3-Clause |
-| `golang.org/x/oauth2` | OAuth2 Client (GitHub Auth) | BSD-3-Clause |
-| `github.com/charmbracelet/bubbletea` | TUI Architecture | MIT |
-| `github.com/charmbracelet/lipgloss` | TUI Styling | MIT |
-| `github.com/charmbracelet/bubbles` | TUI Components | MIT |
-| `github.com/mattn/go-isatty` | Terminal Detection | MIT |
+Versions pinned in `go.mod`. Refresh this table whenever a direct dependency is bumped.
+
+| Component | Version | Purpose | License |
+|:----------|:--------|:--------|:--------|
+| `github.com/spf13/cobra` | v1.10.2 | CLI Framework | Apache-2.0 |
+| `github.com/google/go-github/v74` | v74.0.0 | GitHub API Client | BSD-3-Clause |
+| `github.com/charmbracelet/bubbletea` | v1.3.10 | TUI Architecture | MIT |
+| `github.com/charmbracelet/lipgloss` | v1.1.0 | TUI Styling | MIT |
+| `github.com/charmbracelet/bubbles` | v1.0.0 | TUI Components | MIT |
+| `github.com/mattn/go-isatty` | v0.0.22 | Terminal Detection | MIT |
+
+GitHub API authentication uses the `WithAuthToken` helper on the go-github client (no direct `golang.org/x/oauth2` dependency).
 
 ## System Dependencies
 
@@ -28,7 +31,7 @@ The canonical source of truth for all runtime dependencies, version constraints,
 
 | Component | Type | Version Constraint | License |
 |:----------|:-----|:-------------------|:--------|
-| Go | Compiler/Toolchain | 1.21+ | BSD-3-Clause |
+| Go | Compiler/Toolchain | 1.26+ (see `go.mod`) | BSD-3-Clause |
 | GoReleaser | Release Automation | v2+ | MIT |
 | GNU Make | Build tool | Any | GPL-3.0 |
 
