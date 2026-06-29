@@ -210,7 +210,7 @@ func TestSelectorModel(t *testing.T) {
 
 	// Test render View
 	view := m10.View()
-	if !strings.Contains(view, "Hello.") && !strings.Contains(view, "Search repositories") {
+	if !strings.Contains(view, "Corral.") && !strings.Contains(view, "Search repositories") {
 		t.Errorf("expected view to contain header elements, got %s", view)
 	}
 }

@@ -277,39 +277,53 @@ func (m *selectorModel) renderCustomTable() string {
 	for i := start; i < end; i++ {
 		r := m.filteredRepos[i]
 
-		checkChar := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("○")
+		var checkChar string
 		if m.selected[r.Name] {
-			checkChar = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render("✔")
+			checkChar = "✔"
+		} else {
+			checkChar = "○"
 		}
 
 		repoVal := r.Name
 		if len(repoVal) > 35 {
 			repoVal = repoVal[:32] + "..."
 		}
-		repoStr := fmt.Sprintf("%-35s", repoVal)
 
 		langVal := r.Language
 		if len(langVal) > 15 {
 			langVal = langVal[:12] + "..."
 		}
-		langStr := fmt.Sprintf("%-15s", langVal)
 
 		visVal := strings.ToLower(r.Visibility)
 		if len(visVal) > 10 {
 			visVal = visVal[:7] + "..."
 		}
-		visStr := fmt.Sprintf("%-10s", visVal)
-
-		rowContent := fmt.Sprintf(" %s    %s  %s  %s", checkChar, repoStr, langStr, visStr)
 
 		if i == cursor {
+			// For the active row, we construct plain text and render the entire row in white on coral.
+			// This prevents ANSI escapes inside the cells from clearing the solid background highlight
+			// and ensures the checkmark displays clearly in white.
+			repoStr := fmt.Sprintf("%-35s", repoVal)
+			langStr := fmt.Sprintf("%-15s", langVal)
+			visStr := fmt.Sprintf("%-10s", visVal)
+			rowContent := fmt.Sprintf(" %s    %s  %s  %s", checkChar, repoStr, langStr, visStr)
+
 			sb.WriteString(lipgloss.NewStyle().
 				Foreground(lipgloss.Color("255")).
 				Background(lipgloss.Color("#F56B5E")).
 				Bold(true).
 				Render(rowContent) + "\n")
 		} else {
-			sb.WriteString(rowContent + "\n")
+			// For inactive rows, we style cells individually.
+			styledCheck := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(checkChar)
+			if m.selected[r.Name] {
+				styledCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render(checkChar)
+			}
+			repoStr := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(fmt.Sprintf("%-35s", repoVal))
+			langStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-15s", langVal))
+			visStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-10s", visVal))
+
+			sb.WriteString(fmt.Sprintf(" %s    %s  %s  %s\n", styledCheck, repoStr, langStr, visStr))
 		}
 	}
 
@@ -503,7 +517,7 @@ func GetStyledLogo() string {
 		sb.WriteString("     " + lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render(line) + "\n")
 	}
 	sb.WriteString("\n")
-	sb.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Hello.") + "\n")
+	sb.WriteString("   " + lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#F56B5E")).Render("Corral.") + "\n")
 	sb.WriteString("   " + lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("All your repos. In perfect sync.") + "\n\n")
 	return sb.String()
 }
