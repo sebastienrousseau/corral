@@ -127,7 +127,7 @@ func TestSelectorModel(t *testing.T) {
 		{Name: "repo2", Language: "Rust"},
 	}
 
-	m := NewSelectorModel(repos).(selectorModel)
+	m := NewSelectorModel(repos).(*selectorModel)
 	if m.Init() != nil {
 		t.Errorf("Expected selector Init to return nil")
 	}
@@ -139,7 +139,7 @@ func TestSelectorModel(t *testing.T) {
 
 	// Test typing/filtering
 	newM, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
-	m2 := newM.(selectorModel)
+	m2 := newM.(*selectorModel)
 	if m2.filter != "g" {
 		t.Errorf("Expected filter to be 'g', got %q", m2.filter)
 	}
@@ -149,55 +149,55 @@ func TestSelectorModel(t *testing.T) {
 
 	// Test backspace
 	newM, _ = m2.Update(tea.KeyMsg{Type: tea.KeyBackspace})
-	m3 := newM.(selectorModel)
+	m3 := newM.(*selectorModel)
 	if m3.filter != "" {
 		t.Errorf("Expected empty filter, got %q", m3.filter)
 	}
 
 	// Test navigation (down/up)
 	newM, _ = m3.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m4 := newM.(selectorModel)
+	m4 := newM.(*selectorModel)
 	if m4.table.Cursor() != 1 {
 		t.Errorf("Expected cursor at 1 after down key, got %d", m4.table.Cursor())
 	}
 
 	newM, _ = m4.Update(tea.KeyMsg{Type: tea.KeyUp})
-	m5 := newM.(selectorModel)
+	m5 := newM.(*selectorModel)
 	if m5.table.Cursor() != 0 {
 		t.Errorf("Expected cursor at 0 after up key, got %d", m5.table.Cursor())
 	}
 
 	// Test toggle selection
 	newM, _ = m5.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
-	m6 := newM.(selectorModel)
+	m6 := newM.(*selectorModel)
 	if m6.selected["repo1"] != false {
 		t.Errorf("Expected repo1 selected to toggle to false")
 	}
 
-	// Test select none ('n')
-	newM, _ = m6.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	m7 := newM.(selectorModel)
+	// Test select none ('ctrl+n')
+	newM, _ = m6.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	m7 := newM.(*selectorModel)
 	if m7.selected["repo2"] != false {
-		t.Errorf("Expected repo2 selected to toggle to false after 'n'")
+		t.Errorf("Expected repo2 selected to toggle to false after 'ctrl+n'")
 	}
 
-	// Test select all ('a')
-	newM, _ = m7.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
-	m8 := newM.(selectorModel)
+	// Test select all ('ctrl+a')
+	newM, _ = m7.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m8 := newM.(*selectorModel)
 	if m8.selected["repo1"] != true || m8.selected["repo2"] != true {
-		t.Errorf("Expected both to be selected after 'a'")
+		t.Errorf("Expected both to be selected after 'ctrl+a'")
 	}
 
 	// Test cancel
 	newM, _ = m8.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m9 := newM.(selectorModel)
+	m9 := newM.(*selectorModel)
 	if !m9.quitting {
 		t.Errorf("Expected quitting to be true after Esc")
 	}
 
 	// Test confirm
 	newM, _ = m8.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m10 := newM.(selectorModel)
+	m10 := newM.(*selectorModel)
 	if !m10.confirmed {
 		t.Errorf("Expected confirmed to be true after Enter")
 	}

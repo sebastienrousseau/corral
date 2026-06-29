@@ -188,7 +188,7 @@ func NewSelectorModel(repos []github.Repo) tea.Model {
 		Bold(true)
 	t.SetStyles(s)
 
-	m := selectorModel{
+	m := &selectorModel{
 		repos:         repos,
 		filteredRepos: repos,
 		selected:      sel,
@@ -239,7 +239,7 @@ func (m *selectorModel) updateTableRows() {
 	m.table.SetRows(rows)
 }
 
-func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -266,13 +266,13 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyFilter()
 			}
 			return m, nil
-		case "a": // Select all filtered
+		case "ctrl+a": // Select all filtered
 			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = true
 			}
 			m.updateTableRows()
 			return m, nil
-		case "n": // Select none filtered
+		case "ctrl+n": // Select none filtered
 			for _, r := range m.filteredRepos {
 				m.selected[r.Name] = false
 			}
@@ -291,7 +291,7 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m selectorModel) View() string {
+func (m *selectorModel) View() string {
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
 		header = GetStyledLogo("Select Repositories")
@@ -310,7 +310,7 @@ func (m selectorModel) View() string {
 	}
 	out += indentedTable + "\n"
 
-	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [a] all • [n] none • [enter] confirm • [esc] cancel") + "\n"
+	out += lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  [space] toggle • [ctrl+a] all • [ctrl+n] none • [enter] confirm • [esc] cancel") + "\n"
 
 	return out
 }
@@ -321,7 +321,7 @@ func RunSelector(repos []github.Repo) ([]github.Repo, bool) {
 	if err != nil {
 		return nil, false
 	}
-	selModel := m.(selectorModel)
+	selModel := m.(*selectorModel)
 	if !selModel.confirmed {
 		return nil, false
 	}
