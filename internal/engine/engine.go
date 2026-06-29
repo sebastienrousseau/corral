@@ -110,7 +110,7 @@ var (
 	gitPull          = git.Pull
 	gitClone         = git.Clone
 	gitCurrentBranch = git.CurrentBranch
-	gitRemoteOrigin  = git.RemoteOrigin
+	gitRemoteOrigin  = git.RemoteOriginFromConfig
 	isTerminal       = isatty.IsTerminal
 	runProgram       = func(p *tea.Program) (tea.Model, error) { return p.Run() }
 )
@@ -248,6 +248,12 @@ enqueueLoop:
 			allResults = append(allResults, msg)
 			summary.add(msg)
 			if p != nil {
+				// p.Send writes to an unbuffered channel in bubbletea
+				// v1.x and blocks when the program isn't draining (e.g.
+				// when runProgram is stubbed out in tests, or after the
+				// TUI has quit). The goroutine wrapper decouples the
+				// consumer from the TUI's lifecycle so close(results)
+				// can still unblock this loop even if a Send is hung.
 				go p.Send(toLogMsg(msg))
 				continue
 			}

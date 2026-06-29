@@ -3,11 +3,13 @@
 package git
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -39,12 +41,28 @@ func authEnv() []string {
 	}
 }
 
-// withAuth attaches the github.com Authorization header environment to cmd when
-// a token is available, preserving the inherited environment otherwise.
-func withAuth(cmd *exec.Cmd) {
-	if env := authEnv(); env != nil {
-		cmd.Env = append(os.Environ(), env...)
+// nonInteractiveEnv returns the environment variables that force git into
+// strict non-interactive mode. They are applied unconditionally to every git
+// invocation so unattended runs (cron, CI) never hang on a missing credential,
+// askpass helper, or GPG pinentry.
+func nonInteractiveEnv() []string {
+	return []string{
+		"GIT_TERMINAL_PROMPT=0",   // disable interactive username/password prompts
+		"GIT_ASKPASS=/bin/true",   // suppress any askpass helper (GUI or CLI)
+		"SSH_ASKPASS=/bin/true",   // suppress SSH passphrase pinentry
+		"GCM_INTERACTIVE=Never",   // Git Credential Manager on macOS/Windows
 	}
+}
+
+// withGitEnv attaches the credentials header (when available) plus the
+// non-interactive env vars to cmd, replacing any prior cmd.Env. It always sets
+// cmd.Env so the non-interactive guards apply even on anonymous clones.
+func withGitEnv(cmd *exec.Cmd) {
+	env := append(os.Environ(), nonInteractiveEnv()...)
+	if auth := authEnv(); auth != nil {
+		env = append(env, auth...)
+	}
+	cmd.Env = env
 }
 
 // CloneOptions configures optional clone-time performance and layout flags.
@@ -83,8 +101,8 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	args = append(args, "--", url, targetDir)
 	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
 	// are constructed internally from controlled options, not shell input.
-	cmd := exec.CommandContext(ctx, "git", args...)
-	withAuth(cmd)
+	cmd := exec.CommandContext(ctx, gitBinary, args...)
+	withGitEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -104,6 +122,11 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	args := []string{
 		"-c", "merge.verifySignatures=false",
 		"-c", "rebase.verifySignatures=false",
+		// Rebase replays commits, which respects the global commit.gpgsign
+		// setting. Disabling it here prevents an unattended sync from blocking
+		// on a GPG/SSH passphrase prompt for users who sign commits globally.
+		"-c", "commit.gpgsign=false",
+		"-c", "gpg.format=openpgp",
 		"-C", targetDir, "pull", "--rebase", "--autostash",
 	}
 	if recurseSubmodules {
@@ -111,8 +134,8 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	}
 	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
 	// are constructed internally from controlled options, not shell input.
-	cmd := exec.CommandContext(ctx, "git", args...)
-	withAuth(cmd)
+	cmd := exec.CommandContext(ctx, gitBinary, args...)
+	withGitEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -123,7 +146,7 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 // CurrentBranch retrieves the name of the currently checked-out branch.
 func CurrentBranch(targetDir string) (string, error) {
 	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
-	cmd := exec.Command("git", "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.Command(gitBinary, "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -131,13 +154,59 @@ func CurrentBranch(targetDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// RemoteOrigin retrieves the remote origin URL of the target directory.
+// RemoteOrigin retrieves the remote origin URL of the target directory by
+// invoking `git remote get-url origin`. Prefer RemoteOriginFromConfig on hot
+// paths (e.g. orphan detection over hundreds of clones) to avoid the
+// per-call cost of spawning a subprocess.
 func RemoteOrigin(targetDir string) (string, error) {
 	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
-	cmd := exec.Command("git", "-C", targetDir, "remote", "get-url", "origin")
+	cmd := exec.Command(gitBinary, "-C", targetDir, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// RemoteOriginFromConfig parses the `url =` entry under [remote "origin"]
+// directly from <targetDir>/.git/config, avoiding the ~5-15ms per-call cost of
+// spawning `git remote get-url origin`. Returns the wrapped os.ErrNotExist
+// when the config file is absent, and a clear error when the section or key
+// is missing. Tolerates blank lines, `#` / `;` comments, indented entries,
+// and CRLF line endings.
+func RemoteOriginFromConfig(targetDir string) (string, error) {
+	f, err := os.Open(filepath.Join(targetDir, ".git", "config"))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+
+	var inOrigin bool
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			// A new section ends the previous one. The origin section header
+			// can appear as `[remote "origin"]` or with extra whitespace.
+			inOrigin = strings.EqualFold(strings.Join(strings.Fields(line), " "), `[remote "origin"]`)
+			continue
+		}
+		if !inOrigin {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(k), "url") {
+			return strings.TrimSpace(v), nil
+		}
+	}
+	if err := s.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("origin url not found in %s", filepath.Join(targetDir, ".git", "config"))
 }
