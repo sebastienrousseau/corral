@@ -116,9 +116,7 @@ func (m model) View() string {
 
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories") + "\n  " +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
+		header = GetStyledLogo("Organising Repositories")
 	} else {
 		header = titleStyle.Render("Corral - Organising Repositories") + "\n"
 	}
@@ -240,9 +238,7 @@ func (m selectorModel) View() string {
 
 	var header string
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Select Repositories") + "\n  " +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n\n"
+		header = GetStyledLogo("Select Repositories")
 	} else {
 		header = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("Corral - Select Repositories") + "\n\n"
 	}
@@ -308,4 +304,24 @@ func RunSelector(repos []github.Repo) ([]github.Repo, bool) {
 		}
 	}
 	return out, true
+}
+
+var logoLines = []string{
+	`   ____  ___   ____   ____    _     _     `,
+	`  / ___|/ _ \ |  _ \ |  _ \  / \   | |    `,
+	` | |   | | | || |_) || |_) |/ _ \  | |    `,
+	` | |___| |_| ||  _ < |  _ < / ___ \ | |___ `,
+	`  \____|\___/ |_| \_\|_| \_/_/   \_\|_____|`,
+}
+
+func GetStyledLogo(subtitle string) string {
+	colors := []string{"205", "169", "133", "97", "61"}
+	var sb strings.Builder
+	sb.WriteString("\n")
+	for i, line := range logoLines {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i])).Render("  "+line) + "\n")
+	}
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ CORRAL  •  "+subtitle) + "\n")
+	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("   "+strings.Repeat("─", 38)) + "\n\n")
+	return sb.String()
 }

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
@@ -181,10 +180,7 @@ func Run(ctx context.Context, opts RunOptions) {
 	if opts.Output == OutputText {
 		if isTTY {
 			if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-				logo := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("  ⧇ CORRAL") +
-					lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  •  Organising Repositories") + "\n  " +
-					lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(strings.Repeat("─", 36)) + "\n"
-				fmt.Println(logo)
+				fmt.Print(tui.GetStyledLogo("Organising Repositories"))
 			}
 			fmt.Println("Fetching repositories from GitHub...")
 		} else {
