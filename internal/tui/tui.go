@@ -392,9 +392,9 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if strings.HasPrefix(m.filter, "/") {
-				m.executeSlashCommand(m.filter)
+				cmd := m.executeSlashCommand(m.filter)
 				m.filter = ""
-				return m, nil
+				return m, cmd
 			}
 			m.confirmed = true
 			return m, tea.Quit
@@ -480,11 +480,12 @@ func (m *selectorModel) View() string {
 		return out
 	}
 
-	promptLabel := "Search repositories"
+	var searchPrompt string
 	if strings.HasPrefix(m.filter, "/") {
-		promptLabel = "Command"
+		searchPrompt = fmt.Sprintf("  Command: %s_", m.filter)
+	} else {
+		searchPrompt = fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter)
 	}
-	searchPrompt := fmt.Sprintf("  %s (%d found): %s_", promptLabel, len(m.filteredRepos), m.filter)
 	out += lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(searchPrompt) + "\n"
 	
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
@@ -570,11 +571,11 @@ func GetStyledLogo() string {
 	return sb.String()
 }
 
-func (m *selectorModel) executeSlashCommand(cmdStr string) {
+func (m *selectorModel) executeSlashCommand(cmdStr string) tea.Cmd {
 	m.cmdErr = ""
 	parts := strings.Fields(strings.TrimSpace(cmdStr))
 	if len(parts) == 0 {
-		return
+		return nil
 	}
 	cmd := parts[0]
 
@@ -582,7 +583,7 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) {
 	case "/exit", "/quit":
 		m.quitting = true
 		m.confirmed = false
-		m.table.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		return tea.Quit
 
 	case "/help":
 		m.showHelp = true
@@ -602,7 +603,7 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) {
 	case "/sort":
 		if len(parts) < 2 {
 			m.cmdErr = "Usage: /sort <name|language|visibility>"
-			return
+			return nil
 		}
 		field := strings.ToLower(parts[1])
 		switch field {
@@ -626,6 +627,7 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) {
 	default:
 		m.cmdErr = fmt.Sprintf("Unknown command: %s. Type /help for help.", cmd)
 	}
+	return nil
 }
 
 func (m *selectorModel) renderHelpPanel() string {

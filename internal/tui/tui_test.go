@@ -257,7 +257,11 @@ func TestSlashCommands(t *testing.T) {
 	if !strings.Contains(model.cmdErr, "Unknown command") {
 		t.Errorf("Expected unknown command error, got %q", model.cmdErr)
 	}
-
+	// Test /exit returns tea.Quit command
+	cmdExit := model.executeSlashCommand("/exit")
+	if cmdExit == nil {
+		t.Errorf("Expected /exit to return a non-nil command")
+	}
 	// Test character-by-character typing simulation of "/none" and "/all"
 	// 1. Reset all to true
 	for i := range model.repos {
