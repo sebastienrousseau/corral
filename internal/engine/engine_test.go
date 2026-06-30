@@ -213,7 +213,7 @@ func TestProcessRepoFull(t *testing.T) {
 	}()
 
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
-	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error { return nil }
+	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return nil }
 	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
 	gitRemoteOrigin = func(targetDir string) (string, error) { return "https://github.com/owner/repo1.git", nil }
 
@@ -248,7 +248,7 @@ func TestProcessRepoFull(t *testing.T) {
 		t.Errorf("Expected SYNC, got %v", msg)
 	}
 
-	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error { return fmt.Errorf("err") }
+	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return fmt.Errorf("err") }
 	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "ERROR" {
 		t.Errorf("Expected ERROR, got %v", msg)
@@ -495,7 +495,7 @@ func TestEngineRunJSON(t *testing.T) {
 		}, nil
 	}
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
-	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error { return nil }
+	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return nil }
 	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
 
 	oldIsTerminal := isTerminal
@@ -938,7 +938,7 @@ func withGitPullStub(t *testing.T) (called *int, restore func()) {
 	oldPull := gitPull
 	oldBranch := gitCurrentBranch
 	n := 0
-	gitPull = func(ctx context.Context, targetDir string, recurseSubmodules bool) error {
+	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error {
 		n++
 		return nil
 	}

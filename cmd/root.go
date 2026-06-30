@@ -42,6 +42,7 @@ var (
 	cloneSingleBranch   bool
 	cloneDepth          int
 	forceSync           bool
+	ignoreSubmoduleErrs bool
 	layout              string
 	interactive         bool
 	retryMax            int
@@ -183,7 +184,8 @@ var rootCmd = &cobra.Command{
 				Depth:             cloneDepth,
 			},
 			Sync: engine.SyncOptions{
-				Force: forceSync,
+				Force:                   forceSync,
+				IgnoreSubmoduleFailures: ignoreSubmoduleErrs,
 			},
 			Layout:  layout,
 			Version: Version,
@@ -273,6 +275,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&cloneSingleBranch, "clone-single-branch", false, "clone only the default branch")
 	rootCmd.Flags().IntVar(&cloneDepth, "clone-depth", 0, "perform shallow clone with the given depth (0 disables)")
 	rootCmd.Flags().BoolVar(&forceSync, "force-sync", false, "always run git pull, ignoring the cached pushed_at state")
+	rootCmd.Flags().BoolVar(&ignoreSubmoduleErrs, "ignore-submodule-failures", false, "with --recurse-submodules, swallow submodule update failures so the parent repo still syncs")
 	rootCmd.Flags().StringVar(&layout, "layout", "", "templated path structure for repositories (e.g. {{.Visibility}}/{{.Language}}/{{.Name}})")
 	rootCmd.Flags().IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
 	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")

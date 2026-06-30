@@ -37,6 +37,7 @@
 **Features & Capabilities**
 
 - [Features](#features) — structured layout, concurrency, and security
+- [Architecture](#architecture) — end-to-end flow from API fetch to per-repo dispatch
 - [Interactive TUI Mode](#interactive-tui-mode) — keybindings, commands, and autocomplete
 - [Layout Customization](#layout-customization) — templated visibility and language organization
 - [Smart Syncing](#smart-syncing) — network-optimised incremental updates
@@ -147,6 +148,46 @@ This converges your local directory structure into a structured mirror:
 | **Concurrency** | Processes clones and pulls concurrently with configurable worker limits (`--concurrency`). |
 | **Batch Commands** | Batch execute Git commands concurrently across all cloned repositories using `exec`. |
 | **Zero Configuration** | No configuration files required — simple, sensible defaults that work out of the box. |
+
+---
+
+## Architecture
+
+A single run resolves git, fetches every repository concurrently from GitHub, optionally lets you pick a subset interactively, then dispatches clone / smart-sync / skip decisions across a worker pool. Smart sync consults a per-repository `.corral-state.json` sidecar to skip a `git pull` when the upstream `pushed_at` is unchanged.
+
+```mermaid
+graph TD
+    A[User Shell] --> B{corralctl}
+    B --> C[Pre-flight: exec.LookPath git]
+    C -- Missing --> Z1[Exit: git not found on PATH]
+    C -- OK --> D[Resolve auto/token/gh auth]
+    D --> E[GitHub API: list repos]
+    E --> E1["First page<br/>+ resp.LastPage"]
+    E1 --> E2{LastPage > 1?}
+    E2 -- Yes --> E3["Concurrent fetch<br/>pages 2..N (max 5)"]
+    E2 -- No --> F
+    E3 --> F[Filtered repository set]
+    F --> F1{TUI selector?}
+    F1 -- "--select" --> F2[Interactive TUI<br/>/sort, /all, /none, search]
+    F1 -- No --> G
+    F2 --> G[Layout template render<br/>Visibility/Language/Name]
+    G --> H["Worker pool<br/>(--concurrency)"]
+    H --> I{Already cloned?}
+    I -- No --> J["git clone (+ blobless/<br/>depth/single-branch)"]
+    I -- "Yes (--no-sync)" --> K[SKIP]
+    I -- Yes --> L{Smart sync:<br/>pushed_at advanced?}
+    L -- No --> M[SKIP up-to-date]
+    L -- "Yes (or --force-sync)" --> N[git pull --rebase --autostash]
+    N --> N1["+ optional submodule update<br/>(--ignore-submodule-failures)"]
+    J & N1 --> O[Stamp .corral-state.json]
+    O & K & M --> P{All workers done?}
+    P -- No --> H
+    P -- Yes --> Q[Cleanup empty legacy dirs]
+    Q --> R{--orphans?}
+    R -- Yes --> S[Walk baseDir<br/>parse .git/config]
+    R -- No --> T[Print summary]
+    S --> T
+```
 
 ---
 

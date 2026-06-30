@@ -75,6 +75,11 @@ type SyncOptions struct {
 	// Force, when true, runs `git pull` even when the cached state shows
 	// the upstream pushed_at is unchanged.
 	Force bool
+	// IgnoreSubmoduleFailures, when true with Clone.RecurseSubmodules, allows
+	// the parent repository to update even when a submodule sync fails (e.g.
+	// the submodule repo was deleted upstream or its access revoked). The
+	// failure is logged as a WARN but not propagated.
+	IgnoreSubmoduleFailures bool
 }
 
 // Job encapsulates a repository to be processed along with its target directories.
@@ -558,7 +563,10 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 					return result
 				}
 			}
-			err = gitPull(ctx, targetDir, cloneOpts.RecurseSubmodules)
+			err = gitPull(ctx, targetDir, git.PullOptions{
+				RecurseSubmodules:       cloneOpts.RecurseSubmodules,
+				IgnoreSubmoduleFailures: syncOpts.IgnoreSubmoduleFailures,
+			})
 			if err != nil {
 				result.Action = "ERROR"
 				result.Message = fmt.Sprintf("sync failed: %v", err)
