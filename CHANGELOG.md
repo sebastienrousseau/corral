@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cancellation visibility for scripted callers.** When a run is interrupted
+  by SIGINT/SIGTERM, the JSON output payload now carries
+  `summary.canceled: true`, NDJSON emits a terminal
+  `{"action":"CANCELED",...}` record, and the non-TTY text path logs a
+  single `operation canceled (…)` line. The interactive TUI path stays
+  silent (no regression of the existing UX). Exit code on cancellation is
+  now `130` (POSIX 128+SIGINT) instead of `0`, so scripts can distinguish
+  an aborted run from a clean one.
+
 ### Changed
 
 - **Docs site** now publishes via the native GitHub Pages workflow
@@ -16,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Documentation URL** moved to <https://doc.corrallib.com>. The old
   `sebastienrousseau.github.io/corral/` path will continue to resolve
   for as long as the `gh-pages` branch exists.
+- **Orphan detection is skipped on cancellation.** A mid-run abort can
+  leave the local tree in a partial state where orphan reporting would
+  be misleading.
 
 ## [0.0.7] — 2026-06-30
 
