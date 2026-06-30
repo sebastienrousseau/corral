@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs site** now publishes via the native GitHub Pages workflow
+  (`actions/upload-pages-artifact` + `actions/deploy-pages`) instead of
+  `peaceiris/actions-gh-pages`. The legacy `gh-pages` branch is no
+  longer used and can be deleted once this workflow's first deploy
+  succeeds.
+- **Documentation URL** moved to <https://doc.corrallib.com>. The old
+  `sebastienrousseau.github.io/corral/` path will continue to resolve
+  for as long as the `gh-pages` branch exists.
+
 ## [0.0.7] — 2026-06-30
 
 The first release after the binary rename to `corralctl`. Smart sync,
