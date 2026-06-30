@@ -128,7 +128,17 @@ type Summary struct {
 	Skipped int `json:"skipped"`
 	// Failed is the number of repositories that failed to process.
 	Failed int `json:"failed"`
+	// Canceled is true when the run was interrupted by ctx cancellation
+	// (typically SIGINT/SIGTERM). The result set in that case is partial:
+	// a scripted consumer reading json/ndjson output should treat it as
+	// "not all repositories were processed" rather than a clean run.
+	Canceled bool `json:"canceled,omitempty"`
 }
+
+// cancelExitCode is the POSIX convention for "killed by SIGINT" (128 + 2).
+// Used when a non-interactive corralctl run is interrupted, so scripted
+// callers can distinguish cancellation from other failures.
+const cancelExitCode = 130
 
 var (
 	fetchRepos       = github.FetchReposWithOptions
@@ -357,11 +367,23 @@ enqueueLoop:
 	close(results)
 	consumerWG.Wait()
 
+	// Detect cancellation after workers + consumer drain. ctx.Err() at this
+	// point is the authoritative signal: it's set if and only if a SIGINT/
+	// SIGTERM (or a parent's cancel()) fired during the run. The result set
+	// in that case is partial and we must signal that to downstream consumers
+	// so they don't mistake an aborted run for a clean one.
+	if err := ctx.Err(); err != nil {
+		summary.Canceled = true
+		emitCancellation(opts.Output, isTTY, encoder, err)
+	}
+
 	if opts.Layout == "" || opts.Layout == "{{.Visibility}}/{{.Language}}/{{.Name}}" {
 		cleanupEmptyFolders(opts.BaseDir, repos)
 	}
 
-	if opts.Orphans {
+	if opts.Orphans && !summary.Canceled {
+		// Skip orphan detection on cancel: the local tree may be mid-clone
+		// and the report would be misleading.
 		detectOrphans(opts.Owner, opts.BaseDir, repos)
 	}
 
@@ -380,6 +402,38 @@ enqueueLoop:
 			fmt.Fprintf(os.Stderr, "ERROR: failed to encode json output: %v\n", err)
 			osExit(1)
 			return
+		}
+	}
+
+	if summary.Canceled {
+		// POSIX 130 = killed by SIGINT. Lets scripted callers distinguish
+		// cancellation from other failure modes (which exit 1).
+		osExit(cancelExitCode)
+	}
+}
+
+// emitCancellation writes a final cancellation marker to the active output
+// channel so non-interactive consumers learn the run was interrupted. The
+// interactive TUI path (text + TTY) stays silent — the TUI already redraws
+// on SIGINT and the user knows they pressed Ctrl-C.
+func emitCancellation(output OutputFormat, isTTY bool, encoder *json.Encoder, cause error) {
+	msg := fmt.Sprintf("operation canceled (%v)", cause)
+	switch output {
+	case OutputNDJSON:
+		// Terminal record so a consumer piping into jq sees the cancel.
+		// Action: "CANCELED" matches the verb scheme used for other actions.
+		final := RepoResult{Action: "CANCELED", Message: msg}
+		if err := encoder.Encode(final); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: failed to encode ndjson cancellation: %v\n", err)
+		}
+	case OutputJSON:
+		// The aggregated json payload (written below in Run) already carries
+		// summary.Canceled=true; nothing to emit here.
+	case OutputText:
+		if !isTTY {
+			// Non-TTY text path: scripted log consumers get a single line.
+			// TTY users get nothing — the TUI handles its own signal display.
+			log.Printf("%s", msg)
 		}
 	}
 }

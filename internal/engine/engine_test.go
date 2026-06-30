@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -585,10 +586,17 @@ func TestEngineRunLimitWarning(t *testing.T) {
 func TestEngineRunCanceled(t *testing.T) {
 	oldFetchRepos := fetchRepos
 	oldGitClone := gitClone
+	oldOsExit := osExit
 	defer func() {
 		fetchRepos = oldFetchRepos
 		gitClone = oldGitClone
+		osExit = oldOsExit
 	}()
+
+	// Run now exits with the cancellation code on every canceled run; the
+	// test would terminate the process otherwise.
+	var lastExit int
+	osExit = func(code int) { lastExit = code }
 
 	repos := make([]github.Repo, 0, 50)
 	for i := 0; i < 50; i++ {
@@ -625,6 +633,210 @@ func TestEngineRunCanceled(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		Run(ctx, opts)
+	}
+
+	if lastExit != cancelExitCode {
+		t.Errorf("expected osExit(%d) on cancellation, got %d", cancelExitCode, lastExit)
+	}
+}
+
+// TestEngineRunCanceledJSON asserts that the aggregated json payload carries
+// summary.canceled = true when ctx is cancelled mid-run, so a scripted
+// consumer reading the json doesn't mistake an aborted run for a clean one.
+func TestEngineRunCanceledJSON(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	oldOsExit := osExit
+	oldIsTerminal := isTerminal
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+		osExit = oldOsExit
+		isTerminal = oldIsTerminal
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "r1", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+	isTerminal = func(fd uintptr) bool { return false }
+
+	var lastExit int
+	osExit = func(code int) { lastExit = code }
+
+	baseDir := t.TempDir()
+
+	// Capture stdout so we can parse the aggregated json payload.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputJSON
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	Run(ctx, opts)
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	captured, _ := io.ReadAll(r)
+
+	if lastExit != cancelExitCode {
+		t.Errorf("expected osExit(%d) on cancellation, got %d", cancelExitCode, lastExit)
+	}
+	if !strings.Contains(string(captured), `"canceled": true`) {
+		t.Errorf("expected canceled:true in json summary, got: %s", string(captured))
+	}
+}
+
+// TestEngineRunCanceledNDJSON asserts that ndjson output emits a terminal
+// {"action":"CANCELED",...} record so a `corralctl | jq` pipeline sees the
+// cancel rather than just stopping mid-stream.
+func TestEngineRunCanceledNDJSON(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	oldOsExit := osExit
+	oldIsTerminal := isTerminal
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+		osExit = oldOsExit
+		isTerminal = oldIsTerminal
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "r1", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+	isTerminal = func(fd uintptr) bool { return false }
+	osExit = func(code int) {}
+
+	baseDir := t.TempDir()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputNDJSON
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	Run(ctx, opts)
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	captured, _ := io.ReadAll(r)
+
+	if !strings.Contains(string(captured), `"action":"CANCELED"`) {
+		t.Errorf("expected terminal CANCELED ndjson record, got: %s", string(captured))
+	}
+}
+
+// TestEngineRunCanceledTextSilentOnTTY guarantees we never regress the
+// interactive UX: when the user hits Ctrl-C in the TUI, the engine must
+// emit nothing extra (the TUI itself handles the visual exit).
+func TestEngineRunCanceledTextSilentOnTTY(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	oldOsExit := osExit
+	oldIsTerminal := isTerminal
+	oldRunProgram := runProgram
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+		osExit = oldOsExit
+		isTerminal = oldIsTerminal
+		runProgram = oldRunProgram
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "r1", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+	isTerminal = func(fd uintptr) bool { return true }
+	runProgram = func(p *tea.Program) (tea.Model, error) { return nil, nil }
+	osExit = func(code int) {}
+
+	baseDir := t.TempDir()
+
+	// Redirect log output so we can assert it's empty (no "operation
+	// canceled" line on the TTY path).
+	var logBuf strings.Builder
+	oldLogOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(oldLogOut)
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputText
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	Run(ctx, opts)
+
+	if strings.Contains(logBuf.String(), "operation canceled") {
+		t.Errorf("TTY path must stay silent on cancel; logged: %q", logBuf.String())
+	}
+}
+
+// TestEngineRunCanceledTextNoisyOnNonTTY is the inverse: scripted callers
+// piping the text output should get one log line documenting the cancel.
+// Note: Run rewires log.SetOutput(os.Stdout) on the non-TTY path, so we
+// capture stdout rather than redirecting the log package.
+func TestEngineRunCanceledTextNoisyOnNonTTY(t *testing.T) {
+	oldFetchRepos := fetchRepos
+	oldGitClone := gitClone
+	oldOsExit := osExit
+	oldIsTerminal := isTerminal
+	oldLogOut := log.Writer()
+	defer func() {
+		fetchRepos = oldFetchRepos
+		gitClone = oldGitClone
+		osExit = oldOsExit
+		isTerminal = oldIsTerminal
+		log.SetOutput(oldLogOut)
+	}()
+
+	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{
+			{Name: "r1", Language: "Go", Visibility: "Public", DefaultBranch: "main"},
+		}, nil
+	}
+	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
+	isTerminal = func(fd uintptr) bool { return false }
+	osExit = func(code int) {}
+
+	baseDir := t.TempDir()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+
+	opts := defaultRunOptions(baseDir)
+	opts.Output = OutputText
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	Run(ctx, opts)
+
+	_ = w.Close()
+	os.Stdout = oldStdout
+	captured, _ := io.ReadAll(r)
+
+	if !strings.Contains(string(captured), "operation canceled") {
+		t.Errorf("non-TTY text path must log on cancel; got: %q", string(captured))
 	}
 }
 
