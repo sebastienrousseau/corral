@@ -1,30 +1,74 @@
 name: Deploy Docs
 
+# Native GitHub Pages publishing via the official actions, replacing the
+# earlier peaceiris/actions-gh-pages approach. The site is served at
+# https://doc.corrallib.com (custom domain configured by the CNAME file
+# below + a doc → sebastienrousseau.github.io DNS record).
+#
+# Requires repository Settings → Pages → Source = "GitHub Actions" (not
+# "Deploy from a branch"). The legacy gh-pages branch can be deleted
+# once this workflow has run successfully at least once.
+
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
+# Required permissions for actions/deploy-pages:
+#   pages: write  — to publish the artifact to the Pages environment
+#   id-token: write — OIDC token used by deploy-pages to authenticate
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
+# Only one concurrent deploy at a time; cancel any in-flight run when a
+# newer push lands so the deployed version always tracks main.
 concurrency:
-  group: "pages"
+  group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
+    name: Build docs site
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          show-progress: false
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
-      - name: Generate API Docs
+
+      - name: Generate API docs
         run: go run scripts/generate_docs.go
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+
+      # Make the custom domain stick across deploys. GitHub Pages reads the
+      # CNAME file at the artifact root to decide which custom domain to
+      # bind to the site.
+      - name: Stamp CNAME for doc.corrallib.com
+        run: echo "doc.corrallib.com" > public/CNAME
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
+          path: ./public
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
