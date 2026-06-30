@@ -16,8 +16,10 @@ import (
 	"github.com/sebastienrousseau/corral/internal/github"
 )
 
-// Version is the build version of Corral.
-var Version = "0.0.6"
+// Version is the build version of Corral, rendered in the TUI footer.
+// Injected at build time alongside cmd.Version via -ldflags "-X …=Version";
+// the "dev" fallback makes an un-injected build obvious.
+var Version = "dev"
 
 // LogMsg represents a log entry to be displayed in the TUI.
 type LogMsg struct {
@@ -54,7 +56,7 @@ func NewModel(total int) tea.Model {
 	}
 }
 
-// // Init initializes the Bubble Tea application (no-op).
+// Init initializes the Bubble Tea application (no-op).
 func (m model) Init() tea.Cmd {
 	return nil
 }
@@ -747,7 +749,7 @@ func (m *selectorModel) renderHelpPanel() string {
 func (m *selectorModel) renderFooter() string {
 	vStr := Version
 	if vStr == "" {
-		vStr = "0.0.6"
+		vStr = "dev"
 	}
 	left := " ? for commands"
 	right := fmt.Sprintf("Made with ❤️ in London, UK (v%s)", vStr)

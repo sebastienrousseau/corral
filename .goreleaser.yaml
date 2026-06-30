@@ -19,7 +19,9 @@ builds:
     main: ./main.go
     binary: corralctl
     ldflags:
-      - -s -w -X github.com/sebastienrousseau/corral/cmd.Version={{.Version}}
+      - -s -w
+        -X github.com/sebastienrousseau/corral/cmd.Version={{.Version}}
+        -X github.com/sebastienrousseau/corral/internal/tui.Version={{.Version}}
 
 archives:
   - formats: [tar.gz]

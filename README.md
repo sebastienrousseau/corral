@@ -260,12 +260,12 @@ corralctl <owner> [base_dir] [limit]
 
 ## Examples
 
-To inspect the package layout and programmatically run Corral modules, see the self-contained, copy-pasteable Go code examples in the [examples](file:///Users/seb/Code/Public/go/corral/examples) directory:
+To inspect the package layout and programmatically run Corral modules, see the self-contained, copy-pasteable Go code examples in the [examples](examples/) directory:
 
-1. **[Interactive Selector](file:///Users/seb/Code/Public/go/corral/examples/interactive_selection.go)** — Programmatically configure and launch the selection checklist TUI in AltScreen mode.
-2. **[GitHub Repository Fetcher](file:///Users/seb/Code/Public/go/corral/examples/github_fetch.go)** — Query the GitHub REST API using `github.FetchReposWithOptions` with stars sorting and language constraints.
-3. **[Git Syncing](file:///Users/seb/Code/Public/go/corral/examples/git_clone.go)** — Call the `git` helper package to perform clones, query branches, and resolve origin URLs.
-4. **[Engine Orchestrator](file:///Users/seb/Code/Public/go/corral/examples/engine_run.go)** — Integrate the core engine `engine.Run` to run repository syncing with custom filters, layout structures, and dry-run pre-flights.
+1. **[Interactive Selector](examples/interactive_selection.go)** — Programmatically configure and launch the selection checklist TUI in AltScreen mode.
+2. **[GitHub Repository Fetcher](examples/github_fetch.go)** — Query the GitHub REST API using `github.FetchReposWithOptions` with stars sorting and language constraints.
+3. **[Git Syncing](examples/git_clone.go)** — Call the `git` helper package to perform clones, query branches, and resolve origin URLs.
+4. **[Engine Orchestrator](examples/engine_run.go)** — Integrate the core engine `engine.Run` to run repository syncing with custom filters, layout structures, and dry-run pre-flights.
 
 ---
 
