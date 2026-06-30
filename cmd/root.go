@@ -16,8 +16,11 @@ import (
 )
 
 // Version is the build version of Corral. It is overridden at release time via
-// -ldflags "-X github.com/sebastienrousseau/corral/cmd.Version=<version>".
-var Version = "0.0.6"
+// -ldflags "-X github.com/sebastienrousseau/corral/cmd.Version=<version>"
+// (set by goreleaser) and by `make build` via `git describe`. The "dev"
+// fallback makes an un-injected build obviously local rather than masquerading
+// as a stale release tag.
+var Version = "dev"
 
 var (
 	baseDir             string
