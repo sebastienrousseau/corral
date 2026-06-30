@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,15 +111,34 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	return nil
 }
 
-// Pull executes a git pull --rebase --autostash command in the target directory.
-// If recurseSubmodules is true, it appends the --recurse-submodules flag.
+// PullOptions configures a `git pull` invocation.
+type PullOptions struct {
+	// RecurseSubmodules, when true, also updates submodules after the pull.
+	// When IgnoreSubmoduleFailures is set, the submodule update runs as a
+	// separate step so its failure does not abort the parent pull.
+	RecurseSubmodules bool
+	// IgnoreSubmoduleFailures, when true, logs (but does not propagate)
+	// errors from the post-pull submodule update step. Useful when a
+	// submodule has been deleted upstream or access has been revoked but
+	// the parent repository's history should still update.
+	IgnoreSubmoduleFailures bool
+}
+
+// Pull executes a `git pull --rebase --autostash` in the target directory.
+// Signature verification (merge.verifySignatures / rebase.verifySignatures)
+// and commit signing (commit.gpgsign) are explicitly disabled for this
+// invocation so an unattended sync never aborts on unsigned commits or
+// blocks on a GPG/SSH passphrase prompt for users who sign commits globally.
 //
-// Signature verification is explicitly disabled for the merge/rebase so an
-// unattended sync never aborts on unsigned or untrusted commits when the user
-// has merge.verifySignatures / rebase.verifySignatures enabled globally. This
-// overrides those settings for these invocations only and does not change the
-// user's configuration.
-func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
+// When opts.RecurseSubmodules is true:
+//   - if opts.IgnoreSubmoduleFailures is false, --recurse-submodules is
+//     appended to the pull so failures abort the whole operation
+//     (existing pre-v0.0.7 behaviour);
+//   - if opts.IgnoreSubmoduleFailures is true, the pull runs without
+//     --recurse-submodules and submodule updates are attempted in a
+//     separate `git submodule update --init --recursive` step whose
+//     error is logged but not returned.
+func Pull(ctx context.Context, targetDir string, opts PullOptions) error {
 	args := []string{
 		"-c", "merge.verifySignatures=false",
 		"-c", "rebase.verifySignatures=false",
@@ -129,7 +149,7 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 		"-c", "gpg.format=openpgp",
 		"-C", targetDir, "pull", "--rebase", "--autostash",
 	}
-	if recurseSubmodules {
+	if opts.RecurseSubmodules && !opts.IgnoreSubmoduleFailures {
 		args = append(args, "--recurse-submodules")
 	}
 	// #nosec G204 -- the executable is the fixed "git" binary and all arguments
@@ -139,6 +159,28 @@ func Pull(ctx context.Context, targetDir string, recurseSubmodules bool) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+
+	if opts.RecurseSubmodules && opts.IgnoreSubmoduleFailures {
+		if sErr := updateSubmodules(ctx, targetDir); sErr != nil {
+			// Best-effort: log and swallow, matching the documented contract.
+			log.Printf("WARN: submodule update failed in %s: %v (continuing)", targetDir, sErr)
+		}
+	}
+	return nil
+}
+
+// updateSubmodules runs `git submodule update --init --recursive` in
+// targetDir as a separate subprocess. Exposed indirectly via Pull's
+// IgnoreSubmoduleFailures branch.
+func updateSubmodules(ctx context.Context, targetDir string) error {
+	args := []string{"-C", targetDir, "submodule", "update", "--init", "--recursive"}
+	// #nosec G204 -- fixed binary; controlled args.
+	cmd := exec.CommandContext(ctx, gitBinary, args...)
+	withGitEnv(cmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git submodule update failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

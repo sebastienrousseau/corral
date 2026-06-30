@@ -22,10 +22,15 @@ func ExampleClone() {
 }
 
 // ExamplePull demonstrates updating an existing clone with rebase + autostash,
-// recursing into submodules.
+// recursing into submodules but tolerating submodule failures so a single
+// inaccessible nested repo doesn't block the parent sync.
 func ExamplePull() {
 	ctx := context.Background()
-	if err := git.Pull(ctx, "/tmp/corral", true); err != nil {
+	opts := git.PullOptions{
+		RecurseSubmodules:       true,
+		IgnoreSubmoduleFailures: true,
+	}
+	if err := git.Pull(ctx, "/tmp/corral", opts); err != nil {
 		log.Printf("pull failed: %v", err)
 	}
 }
