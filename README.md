@@ -42,6 +42,7 @@
 - [Layout Customization](#layout-customization) — templated visibility and language organization
 - [Smart Syncing](#smart-syncing) — network-optimised incremental updates
 - [Exec Mode](#exec-mode) — concurrent batch execution of Git commands
+- [MCP Server](#mcp-server-for-ai-agents) — expose your local workspace to AI coding agents
 
 **Reference & Operational**
 
@@ -258,6 +259,64 @@ Execute arbitrary shell commands concurrently across your organized repositories
 # Check git status for all Go/Rust private repositories
 ./corralctl exec "git status -s" --languages go,rust --visibility private
 ```
+
+---
+
+## MCP Server (for AI agents)
+
+Corral ships a Model Context Protocol server that exposes your local, Corral-organised workspace to AI coding agents — Claude Code, Cursor, Cline, Codex CLI, Aider, and anything else that speaks MCP. **No network calls are made and the GitHub API is not contacted**; the server is a read-only window into the clones already on disk.
+
+Where GitHub's own MCP server covers the remote API surface (issues, PRs, search), `corral-mcp` covers the dimension only it can — your *local mirror*, organised by visibility and language, queryable without a round-trip.
+
+### Tools
+
+| Name | Purpose |
+| :--- | :--- |
+| `corral_list_repos` | Filter local clones by visibility / language / name / sync state |
+| `corral_find_repo` | Resolve a fuzzy name to one clone (returns candidates on ambiguity) |
+| `corral_get_repo_metadata` | Full metadata for one clone, including current branch |
+| `corral_status_summary` | Workspace summary: counts by visibility and language |
+| `corral_workspace_index` | Full structured index in a single call |
+
+### Resources
+
+- `corral://workspace/index`
+- `corral://repo/{owner}/{name}/state`
+- `corral://repo/{owner}/{name}/tree`
+- `corral://repo/{owner}/{name}/file/{path}` (bounded at 1 MiB; path-traversal protected)
+
+### Install
+
+**Claude Code:**
+
+```bash
+claude mcp add corral -- corralctl mcp
+```
+
+**Cursor / Cline** (`mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "corral": {
+      "command": "corralctl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Sandbox a different root** (defaults to `--base-dir`, then `$HOME/Code`):
+
+```bash
+corralctl mcp --root /custom/workspace
+```
+
+### Safety
+
+- **Read-only by default.** Phase-3 write tools (`corral_sync_repo`, `corral_clone_repo`) are reserved for a follow-up release; `--enable-mutations` is a placeholder flag today.
+- **Path-traversal protected.** File-resource lookups canonicalise both the configured root and the candidate path before comparison, so a malicious `{path}` cannot escape the sandbox via `..` or symlinks.
+- **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
 
 ---
 

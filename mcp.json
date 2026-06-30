@@ -1,0 +1,71 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-11-25/server.schema.json",
+  "name": "io.github.sebastienrousseau/corral",
+  "description": "Local index for AI: query your Corral-organised workspace of cloned GitHub repositories via Model Context Protocol. Read-only tools and resources, zero network calls, runs on stdio.",
+  "version": "0.0.8",
+  "license": "GPL-3.0",
+  "homepage": "https://github.com/sebastienrousseau/corral",
+  "documentation": "https://doc.corrallib.com",
+  "issues": "https://github.com/sebastienrousseau/corral/issues",
+  "categories": [
+    "developer-tools",
+    "code-search",
+    "workspace-management"
+  ],
+  "keywords": [
+    "github",
+    "git",
+    "workspace",
+    "multi-repo",
+    "local-first",
+    "indexing"
+  ],
+  "transport": "stdio",
+  "command": "corralctl",
+  "args": ["mcp"],
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": false
+  },
+  "tools": [
+    {
+      "name": "corral_list_repos",
+      "description": "List local clones in the Corral workspace, optionally filtered by visibility, language, name substring, or sync state."
+    },
+    {
+      "name": "corral_find_repo",
+      "description": "Resolve a fuzzy repository name to a single local clone."
+    },
+    {
+      "name": "corral_get_repo_metadata",
+      "description": "Return full metadata for one clone, including current branch."
+    },
+    {
+      "name": "corral_status_summary",
+      "description": "Workspace summary with counts by visibility and language."
+    },
+    {
+      "name": "corral_workspace_index",
+      "description": "Return the full structured index of the workspace in one call."
+    }
+  ],
+  "resources": [
+    {
+      "uri": "corral://workspace/index",
+      "name": "Workspace index"
+    },
+    {
+      "uri": "corral://repo/{owner}/{name}/state",
+      "name": "Repository sync state"
+    },
+    {
+      "uri": "corral://repo/{owner}/{name}/tree",
+      "name": "Repository top-level tree"
+    },
+    {
+      "uri": "corral://repo/{owner}/{name}/file/{path}",
+      "name": "Repository file contents"
+    }
+  ]
+}
