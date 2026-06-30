@@ -693,8 +693,8 @@ func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, e
 		return "", err
 	}
 	cleanPath := filepath.Clean(buf.String())
-	if strings.HasPrefix(cleanPath, "..") || cleanPath == "." || filepath.IsAbs(cleanPath) {
+	if strings.HasPrefix(cleanPath, "..") || cleanPath == "." || filepath.IsAbs(cleanPath) || strings.HasPrefix(buf.String(), "/") || strings.HasPrefix(buf.String(), "\\") {
 		return "", fmt.Errorf("layout escapes base directory: %s", cleanPath)
 	}
-	return cleanPath, nil
+	return filepath.ToSlash(cleanPath), nil
 }

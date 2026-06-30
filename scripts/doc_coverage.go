@@ -23,7 +23,7 @@ func main() {
 			return err
 		}
 		if info.IsDir() {
-			if info.Name() == "vendor" || info.Name() == "examples" || info.Name() == ".git" || info.Name() == "scratch" || info.Name() == ".github" {
+			if info.Name() == "vendor" || info.Name() == "examples" || info.Name() == ".git" || info.Name() == "scratch" || info.Name() == ".github" || info.Name() == "scripts" {
 				return filepath.SkipDir
 			}
 			return nil
