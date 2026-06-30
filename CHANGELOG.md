@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`corralctl mcp` subcommand** — a Model Context Protocol server on
+  stdio that exposes the local Corral-organised workspace to AI coding
+  agents (Claude Code, Cursor, Cline, Codex CLI, Aider). Read-only in
+  v0; ships five tools (`corral_list_repos`, `corral_find_repo`,
+  `corral_get_repo_metadata`, `corral_status_summary`,
+  `corral_workspace_index`) and four resources
+  (`corral://workspace/index`, `corral://repo/{owner}/{name}/state`,
+  `corral://repo/{owner}/{name}/tree`,
+  `corral://repo/{owner}/{name}/file/{path}`). Sandboxes to a
+  configurable `--root` (defaults to `--base-dir`); the file resource
+  is bounded at 1 MiB with path-traversal defence canonicalising both
+  the root and the candidate via `EvalSymlinks`. Reserved
+  `--enable-mutations` flag is a placeholder for the Phase-3 write
+  tools planned in v0.0.9.
+- **`mcp.json` registry manifest** at the repo root for submission to
+  `registry.modelcontextprotocol.io`.
 - **Cancellation visibility for scripted callers.** When a run is interrupted
   by SIGINT/SIGTERM, the JSON output payload now carries
   `summary.canceled: true`, NDJSON emits a terminal
