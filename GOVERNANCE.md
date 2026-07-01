@@ -48,28 +48,32 @@ and welcome comments for at least one week before landing the change.
 
 ## Access continuity and succession
 
-The single-Maintainer model creates a real bus-factor risk. To mitigate it:
+The single-Maintainer model creates a real bus-factor risk. The full
+succession procedure — voluntary hand-off, community fork after
+≥ 6 months of unresponsiveness, and emergency compromise response —
+is documented in [MAINTAINERS.md](MAINTAINERS.md). Key facts, in short:
 
 - **Repository ownership**: The `sebastienrousseau/corral` repository is
-  owned by the Maintainer's personal GitHub account. In the event of the
-  Maintainer's prolonged unavailability, the project can be forked and
-  taken over under GPL-3.0 without further permission.
-- **Release signing keys**: Release tags are signed with the Maintainer's
-  SSH key (fingerprint `SHA256:kIOPAavp1TCEauTr1tTIN3cv+tSs6F9m/4lZjuM9tqk`).
-  In the event of Maintainer succession, a new Maintainer will publish
-  their own signing key in an updated GOVERNANCE.md and release note; users
-  should treat any newly published version as unsigned by the historical
-  key.
-- **External services**: The docs site (`doc.corrallib.com`), Homebrew tap
-  (`sebastienrousseau/homebrew-tap`), AUR package (`corralctl-bin`), and
-  ghcr.io Docker registry are all tied to the Maintainer's personal
-  accounts. A succession event would require the new Maintainer to
-  reconstitute these under their own accounts and update the README.
-- **Community fork**: Because Corral is GPL-3.0, any user may fork the
-  project at any time. If the Maintainer becomes unresponsive for
-  ≥ 6 months (no issue comments, no releases, no PR merges), the community
-  is encouraged to fork and continue under a new name or the same name at
-  a different owner.
+  owned by the Maintainer's personal GitHub account. Any user may fork
+  under GPL-3.0 without further permission.
+- **Release signing key**: Release tags are signed with the Maintainer's
+  SSH ed25519 key (fingerprint
+  `SHA256:kIOPAavp1TCEauTr1tTIN3cv+tSs6F9m/4lZjuM9tqk`). Every release
+  artefact is additionally keyless-signed with cosign and carries a
+  SLSA v1.0 provenance attestation — those two remain publicly
+  verifiable against Rekor even if the SSH key is later rotated.
+- **External services**: A full catalogue (Homebrew tap, AUR, ghcr.io,
+  docs DNS, MCP Registry, Sigstore integration) lives in
+  [MAINTAINERS.md](MAINTAINERS.md) §"External services and accounts",
+  each row noting the configuration file a successor must edit.
+- **Community fork**: If the Maintainer is unresponsive for ≥ 6 months
+  (no issue comments, no releases, no PR merges), the community is
+  encouraged to fork per the procedure in
+  [MAINTAINERS.md](MAINTAINERS.md) §"Community fork (unplanned)".
+- **Security model**: The public assurance case in
+  [docs/security-model.md](docs/security-model.md) records the claims,
+  evidence, and out-of-scope threats a successor inherits, so
+  handover is not tribal.
 
 ## Adding a co-Maintainer
 
