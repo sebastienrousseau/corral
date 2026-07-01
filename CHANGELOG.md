@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenSSF Best Practices Passing badge earned** (project #13455). All 67
+  Passing-tier criteria answered via `.bestpractices.json` and accepted
+  by the badge app. Badge is displayed in the README badge row.
+
 ## [0.0.11] — 2026-07-01
 
 Supply-chain hardening + coverage lifts.
