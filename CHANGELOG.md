@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-07-01
+
+The MCP release. Corral becomes the canonical local index for AI coding
+agents, alongside cron-grade cancellation visibility, a docs migration
+to native GitHub Pages publishing on a custom domain, and every
+GitHub-owned Action SHA-pinned to close 7 open OpenSSF Scorecard alerts.
+
 ### Added
 
 - **`corralctl mcp` subcommand** — a Model Context Protocol server on
@@ -24,28 +31,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tools planned in v0.0.9.
 - **`mcp.json` registry manifest** at the repo root for submission to
   `registry.modelcontextprotocol.io`.
-- **Cancellation visibility for scripted callers.** When a run is interrupted
-  by SIGINT/SIGTERM, the JSON output payload now carries
+- **Cancellation visibility for scripted callers.** When a run is
+  interrupted by SIGINT/SIGTERM, the JSON output payload now carries
   `summary.canceled: true`, NDJSON emits a terminal
   `{"action":"CANCELED",...}` record, and the non-TTY text path logs a
   single `operation canceled (…)` line. The interactive TUI path stays
-  silent (no regression of the existing UX). Exit code on cancellation is
-  now `130` (POSIX 128+SIGINT) instead of `0`, so scripts can distinguish
-  an aborted run from a clean one.
+  silent (no regression of the existing UX). Exit code on cancellation
+  is now `130` (POSIX 128+SIGINT) instead of `0`, so scripts can
+  distinguish an aborted run from a clean one.
 
 ### Changed
 
 - **Docs site** now publishes via the native GitHub Pages workflow
   (`actions/upload-pages-artifact` + `actions/deploy-pages`) instead of
-  `peaceiris/actions-gh-pages`. The legacy `gh-pages` branch is no
-  longer used and can be deleted once this workflow's first deploy
-  succeeds.
-- **Documentation URL** moved to <https://doc.corrallib.com>. The old
-  `sebastienrousseau.github.io/corral/` path will continue to resolve
-  for as long as the `gh-pages` branch exists.
+  `peaceiris/actions-gh-pages`. The legacy `gh-pages` branch has been
+  deleted.
+- **Documentation URL** moved to <https://doc.corrallib.com> with HTTPS
+  enforced via Let's Encrypt-issued cert.
 - **Orphan detection is skipped on cancellation.** A mid-run abort can
   leave the local tree in a partial state where orphan reporting would
   be misleading.
+
+### Security
+
+- **All GitHub-owned Actions are now SHA-pinned** in `ci.yml` and
+  `docs.yml`, closing the 7 open `PinnedDependenciesID` OpenSSF
+  Scorecard / CodeQL alerts (#11, #12, #17, #21, #22, #23, #24).
+  Convention matches `release.yml` and `scorecard.yml`: immutable SHA
+  followed by `# vX.Y.Z` comment.
+
+### Stats
+
+- 7 packages, 100 % doc coverage (56 / 56 exported symbols).
+- `internal/mcp` ships at 88.4 % statement coverage with 26 new tests
+  covering scan / find / SafePath traversal defence / every tool and
+  every resource.
 
 ## [0.0.7] — 2026-06-30
 
@@ -157,5 +177,6 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.7...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...HEAD
+[0.0.8]: https://github.com/sebastienrousseau/corral/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/sebastienrousseau/corral/compare/v0.0.6...v0.0.7
