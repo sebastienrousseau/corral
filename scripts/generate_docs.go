@@ -197,7 +197,7 @@ func main() {
 	fset := token.NewFileSet()
 	var docData DocData
 
-	paths := []string{"internal/github", "internal/git", "internal/engine", "internal/tui"}
+	paths := []string{"internal/github", "internal/git", "internal/engine", "internal/tui", "internal/mcp"}
 	for _, p := range paths {
 		pkgs, err := parser.ParseDir(fset, p, func(info os.FileInfo) bool {
 			return !strings.HasSuffix(info.Name(), "_test.go")
