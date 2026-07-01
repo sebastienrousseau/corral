@@ -1,0 +1,30 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 0' # Run weekly on Sundays
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Run Fuzz Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+      - name: Fuzz NormalizeLanguage
+        run: go test -fuzz=FuzzNormalizeLanguage -fuzztime=30s ./internal/engine
+      - name: Fuzz EvaluateLayout
+        run: go test -fuzz=FuzzEvaluateLayout -fuzztime=30s ./internal/engine
+      - name: Fuzz ParseOwnerFromURL
+        run: go test -fuzz=FuzzParseOwnerFromURL -fuzztime=30s ./internal/mcp

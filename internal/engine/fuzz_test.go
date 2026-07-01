@@ -3,6 +3,8 @@ package engine
 import (
 	"strings"
 	"testing"
+
+	"github.com/sebastienrousseau/corral/internal/github"
 )
 
 // FuzzNormalizeLanguage checks that normalizeLanguage never panics and always
@@ -27,5 +29,23 @@ func FuzzNormalizeLanguage(f *testing.F) {
 		if strings.ContainsAny(got, " /") {
 			t.Fatalf("normalizeLanguage(%q) = %q contains a space or path separator", lang, got)
 		}
+	})
+}
+
+// FuzzEvaluateLayout checks that evaluateLayout handles arbitrary layout templates,
+// repository visibilities, languages, and owner names without panicking.
+func FuzzEvaluateLayout(f *testing.F) {
+	f.Add("", "Public", "Go", "repo", "owner")
+	f.Add("{{.Visibility}}/{{.Language}}/{{.Name}}", "Public", "Go", "repo", "owner")
+	f.Add("{{.Owner}}/{{.Name}}", "Public", "Go", "repo", "owner")
+	f.Add("../{{.Name}}", "Public", "Go", "repo", "owner")
+
+	f.Fuzz(func(t *testing.T, layout, visibility, language, repoName, owner string) {
+		repo := github.Repo{
+			Visibility: visibility,
+			Language:   language,
+			Name:       repoName,
+		}
+		_, _ = evaluateLayout(layout, repo, owner)
 	})
 }
