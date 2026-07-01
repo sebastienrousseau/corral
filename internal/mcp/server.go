@@ -25,10 +25,21 @@ type ServerOptions struct {
 	// Version is injected at build time (see cmd.Version); surfaced to
 	// MCP clients in the server-info handshake.
 	Version string
-	// EnableMutations gates the write-tools (Phase 3 of the design doc).
-	// In Phase 1 no mutation tools are registered, so this field is
-	// reserved for forward-compatibility and ignored today.
+	// EnableMutations, when true, registers the write-side tools
+	// (corral_sync_repo, corral_clone_repo). The read-only tool set is
+	// always registered; this flag only unlocks the ones that touch
+	// the filesystem or the network.
 	EnableMutations bool
+	// EnableDestructiveMutations gates corral_delete_repo specifically.
+	// A misfiring agent that could delete workspace repos is a class of
+	// harm distinct from clone/sync mistakes, so it earns its own opt-in.
+	// Ignored unless EnableMutations is also true.
+	EnableDestructiveMutations bool
+	// AuditLogPath is where the JSONL audit log for every mutation is
+	// appended. Empty means use the XDG default
+	// ($XDG_STATE_HOME/corral/mutations.log). Only consulted when at
+	// least one mutation gate is enabled.
+	AuditLogPath string
 }
 
 // Server wraps an mcp-go MCPServer with the corral-specific configuration.
@@ -36,8 +47,9 @@ type ServerOptions struct {
 // so future phases can attach per-server state (search backends, audit
 // logger, etc.) without breaking the cmd-layer call site.
 type Server struct {
-	mcp  *server.MCPServer
-	opts ServerOptions
+	mcp     *server.MCPServer
+	opts    ServerOptions
+	auditor *Auditor
 
 	// scanMu guards the in-memory workspace-index cache below.
 	// Every tool and resource handler goes through Server.scan(),
@@ -111,13 +123,33 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		opts.Version,
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(true, false),
+		server.WithPromptCapabilities(false),
 		server.WithRecovery(),
 	)
 
 	s := &Server{mcp: mcpSrv, opts: opts}
+	if opts.EnableMutations || opts.EnableDestructiveMutations {
+		s.auditor = NewAuditor(opts.AuditLogPath)
+	}
 	s.registerTools()
 	s.registerResources()
+	s.registerPrompts()
+	if s.opts.EnableMutations {
+		s.registerMutationTools()
+	}
+	if s.opts.EnableDestructiveMutations && s.opts.EnableMutations {
+		s.registerDestructiveTools()
+	}
 	return s, nil
+}
+
+// AuditLogPath returns the audit log path when mutations are enabled;
+// empty otherwise. Exposed for the cmd-layer startup banner.
+func (s *Server) AuditLogPath() string {
+	if s.auditor == nil {
+		return ""
+	}
+	return s.auditor.Path()
 }
 
 // ServeStdio runs the server on the stdio transport (the MCP standard

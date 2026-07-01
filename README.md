@@ -279,6 +279,25 @@ Where GitHub's own MCP server covers the remote API surface (issues, PRs, search
 | `corral_status_summary` | Workspace summary: counts by visibility and language |
 | `corral_workspace_index` | Full structured index in a single call |
 
+**Write tools (v0.0.12, opt-in via `--enable-mutations`):**
+
+| Name | Purpose |
+| :--- | :--- |
+| `corral_sync_repo` | Runs `git pull --rebase --autostash` against one clone |
+| `corral_clone_repo` | Clones a URL into a sandboxed target path |
+| `corral_delete_repo` | Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes |
+
+Every mutation writes a JSONL audit record to
+`$XDG_STATE_HOME/corral/mutations.log` (or `~/.local/state/corral/mutations.log`)
+capturing tool, target, args, result, and timestamp.
+
+### Prompts (v0.0.12)
+
+| Name | Purpose |
+| :--- | :--- |
+| `explain_workspace` | Ask the agent to survey the workspace via read-only tools and summarise it |
+| `identify_stale_repos` | Ask the agent to find clones whose `.corral-state.json` says they haven't been synced recently (default: 30 days) |
+
 ### Resources
 
 - `corral://workspace/index`

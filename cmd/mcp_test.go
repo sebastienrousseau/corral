@@ -23,6 +23,7 @@ type stubMCPServer struct {
 
 func (s *stubMCPServer) Root() string           { return s.root }
 func (s *stubMCPServer) MutationsEnabled() bool { return s.mutations }
+func (s *stubMCPServer) AuditLogPath() string   { return "" }
 func (s *stubMCPServer) ServeStdio() error {
 	s.serveCallCount++
 	return s.serveErr
