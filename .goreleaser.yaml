@@ -92,19 +92,17 @@ docker_manifests:
 #     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
 #     ghcr.io/sebastienrousseau/corral:0.0.11
 docker_signs:
-  - cmd: cosign
+  # `artifacts: all` covers both the per-arch images produced by the
+  # dockers: block AND the multi-arch tags emitted by docker_manifests:
+  # in one signing entry — goreleaser errored on two entries sharing
+  # the same default ID (v2 semantics).
+  - id: cosign-oidc
+    cmd: cosign
     args:
       - sign
       - --yes
       - '${artifact}'
-    artifacts: manifests
-    output: true
-  - cmd: cosign
-    args:
-      - sign
-      - --yes
-      - '${artifact}'
-    artifacts: images
+    artifacts: all
     output: true
 
 # 1. Native Linux Packages (Debian, Ubuntu, WSL, Fedora, RHEL, openSUSE)
