@@ -45,6 +45,7 @@ var (
 	ignoreSubmoduleErrs bool
 	layout              string
 	interactive         bool
+	assumeYes           bool
 	retryMax            int
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
@@ -151,6 +152,19 @@ var rootCmd = &cobra.Command{
 				return
 			}
 			argIdx++
+		}
+
+		// Preflight banner + confirm. Prints the parsed owner + resolved
+		// base_dir so a `corral i sebastienrousseau`-style arg typo is
+		// obvious BEFORE the network fetch. When the base_dir doesn't
+		// already exist and stdin is a TTY, also prompts for a
+		// confirmation; --yes bypasses it, --dry-run implies bypass.
+		// Interactive TUI mode has its own confirmation via /exit and
+		// doesn't need the extra prompt.
+		if !interactive && !runPreflight(owner, bDir) {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			osExit(0)
+			return
 		}
 
 		engineRun(cmdContext(cmd), engine.RunOptions{
@@ -269,6 +283,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&includeForks, "include-forks", false, "include forked repositories")
 	rootCmd.Flags().BoolVar(&includeArchived, "include-archived", false, "include archived repositories")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "display an interactive selector dashboard to pick repositories to clone/sync")
+	rootCmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the preflight confirmation prompt when a new base directory would be created")
 	rootCmd.Flags().StringVar(&includeLanguagesCSV, "languages", "", "comma-separated language allow list")
 	rootCmd.Flags().StringVar(&excludeLanguagesCSV, "exclude-languages", "", "comma-separated language deny list")
 	rootCmd.Flags().BoolVar(&cloneBlobless, "clone-blobless", false, "use partial clone filter=blob:none")
