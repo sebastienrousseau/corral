@@ -83,6 +83,30 @@ docker_manifests:
       - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-amd64"
       - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-arm64"
 
+# Keyless cosign signing of each per-arch image and both manifest tags.
+# Uses the sigstore OIDC identity produced by the GitHub Actions runner
+# (no long-lived signing key exists). Signatures are pushed alongside
+# the image to ghcr.io; users verify with:
+#   cosign verify \
+#     --certificate-identity-regexp='https://github.com/sebastienrousseau/corral/.github/workflows/release.yml@refs/tags/.*' \
+#     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#     ghcr.io/sebastienrousseau/corral:0.0.11
+docker_signs:
+  - cmd: cosign
+    args:
+      - sign
+      - --yes
+      - '${artifact}'
+    artifacts: manifests
+    output: true
+  - cmd: cosign
+    args:
+      - sign
+      - --yes
+      - '${artifact}'
+    artifacts: images
+    output: true
+
 # 1. Native Linux Packages (Debian, Ubuntu, WSL, Fedora, RHEL, openSUSE)
 nfpms:
   - id: corralctl-packages

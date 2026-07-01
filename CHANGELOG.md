@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] — 2026-07-01
+
+Supply-chain hardening + coverage lifts.
+
+### Added
+
+- **SLSA v1.0 build provenance for every release artifact.**
+  `actions/attest-build-provenance` runs after goreleaser and attests
+  the contents of `dist/checksums.txt` — so every `.tar.gz`, `.deb`,
+  `.rpm`, and the checksums file itself carries a cryptographic
+  attestation that binds it to this exact commit and workflow run.
+  Users verify with `gh attestation verify <file> --owner sebastienrousseau`.
+- **Keyless cosign signing of Docker images.** `docker_signs:` in
+  `.goreleaser.yaml` signs both the per-arch images and the
+  `docker_manifests:` fan-out to `:{version}` + `:latest`. Uses the
+  Actions OIDC token — no long-lived signing key. Users verify with
+  `cosign verify` against the workflow identity documented in the
+  goreleaser config.
+
+### Changed
+
+- **OpenSSF Scorecard Signed-Releases check.** Both mechanisms above
+  feed the check; expect a jump from 0/10 → 10/10 on the next scan.
+- **Test coverage** for the two remaining gaps flagged in the v0.0.10
+  post-release audit:
+  - `cmd/mcp.go` `runMCP`: 0 % → 90 % (all validation, wiring, and
+    error-propagation paths).
+  - `internal/github` `matchesFilters`: 55.9 % → 100 % (17 subtests
+    covering every `opts.Type` branch — sources / forks / archived /
+    mirrors / templates / sponsored / public / private / unknown).
+  - Project total: 88.9 % → 90.2 %.
+
 ## [0.0.10] — 2026-07-01
 
 MCP hardening pass — four v0 quality issues surfaced by post-release
@@ -247,7 +279,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/sebastienrousseau/corral/compare/v0.0.7...v0.0.8

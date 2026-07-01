@@ -59,6 +59,24 @@ Install in Cursor / Cline (mcp.json snippet):
 	RunE: runMCP,
 }
 
+// mcpServer is the subset of the internal/mcp.Server API runMCP touches.
+// Extracted as an interface so the unit test can stand up a stub without
+// spinning up a real stdio server that would block forever on the
+// test's os.Stdin.
+type mcpServer interface {
+	Root() string
+	MutationsEnabled() bool
+	ServeStdio() error
+}
+
+// mcpNewServer is indirected through a package var so unit tests can
+// exercise runMCP's validation, wiring, and error-propagation paths
+// without depending on the mcp-go library's stdio loop. Production
+// callers get the real constructor.
+var mcpNewServer = func(opts mcp.ServerOptions) (mcpServer, error) {
+	return mcp.NewServer(opts)
+}
+
 func runMCP(cmd *cobra.Command, args []string) error {
 	root := mcpRoot
 	if root == "" {
@@ -79,7 +97,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("root %q is not a directory", abs)
 	}
 
-	srv, err := mcp.NewServer(mcp.ServerOptions{
+	srv, err := mcpNewServer(mcp.ServerOptions{
 		Root:            abs,
 		Version:         Version,
 		EnableMutations: mcpEnableMutations,

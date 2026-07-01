@@ -817,6 +817,67 @@ func TestMatchesFilters(t *testing.T) {
 	}
 }
 
+// TestMatchesFiltersTypeSwitch covers the opts.Type switch branch that
+// TestMatchesFilters didn't reach: sources / forks / archived / mirrors
+// / templates / can-be-sponsored / public / private aliases. Without
+// this the function sat at ~56% coverage despite being on every
+// fetched repo's hot path.
+func TestMatchesFiltersTypeSwitch(t *testing.T) {
+	base := normalizeFetchOptions(FetchOptions{IncludeForks: true, IncludeArchived: true})
+	// Ready-made repo variants for each Type branch.
+	fork := Repo{Visibility: "Public", Fork: true}
+	src := Repo{Visibility: "Public"}
+	arch := Repo{Visibility: "Public", Archived: true}
+	spons := Repo{Visibility: "Public", CanBeSponsored: true}
+	mirr := Repo{Visibility: "Public", IsMirror: true}
+	tmpl := Repo{Visibility: "Public", IsTemplate: true}
+	priv := Repo{Visibility: "Private"}
+
+	cases := []struct {
+		name    string
+		repo    Repo
+		typeArg string
+		want    bool
+	}{
+		// public / private aliases inside Type — they short-circuit
+		// separately from the top-level Visibility filter.
+		{"type=public matches Public", src, "public", true},
+		{"type=public rejects Private", priv, "public", false},
+		{"type=private matches Private", priv, "PRIVATE", true},
+		{"type=private rejects Public", src, "private", false},
+		// sources = "not a fork"
+		{"type=sources rejects forks", fork, "sources", false},
+		{"type=sources accepts non-forks", src, "sources", true},
+		// forks = "is a fork"
+		{"type=forks rejects non-forks", src, "forks", false},
+		{"type=forks accepts forks", fork, "forks", true},
+		// archived
+		{"type=archived rejects live repos", src, "archived", false},
+		{"type=archived accepts archived", arch, "archived", true},
+		// sponsored (two synonymous keys)
+		{"type='can be sponsored' rejects non-sponsorable", src, "can be sponsored", false},
+		{"type=sponsored accepts sponsorable", spons, "sponsored", true},
+		// mirrors
+		{"type=mirrors rejects non-mirror", src, "mirrors", false},
+		{"type=mirrors accepts mirror", mirr, "mirrors", true},
+		// templates
+		{"type=templates rejects non-template", src, "templates", false},
+		{"type=templates accepts template", tmpl, "templates", true},
+		// unknown type falls through: everything passes the Type gate.
+		{"type=unknown falls through", src, "gibberish", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := base
+			opts.Type = tc.typeArg
+			got := matchesFilters(tc.repo, nil, nil, opts)
+			if got != tc.want {
+				t.Errorf("matchesFilters(%+v, type=%q) = %v, want %v", tc.repo, tc.typeArg, got, tc.want)
+			}
+		})
+	}
+}
+
 func restoreEnv(t *testing.T, key, val string, had bool) {
 	t.Helper()
 	if had {
