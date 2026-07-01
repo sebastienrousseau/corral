@@ -14,8 +14,21 @@ func TestPreflightSummaryShowsOwnerAndAbsolutePath(t *testing.T) {
 	if !strings.Contains(got, "Owner:    sebastienrousseau") {
 		t.Errorf("summary missing owner line: %q", got)
 	}
-	if !strings.Contains(got, "Target:   /") {
-		t.Errorf("summary should absolute-ise target so a relative path is obvious: %q", got)
+	// Extract the Target: line and confirm the path is absolute in a
+	// platform-portable way (POSIX starts with '/', Windows starts with
+	// a drive letter like C:\ — both satisfy filepath.IsAbs).
+	targetLine := ""
+	for _, line := range strings.Split(got, "\n") {
+		if after, ok := strings.CutPrefix(line, "Target:"); ok {
+			targetLine = strings.TrimSpace(after)
+			break
+		}
+	}
+	if targetLine == "" {
+		t.Fatalf("summary missing Target: line: %q", got)
+	}
+	if !filepath.IsAbs(targetLine) {
+		t.Errorf("summary should absolute-ise target so a relative path is obvious: got %q from %q", targetLine, got)
 	}
 }
 
