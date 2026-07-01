@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 #
 # Runtime image for the Corral MCP server.
 #
@@ -11,7 +11,13 @@
 # the MCP registry uses to verify that
 # https://ghcr.io/sebastienrousseau/corral belongs to the
 # io.github.sebastienrousseau/corral server entry.
-FROM alpine:3.20
+#
+# Base image is pinned to a digest per OpenSSF Scorecard
+# PinnedDependenciesID: an immutable reference protects the release
+# supply chain from a poisoned `alpine:3.20` tag rotation. Update the
+# digest when refreshing Alpine (e.g. moving to 3.21) or when the
+# upstream image publishes a security fix.
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 # Runtime deps: git is required for clone/pull, ca-certificates for TLS.
 RUN apk add --no-cache git ca-certificates \
