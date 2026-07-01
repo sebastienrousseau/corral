@@ -306,6 +306,24 @@ claude mcp add corral -- corralctl mcp
 }
 ```
 
+**Docker (no local install required)** — the same binary the MCP Registry advertises, mounted against your workspace:
+
+```json
+{
+  "mcpServers": {
+    "corral": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-v", "${HOME}/Code:/home/corral/Code:ro",
+        "ghcr.io/sebastienrousseau/corral:latest",
+        "mcp", "--root", "/home/corral/Code"
+      ]
+    }
+  }
+}
+```
+
 **Sandbox a different root** (defaults to `--base-dir`, then `$HOME/Code`):
 
 ```bash

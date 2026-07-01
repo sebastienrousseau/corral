@@ -32,6 +32,57 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
 
+# 4. GitHub Container Registry (Docker/OCI) for the MCP Registry entry.
+# One image per arch; docker_manifests below fans them into a multi-arch
+# manifest under both the version and :latest tags. The io.modelcontextprotocol.
+# server.name label is the ownership marker mcp-publisher validates against
+# server.json before accepting the registry entry.
+dockers:
+  - image_templates:
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-amd64"
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Corral local index for AI coding agents (Model Context Protocol)
+      - --label=org.opencontainers.image.url=https://github.com/sebastienrousseau/corral
+      - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=GPL-3.0
+      - --label=io.modelcontextprotocol.server.name=io.github.sebastienrousseau/corral
+  - image_templates:
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-arm64"
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.title={{ .ProjectName }}
+      - --label=org.opencontainers.image.description=Corral local index for AI coding agents (Model Context Protocol)
+      - --label=org.opencontainers.image.url=https://github.com/sebastienrousseau/corral
+      - --label=org.opencontainers.image.source=https://github.com/sebastienrousseau/corral
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.revision={{ .FullCommit }}
+      - --label=org.opencontainers.image.created={{ .Date }}
+      - --label=org.opencontainers.image.licenses=GPL-3.0
+      - --label=io.modelcontextprotocol.server.name=io.github.sebastienrousseau/corral
+
+docker_manifests:
+  - name_template: "ghcr.io/sebastienrousseau/corral:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-amd64"
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/sebastienrousseau/corral:latest"
+    image_templates:
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-amd64"
+      - "ghcr.io/sebastienrousseau/corral:{{ .Version }}-arm64"
+
 # 1. Native Linux Packages (Debian, Ubuntu, WSL, Fedora, RHEL, openSUSE)
 nfpms:
   - id: corralctl-packages

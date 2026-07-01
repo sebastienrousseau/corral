@@ -265,3 +265,29 @@ func writeFile(path, body string) error {
 	}
 	return osWriteFile(path, []byte(body), 0o600)
 }
+
+func TestResolveURIRepoWithOwner(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/sebastienrousseau/alpha.git", "")
+	makeFakeRepo(t, base, "Private", "rust", "beta", "git@github.com:openclaw/beta.git", "")
+
+	srv := newTestServer(t, base)
+	
+	// Test HTTPS owner resolution
+	repo, err := srv.resolveURIRepo("corral://repo/sebastienrousseau/alpha/state")
+	if err != nil {
+		t.Fatalf("expected to resolve alpha via HTTPS owner, got: %v", err)
+	}
+	if repo.Name != "alpha" {
+		t.Errorf("expected alpha, got %s", repo.Name)
+	}
+
+	// Test SSH owner resolution
+	repo, err = srv.resolveURIRepo("corral://repo/openclaw/beta/state")
+	if err != nil {
+		t.Fatalf("expected to resolve beta via SSH owner, got: %v", err)
+	}
+	if repo.Name != "beta" {
+		t.Errorf("expected beta, got %s", repo.Name)
+	}
+}
