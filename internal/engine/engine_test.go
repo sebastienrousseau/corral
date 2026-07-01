@@ -206,17 +206,23 @@ func TestProcessRepoFull(t *testing.T) {
 	oldGitPull := gitPull
 	oldGitCurrentBranch := gitCurrentBranch
 	oldGitRemoteOrigin := gitRemoteOrigin
+	oldGitIsEmpty := gitIsEmpty
 	defer func() {
 		gitClone = oldGitClone
 		gitPull = oldGitPull
 		gitCurrentBranch = oldGitCurrentBranch
 		gitRemoteOrigin = oldGitRemoteOrigin
+		gitIsEmpty = oldGitIsEmpty
 	}()
 
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return nil }
 	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
 	gitRemoteOrigin = func(targetDir string) (string, error) { return "https://github.com/owner/repo1.git", nil }
+	// Assume the fake .git directory in this test is populated;
+	// gitIsEmpty is a v0.0.13 addition that would otherwise SKIP the
+	// SYNC path before gitPull is exercised.
+	gitIsEmpty = func(targetDir string) bool { return false }
 
 	repo := github.Repo{
 		Name:          "repo1",
@@ -1143,21 +1149,27 @@ func TestRunWiresGitTokenProvider(t *testing.T) {
 
 // --- Phase 2: smart-sync via PushedAt ---------------------------------------
 
-// withGitPullStub replaces gitPull and gitCurrentBranch with stubs that count
-// invocations, returning a restore function.
+// withGitPullStub replaces gitPull, gitCurrentBranch, and gitIsEmpty
+// with harmless stubs that count pull invocations, returning a restore
+// function. gitIsEmpty defaults to false so the pre-v0.0.13 tests
+// (which use fake .git directories) don't now trip the empty-repo
+// SKIP path and see SYNC-turned-to-SKIP regressions.
 func withGitPullStub(t *testing.T) (called *int, restore func()) {
 	t.Helper()
 	oldPull := gitPull
 	oldBranch := gitCurrentBranch
+	oldEmpty := gitIsEmpty
 	n := 0
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error {
 		n++
 		return nil
 	}
 	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	gitIsEmpty = func(targetDir string) bool { return false }
 	return &n, func() {
 		gitPull = oldPull
 		gitCurrentBranch = oldBranch
+		gitIsEmpty = oldEmpty
 	}
 }
 

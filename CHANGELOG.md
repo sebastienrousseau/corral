@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Empty upstream repositories no longer surface as sync errors.**
+  When a GitHub repo is created but never pushed to, its local clone
+  has an unborn HEAD and `git pull` bails with `no such ref was fetched`.
+  Corral now detects that state locally via a cheap
+  `git rev-parse --verify HEAD^{commit}` before calling pull and returns
+  `SKIP: empty repository (no commits yet)` instead of `ERROR`.
+
+### Added
+
+- **Preflight banner + confirmation** in front of every non-interactive
+  run. Prints `Owner: <owner>` and `Target: <absolute base_dir>` so an
+  arg typo like `corralctl i sebastienrousseau` (owner=`i`,
+  base_dir=`sebastienrousseau`) is visible before any GitHub API call
+  or clone. When the base directory does not yet exist and stdin is a
+  TTY, additionally prompts `Continue? [y/N]` and aborts on anything
+  other than `y` / `yes`. Skipped when `--yes` / `-y` is passed, when
+  `--dry-run` is set (no side effects to warn about), and in
+  `--interactive` mode (the TUI has its own /exit confirmation).
+
 ## [0.0.12] — 2026-07-01
 
 Write tools + prompts + container security scanning.

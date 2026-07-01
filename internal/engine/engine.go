@@ -146,6 +146,7 @@ var (
 	gitPull          = git.Pull
 	gitClone         = git.Clone
 	gitCurrentBranch = git.CurrentBranch
+	gitIsEmpty       = git.IsEmpty
 	gitRemoteOrigin  = git.RemoteOriginFromConfig
 	isTerminal       = isatty.IsTerminal
 	runProgram       = func(p *tea.Program) (tea.Model, error) { return p.Run() }
@@ -594,6 +595,16 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 			if dryRun {
 				result.Action = "DRY-RUN"
 				result.Message = "git pull"
+				return result
+			}
+			// An empty upstream repo (created but never pushed to) results
+			// in an unborn HEAD locally, and `git pull` would fail with
+			// "no such ref was fetched". Detect that state cheaply and
+			// SKIP with a specific reason instead of surfacing the git
+			// error as a sync failure.
+			if gitIsEmpty(targetDir) {
+				result.Action = "SKIP"
+				result.Message = "empty repository (no commits yet)"
 				return result
 			}
 			branch, err := gitCurrentBranch(targetDir)

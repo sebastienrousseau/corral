@@ -526,3 +526,59 @@ func TestPullIgnoreSubmoduleFailures(t *testing.T) {
 		t.Fatalf("Pull should swallow submodule failures with the flag on, got: %v", err)
 	}
 }
+
+// TestIsEmptyOnFreshRepo covers the class of clone corral surfaced as
+// "sync failed: no such ref was fetched" — a repository that was
+// initialised but has never had a commit. IsEmpty must return true so
+// engine.processRepo can SKIP instead of erroring.
+func TestIsEmptyOnFreshRepo(t *testing.T) {
+	dir, err := os.MkdirTemp("", "git_test_empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup(t, dir)
+	run(t, "git", "-C", dir, "init")
+
+	if !IsEmpty(dir) {
+		t.Error("expected fresh git init to report empty")
+	}
+}
+
+// TestIsEmptyOnCommittedRepo confirms IsEmpty returns false as soon as
+// the repo has any commit, guarding against a naive check that would
+// flag every repo as empty and skip everyone's syncs.
+func TestIsEmptyOnCommittedRepo(t *testing.T) {
+	dir, err := os.MkdirTemp("", "git_test_committed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup(t, dir)
+	run(t, "git", "-C", dir, "init")
+	run(t, "git", "-C", dir, "config", "user.name", "Test")
+	run(t, "git", "-C", dir, "config", "user.email", "test@test.com")
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "git", "-C", dir, "add", "file.txt")
+	run(t, "git", "-C", dir, "commit", "-m", "init")
+
+	if IsEmpty(dir) {
+		t.Error("committed repo should not report empty")
+	}
+}
+
+// TestIsEmptyOnNonRepo verifies IsEmpty stays defensive: a directory
+// that isn't a git repository at all returns true, matching the
+// "cannot safely pull here" contract. Callers should have their own
+// `.git` check before dispatching, but IsEmpty must not lie.
+func TestIsEmptyOnNonRepo(t *testing.T) {
+	dir, err := os.MkdirTemp("", "git_test_nonrepo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup(t, dir)
+
+	if !IsEmpty(dir) {
+		t.Error("non-repo directory should report empty (defence-in-depth)")
+	}
+}

@@ -196,6 +196,27 @@ func CurrentBranch(targetDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// IsEmpty reports whether the repo at targetDir has no commits.
+//
+// This is the local mirror of "an empty GitHub repository" — one that
+// was created upstream but never pushed to. Its .git/refs/heads is
+// empty and HEAD is unborn, so `git pull` fails with
+// "no such ref was fetched". Detecting the state locally lets corral
+// treat it as SKIP-with-reason instead of surfacing that git error to
+// the user.
+//
+// `git rev-parse --verify HEAD^{commit} -q` returns 0 exactly when
+// HEAD resolves to a commit. On any failure — unborn HEAD (empty
+// repo), corrupted refs, or the target not being a git repo at all —
+// this returns true. Callers should have already established that
+// targetDir *is* a git repo (via a .git-directory check) before
+// calling; the "not a git repo" case is defence-in-depth.
+func IsEmpty(targetDir string) bool {
+	// #nosec G204 -- fixed binary; targetDir is a local path.
+	cmd := exec.Command(gitBinary, "-C", targetDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	return cmd.Run() != nil
+}
+
 // RemoteOrigin retrieves the remote origin URL of the target directory by
 // invoking `git remote get-url origin`. Prefer RemoteOriginFromConfig on hot
 // paths (e.g. orphan detection over hundreds of clones) to avoid the
