@@ -16,7 +16,7 @@
   <a href="https://goreportcard.com/report/github.com/sebastienrousseau/corral"><img src="https://img.shields.io/goreportcard/report/github.com/sebastienrousseau/corral?style=for-the-badge" alt="Go Report Card" /></a>
   <a href="https://codecov.io/gh/sebastienrousseau/corral"><img src="https://img.shields.io/codecov/c/github/sebastienrousseau/corral?style=for-the-badge&logo=codecov" alt="Code Coverage" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/sebastienrousseau/corral"><img src="https://img.shields.io/ossf-scorecard/github.com/sebastienrousseau/corral?style=for-the-badge&label=OpenSSF%20Scorecard&logo=openssf" alt="OpenSSF Scorecard" /></a>
-  <a href="https://www.bestpractices.dev/projects/13455"><img src="https://www.bestpractices.dev/projects/13455/badge" alt="OpenSSF Best Practices" /></a>
+  <a href="https://www.bestpractices.dev/projects/13455"><img src="https://img.shields.io/cii/level/13455?style=for-the-badge&label=OpenSSF%20Best%20Practices&logo=openssf" alt="OpenSSF Best Practices" /></a>
   <a href="https://doc.corrallib.com"><img src="https://img.shields.io/badge/docs-doc.corrallib.com-brightgreen?style=for-the-badge&logo=github" alt="Documentation" /></a>
   <a href="https://github.com/sebastienrousseau/corral/releases/latest"><img src="https://img.shields.io/github/v/release/sebastienrousseau/corral?style=for-the-badge" alt="Release Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blue?style=for-the-badge" alt="License" /></a>
