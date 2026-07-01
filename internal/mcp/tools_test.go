@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"testing"
 
@@ -150,6 +151,31 @@ func TestFindRepoToolReportsAmbiguity(t *testing.T) {
 	}
 	if !strings.Contains(textOf(t, res), "multiple repositories") {
 		t.Errorf("expected ambiguity message, got: %s", textOf(t, res))
+	}
+}
+
+// TestCurrentBranchLogsOnFailure guards the diagnostic upgrade in v0.0.10:
+// git rev-parse failures used to be swallowed silently, which made
+// detached-HEAD, corrupted-refs, and permission-denied cases invisible
+// to operators debugging client issues. The tool contract is unchanged
+// (returns "" on error), but the failure is now surfaced via the log
+// package (routed to stderr in production so stdout stays clean).
+func TestCurrentBranchLogsOnFailure(t *testing.T) {
+	var buf strings.Builder
+	oldOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldOut)
+
+	// Point at a definitely-not-a-git-repo path so rev-parse exits nonzero.
+	got := currentBranch(context.Background(), "/dev/null")
+	if got != "" {
+		t.Errorf("expected empty branch on failure, got %q", got)
+	}
+	if !strings.Contains(buf.String(), "git rev-parse") {
+		t.Errorf("expected log line to mention 'git rev-parse', got: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "/dev/null") {
+		t.Errorf("expected log line to include repoPath, got: %q", buf.String())
 	}
 }
 

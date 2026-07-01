@@ -266,6 +266,78 @@ func writeFile(path, body string) error {
 	return osWriteFile(path, []byte(body), 0o600)
 }
 
+// TestResolveURIRepoNestedNamespace covers self-hosted GitLab/Gitea
+// layouts where the origin URL has multiple namespace segments before
+// the repository name. Any segment must be a valid {owner} in the
+// corral:// URI, not just the direct parent — otherwise agents that
+// know the top-level group can't resolve a repo whose direct parent is
+// a nested subgroup.
+func TestResolveURIRepoNestedNamespace(t *testing.T) {
+	base := t.TempDir()
+	// HTTPS with three levels of namespace before the repo.
+	makeFakeRepo(t, base, "Public", "go", "widget", "https://git.example.com/parent/subgroup/team/widget.git", "")
+	// SSH with two levels of namespace before the repo.
+	makeFakeRepo(t, base, "Public", "rust", "gizmo", "git@gitea.corp:sso/team-b/gizmo.git", "")
+
+	srv := newTestServer(t, base)
+
+	// Every namespace segment must resolve. `parent`, `subgroup`, and
+	// `team` are all valid owners for the HTTPS clone.
+	for _, owner := range []string{"parent", "subgroup", "team"} {
+		got, err := srv.resolveURIRepo("corral://repo/" + owner + "/widget/state")
+		if err != nil {
+			t.Errorf("owner=%q: unexpected error: %v", owner, err)
+			continue
+		}
+		if got.Name != "widget" {
+			t.Errorf("owner=%q: expected widget, got %s", owner, got.Name)
+		}
+	}
+	for _, owner := range []string{"sso", "team-b"} {
+		got, err := srv.resolveURIRepo("corral://repo/" + owner + "/gizmo/state")
+		if err != nil {
+			t.Errorf("owner=%q: unexpected error: %v", owner, err)
+			continue
+		}
+		if got.Name != "gizmo" {
+			t.Errorf("owner=%q: expected gizmo, got %s", owner, got.Name)
+		}
+	}
+
+	// A wrong owner still misses cleanly.
+	if _, err := srv.resolveURIRepo("corral://repo/ghost/widget/state"); err == nil {
+		t.Error("expected miss for owner=ghost")
+	}
+}
+
+// TestParseOwnerFromURLReturnsSegments locks in the []string API of
+// parseOwnerFromURL. Returning every namespace segment is the fix that
+// makes nested-group URLs resolve; regressing to a single-segment
+// return would silently break TestResolveURIRepoNestedNamespace.
+func TestParseOwnerFromURLReturnsSegments(t *testing.T) {
+	cases := map[string][]string{
+		"":                                              nil,
+		"https://github.com/o/r.git":                    {"o"},
+		"https://gitlab.com/g/sub/r":                    {"g", "sub"},
+		"https://git.example.com/parent/sub/team/r.git": {"parent", "sub", "team"},
+		"git@github.com:o/r.git":                        {"o"},
+		"git@gitea.corp:group/subgroup/r":               {"group", "subgroup"},
+		"malformed":                                     nil,
+	}
+	for in, want := range cases {
+		got := parseOwnerFromURL(in)
+		if len(got) != len(want) {
+			t.Errorf("parseOwnerFromURL(%q) = %v, want %v", in, got, want)
+			continue
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("parseOwnerFromURL(%q)[%d] = %q, want %q", in, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 func TestResolveURIRepoWithOwner(t *testing.T) {
 	base := t.TempDir()
 	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/sebastienrousseau/alpha.git", "")

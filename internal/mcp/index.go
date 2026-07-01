@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -189,13 +190,22 @@ func buildEntry(root, repoPath string) RepoEntry {
 // readState parses the .corral-state.json sidecar. A missing file is
 // not an error — it is the expected state for any clone made before
 // the smart-sync feature shipped or for clones managed outside corral.
+// A file that is present but malformed IS an error, and gets logged to
+// stderr (never stdout, which is reserved for the JSON-RPC protocol
+// stream) so operators can trace bad sidecars without breaking the
+// tool call itself.
 func readState(repoPath string) (*StateRecord, bool) {
-	b, err := os.ReadFile(filepath.Join(repoPath, stateFileName))
+	path := filepath.Join(repoPath, stateFileName)
+	b, err := os.ReadFile(path)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("corral-mcp: read state %s: %v", path, err)
+		}
 		return nil, false
 	}
 	var s StateRecord
 	if err := json.Unmarshal(b, &s); err != nil {
+		log.Printf("corral-mcp: parse state %s: %v", path, err)
 		return nil, false
 	}
 	return &s, true

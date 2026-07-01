@@ -3,6 +3,7 @@ package mcp
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewServerRejectsBadOptions(t *testing.T) {
@@ -134,3 +135,77 @@ var errMarshal = &stubErr{msg: "stub marshal failure"}
 type stubErr struct{ msg string }
 
 func (e *stubErr) Error() string { return e.msg }
+
+// TestScanCache verifies the workspace-index cache actually amortises
+// filesystem walks and that invalidateScanCache() forces a re-scan.
+// The behaviour matters because a v0.0.10 goal was to remove the
+// per-tool-call FS walk overhead on 100+ clone workspaces.
+func TestScanCache(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+
+	srv := newTestServer(t, base)
+
+	first, err := srv.scan()
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	if len(first.Repos) != 1 {
+		t.Fatalf("expected 1 repo in first scan, got %d", len(first.Repos))
+	}
+
+	// Add a new clone on disk. The cache must NOT reflect it — that's
+	// the whole point of caching.
+	makeFakeRepo(t, base, "Public", "rust", "beta", "", "")
+	cached, err := srv.scan()
+	if err != nil {
+		t.Fatalf("cached scan: %v", err)
+	}
+	if len(cached.Repos) != 1 {
+		t.Errorf("expected cached scan to still show 1 repo, got %d", len(cached.Repos))
+	}
+	// Same *Index pointer means we hit the cache, not a re-walk.
+	if cached != first {
+		t.Error("expected identical Index pointer on cache hit")
+	}
+
+	// After explicit invalidation, the next call sees the new clone.
+	srv.invalidateScanCache()
+	fresh, err := srv.scan()
+	if err != nil {
+		t.Fatalf("post-invalidate scan: %v", err)
+	}
+	if len(fresh.Repos) != 2 {
+		t.Errorf("expected 2 repos after invalidate, got %d", len(fresh.Repos))
+	}
+}
+
+// TestScanCacheExpires guards the TTL contract: after scanTTL elapses,
+// the cache must let a caller see filesystem changes without an
+// explicit invalidate call.
+func TestScanCacheExpires(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+
+	srv := newTestServer(t, base)
+	first, err := srv.scan()
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	_ = first
+
+	// Rewind the cache's expiry timestamp to simulate scanTTL elapsing
+	// without actually sleeping in the test.
+	srv.scanMu.Lock()
+	srv.scanExpires = time.Now().Add(-time.Second)
+	srv.scanMu.Unlock()
+
+	makeFakeRepo(t, base, "Public", "rust", "beta", "", "")
+	fresh, err := srv.scan()
+	if err != nil {
+		t.Fatalf("post-expiry scan: %v", err)
+	}
+	if len(fresh.Repos) != 2 {
+		t.Errorf("expected 2 repos after TTL expiry, got %d", len(fresh.Repos))
+	}
+}

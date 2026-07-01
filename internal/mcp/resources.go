@@ -50,7 +50,7 @@ func (s *Server) workspaceIndexResource() (mcp.Resource, func(ctx context.Contex
 		mcp.WithMIMEType(mimeJSON),
 	)
 	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
@@ -256,7 +256,7 @@ func (s *Server) resolveURIRepo(uri string) (*RepoEntry, error) {
 	}
 	owner, name := parts[0], parts[1]
 
-	idx, err := Scan(s.opts.Root)
+	idx, err := s.scan()
 	if err != nil {
 		return nil, err
 	}
@@ -267,39 +267,64 @@ func (s *Server) resolveURIRepo(uri string) (*RepoEntry, error) {
 		}
 		if strings.EqualFold(r.Visibility, owner) ||
 			strings.EqualFold(firstSegment(r.RelPath), owner) ||
-			strings.EqualFold(parseOwnerFromURL(r.RemoteURL), owner) {
+			ownerMatchesURL(r.RemoteURL, owner) {
 			return r, nil
 		}
 	}
 	return nil, fmt.Errorf("no repository %s/%s in workspace", owner, name)
 }
 
-func parseOwnerFromURL(remoteURL string) string {
+// ownerMatchesURL reports whether owner equals ANY namespace segment
+// preceding the repository name in remoteURL. This matters for
+// GitLab-style / Gitea-style / self-hosted layouts with nested groups
+// where an origin URL like https://git.example.com/parent/team/repo.git
+// should match agent queries against both "parent" and "team". For
+// standard GitHub URLs (https://github.com/owner/repo) the namespace
+// list is a single element and behaviour is unchanged.
+func ownerMatchesURL(remoteURL, owner string) bool {
+	if remoteURL == "" || owner == "" {
+		return false
+	}
+	for _, seg := range parseOwnerFromURL(remoteURL) {
+		if strings.EqualFold(seg, owner) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseOwnerFromURL returns every namespace segment that precedes the
+// final repository segment in remoteURL, in order (root-most first).
+// Empty slice when the URL can't be parsed. Handles both the HTTPS
+// scheme://host/A/B/…/repo form and the SSH user@host:A/B/…/repo form.
+// Returned as []string (rather than the previous single-segment form)
+// so callers can match against deep hierarchies without losing the
+// intermediate names.
+func parseOwnerFromURL(remoteURL string) []string {
 	if remoteURL == "" {
-		return ""
+		return nil
 	}
 	remoteURL = strings.TrimSuffix(remoteURL, ".git")
 
-	// Parse HTTPS style: https://github.com/owner/repo
+	// HTTPS style: https://host/A/B/.../repo
 	if strings.Contains(remoteURL, "://") {
-		u, err := url.Parse(remoteURL)
-		if err == nil {
+		if u, err := url.Parse(remoteURL); err == nil {
 			parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 			if len(parts) >= 2 {
-				return parts[len(parts)-2]
+				return parts[:len(parts)-1]
 			}
 		}
 	}
 
-	// Parse SSH style: git@github.com:owner/repo
+	// SSH style: user@host:A/B/.../repo — everything after the first ':'
+	// is the path.
 	if idx := strings.Index(remoteURL, ":"); idx >= 0 {
-		part := remoteURL[idx+1:]
-		parts := strings.Split(part, "/")
+		parts := strings.Split(remoteURL[idx+1:], "/")
 		if len(parts) >= 2 {
-			return parts[len(parts)-2]
+			return parts[:len(parts)-1]
 		}
 	}
-	return ""
+	return nil
 }
 
 // extractFilePath pulls the {path} portion out of a

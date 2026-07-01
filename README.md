@@ -315,14 +315,21 @@ claude mcp add corral -- corralctl mcp
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
-        "-v", "${HOME}/Code:/home/corral/Code:ro",
+        "--user", "1000:1000",
+        "-v", "${HOME}/Code:/workspace:ro",
         "ghcr.io/sebastienrousseau/corral:latest",
-        "mcp", "--root", "/home/corral/Code"
+        "mcp", "--root", "/workspace"
       ]
     }
   }
 }
 ```
+
+Notes on the args:
+
+- **`--user 1000:1000`** — replace with your host UID:GID (`id -u`:`id -g`) so the containerised scanner reads the mounted workspace with the same permissions your host user has. Without this the image runs as a system UID inside the container and hits `permission denied` on any directory your workspace makes group- or user-private.
+- **`-v … :ro`** — read-only mount. The v0 tools are read-only anyway; mounting `:ro` documents that and defends against a hostile agent asking the server for a write it doesn't have.
+- **`--root /workspace`** — sandbox root inside the container. Every tool and resource path check is scoped to this prefix; requests outside it are rejected regardless of what the agent asks for.
 
 **Sandbox a different root** (defaults to `--base-dir`, then `$HOME/Code`):
 
