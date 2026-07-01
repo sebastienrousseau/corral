@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sebastienrousseau/corral",
+  "title": "Corral",
+  "description": "Query your Corral-organised local mirror of cloned GitHub repositories. Zero network calls.",
+  "version": "0.0.9",
+  "repository": {
+    "url": "https://github.com/sebastienrousseau/corral",
+    "source": "github"
+  },
+  "websiteUrl": "https://doc.corrallib.com",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/sebastienrousseau/corral:0.0.9",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

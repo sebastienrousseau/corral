@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9] — 2026-07-01
+
+Docker distribution + MCP Registry submission.
+
+### Added
+
+- **Docker image published to `ghcr.io/sebastienrousseau/corral`** on
+  every release. Multi-arch (linux/amd64 + linux/arm64) with the
+  `io.modelcontextprotocol.server.name=io.github.sebastienrousseau/corral`
+  ownership label required by the MCP Registry for OCI verification.
+  Tags: `:<version>` (e.g. `:0.0.9`) and `:latest`.
+- **`server.json`** at the repo root — the manifest consumed by the
+  official `mcp-publisher` CLI (schema `2025-12-11`). Registers Corral
+  in the MCP Registry under `io.github.sebastienrousseau/corral`.
+- **README install-via-Docker snippet** for editors that cannot easily
+  install a Go binary but can shell out to `docker run`.
+- **`corral_find_repo` and resource-URI resolution now consult the
+  remote origin URL**, so `corral://repo/{owner}/{name}/…` works when
+  `{owner}` matches the GitHub org from `.git/config`'s origin URL —
+  not only the layout's visibility directory. New
+  `TestResolveURIRepoWithOwner` covers both HTTPS and SSH remote URL
+  forms.
+
+### Changed
+
+- **`.goreleaser.yaml`** gains `dockers:` and `docker_manifests:`
+  sections. `.github/workflows/release.yml` gains `packages: write`
+  permission and SHA-pinned `docker/{login,setup-buildx,setup-qemu}-action`
+  steps so goreleaser can push to ghcr.io during the release job.
+- **`mcp.json` removed** — it was a speculative artifact that the
+  registry does not consume. `server.json` is the canonical manifest.
+
 ## [0.0.8] — 2026-07-01
 
 The MCP release. Corral becomes the canonical local index for AI coding
@@ -177,6 +209,7 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...HEAD
+[0.0.9]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/sebastienrousseau/corral/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/sebastienrousseau/corral/compare/v0.0.6...v0.0.7

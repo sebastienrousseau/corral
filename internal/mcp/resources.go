@@ -265,11 +265,41 @@ func (s *Server) resolveURIRepo(uri string) (*RepoEntry, error) {
 		if r.Name != name {
 			continue
 		}
-		if strings.EqualFold(r.Visibility, owner) || strings.EqualFold(firstSegment(r.RelPath), owner) {
+		if strings.EqualFold(r.Visibility, owner) ||
+			strings.EqualFold(firstSegment(r.RelPath), owner) ||
+			strings.EqualFold(parseOwnerFromURL(r.RemoteURL), owner) {
 			return r, nil
 		}
 	}
 	return nil, fmt.Errorf("no repository %s/%s in workspace", owner, name)
+}
+
+func parseOwnerFromURL(remoteURL string) string {
+	if remoteURL == "" {
+		return ""
+	}
+	remoteURL = strings.TrimSuffix(remoteURL, ".git")
+
+	// Parse HTTPS style: https://github.com/owner/repo
+	if strings.Contains(remoteURL, "://") {
+		u, err := url.Parse(remoteURL)
+		if err == nil {
+			parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+			if len(parts) >= 2 {
+				return parts[len(parts)-2]
+			}
+		}
+	}
+
+	// Parse SSH style: git@github.com:owner/repo
+	if idx := strings.Index(remoteURL, ":"); idx >= 0 {
+		part := remoteURL[idx+1:]
+		parts := strings.Split(part, "/")
+		if len(parts) >= 2 {
+			return parts[len(parts)-2]
+		}
+	}
+	return ""
 }
 
 // extractFilePath pulls the {path} portion out of a
