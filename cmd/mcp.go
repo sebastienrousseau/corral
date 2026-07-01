@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	mcpRoot            string
-	mcpEnableMutations bool
+	mcpRoot                       string
+	mcpEnableMutations            bool
+	mcpEnableDestructiveMutations bool
+	mcpAuditLog                   string
 )
 
 // mcpCmd registers the `corralctl mcp` subcommand. It runs a Model
@@ -66,6 +68,7 @@ Install in Cursor / Cline (mcp.json snippet):
 type mcpServer interface {
 	Root() string
 	MutationsEnabled() bool
+	AuditLogPath() string
 	ServeStdio() error
 }
 
@@ -98,17 +101,25 @@ func runMCP(cmd *cobra.Command, args []string) error {
 	}
 
 	srv, err := mcpNewServer(mcp.ServerOptions{
-		Root:            abs,
-		Version:         Version,
-		EnableMutations: mcpEnableMutations,
+		Root:                       abs,
+		Version:                    Version,
+		EnableMutations:            mcpEnableMutations,
+		EnableDestructiveMutations: mcpEnableDestructiveMutations,
+		AuditLogPath:               mcpAuditLog,
 	})
 	if err != nil {
 		return fmt.Errorf("constructing mcp server: %w", err)
 	}
 
 	// Startup banner on stderr — stdout is the protocol stream.
-	fmt.Fprintf(os.Stderr, "corral-mcp v%s starting; root=%s mutations=%t\n",
-		Version, srv.Root(), srv.MutationsEnabled())
+	// The audit-log path is surfaced so an operator setting up the flow
+	// can immediately grep it for the first mutation.
+	auditNote := "off"
+	if p := srv.AuditLogPath(); p != "" {
+		auditNote = p
+	}
+	fmt.Fprintf(os.Stderr, "corral-mcp v%s starting; root=%s mutations=%t destructive=%t audit=%s\n",
+		Version, srv.Root(), srv.MutationsEnabled(), mcpEnableDestructiveMutations, auditNote)
 
 	if err := srv.ServeStdio(); err != nil {
 		return fmt.Errorf("mcp server: %w", err)
@@ -118,6 +129,8 @@ func runMCP(cmd *cobra.Command, args []string) error {
 
 func init() {
 	mcpCmd.Flags().StringVar(&mcpRoot, "root", "", "absolute path the server sandboxes itself to (defaults to --base-dir, then $HOME/Code)")
-	mcpCmd.Flags().BoolVar(&mcpEnableMutations, "enable-mutations", false, "unlock write tools (reserved for Phase 3; no-op in v0.0.8)")
+	mcpCmd.Flags().BoolVar(&mcpEnableMutations, "enable-mutations", false, "unlock write tools (corral_sync_repo, corral_clone_repo). Every mutation is logged to the audit trail")
+	mcpCmd.Flags().BoolVar(&mcpEnableDestructiveMutations, "enable-destructive-mutations", false, "additionally unlock corral_delete_repo. Refuses when uncommitted or unpushed changes exist. Requires --enable-mutations")
+	mcpCmd.Flags().StringVar(&mcpAuditLog, "audit-log", "", "path to the mutation audit log (defaults to $XDG_STATE_HOME/corral/mutations.log or ~/.local/state/corral/mutations.log)")
 	rootCmd.AddCommand(mcpCmd)
 }

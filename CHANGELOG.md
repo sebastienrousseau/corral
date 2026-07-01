@@ -6,11 +6,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] — 2026-07-01
+
+Write tools + prompts + container security scanning.
+
 ### Added
 
+- **Three MCP write tools**, gated behind `--enable-mutations`:
+  - **`corral_sync_repo`** — runs `git pull --rebase --autostash` against
+    one clone. Reuses the existing non-interactive git environment and
+    smart-sync sidecar semantics.
+  - **`corral_clone_repo`** — clones a URL into a caller-provided
+    target path relative to the sandbox root. Supports optional
+    `depth` / `blobless`. Refuses when the target already exists or
+    escapes the sandbox.
+  - **`corral_delete_repo`** — removes a clone. Additionally gated by
+    `--enable-destructive-mutations`. Refuses when uncommitted
+    changes exist, unpushed commits exist, or the target is not a git
+    repository.
+- **Mutation audit log** — every mutation attempt (successful or
+  refused) is appended as a JSONL record to
+  `$XDG_STATE_HOME/corral/mutations.log` (or
+  `~/.local/state/corral/mutations.log` per XDG spec) capturing
+  timestamp, tool, target, args, result, and any error message.
+  Path is overridable with `--audit-log`.
+- **Two MCP prompts**:
+  - **`explain_workspace`** — pre-canned instructions asking the agent
+    to survey the workspace via read-only tools and produce a
+    human-readable summary.
+  - **`identify_stale_repos`** — pre-canned instructions asking the
+    agent to find clones whose `.corral-state.json` says they haven't
+    been synced in more than `threshold_days` days (default 30).
+- **Container security workflow** at `.github/workflows/container-scan.yml`:
+  - **hadolint** static-lints the Dockerfile on every PR that touches
+    it; results uploaded as SARIF to the Code Scanning surface.
+  - **Trivy** CVE-scans the published multi-arch OCI image after each
+    release; also uploaded as SARIF. Both jobs are advisory
+    initially (findings do not block the merge/release).
 - **OpenSSF Best Practices Passing badge earned** (project #13455). All 67
   Passing-tier criteria answered via `.bestpractices.json` and accepted
   by the badge app. Badge is displayed in the README badge row.
+
+### Changed
+
+- **MCP server** advertises `prompts` capability. `server.json`
+  updated to reflect the new capability + tool inventory.
+
+### Stats
+
+- 7 packages, `-race -count=1` green.
+- Doc coverage: 63/63 (100 %).
+- `internal/mcp` gains 15 new tests covering mutation happy paths,
+  refusal cascades, and the audit log.
 
 ## [0.0.11] — 2026-07-01
 
@@ -285,7 +332,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...v0.0.9
