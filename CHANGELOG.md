@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Empty upstream repositories no longer surface as sync errors.**
+  When a GitHub repo is created but never pushed to, its local clone
+  has an unborn HEAD and `git pull` bails with `no such ref was fetched`.
+  Corral now detects that state locally via a cheap
+  `git rev-parse --verify HEAD^{commit}` before calling pull and returns
+  `SKIP: empty repository (no commits yet)` instead of `ERROR`.
+
 ### Added
 
 - **Preflight banner + confirmation** in front of every non-interactive
