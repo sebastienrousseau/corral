@@ -6,6 +6,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DCO enforcement** — every PR commit must carry a matching
+  `Signed-off-by:` trailer, checked by a new
+  `.github/workflows/dco.yml`. Contributor flow (`git commit -s`,
+  `git rebase --signoff`) documented in `CONTRIBUTING.md`. Satisfies
+  the CII Best Practices Silver `dco` criterion.
+- **Formal assurance case** at `docs/security-model.md` — trust
+  boundaries, security claims C1–C5 with linked source evidence,
+  threats considered vs out of scope, assumptions, and compensating
+  controls for the single-maintainer bus factor. Satisfies CII Silver
+  `assurance_case` and OSPS Baseline `OSPS-SA-03.02`.
+- **`MAINTAINERS.md`** cataloguing every load-bearing external
+  service (repo, ghcr.io, Homebrew tap, AUR, MCP Registry, docs DNS,
+  SSH signing key, Sigstore) with the specific configuration file a
+  successor must edit, plus voluntary hand-off, community-fork, and
+  emergency compromise procedures. Referenced from `GOVERNANCE.md`.
+
+### Changed
+
+- `GOVERNANCE.md` succession section now points at `MAINTAINERS.md`
+  for the detailed catalogue and at `docs/security-model.md` for the
+  assurance-case perspective, so hand-over context is not tribal.
+- `.bestpractices.json` refined: `dco` and `assurance_case` (both
+  Silver) flipped to Met with evidence links; `bus_factor`,
+  `two_person_review`, `contributors_unassociated` remain honestly
+  Unmet with strengthened compensating-controls justifications rather
+  than misrepresenting the solo-maintainer reality.
+
+### Dependencies
+
+- Bumped 10 indirect dependencies to latest: `go-udiff`,
+  `bits-and-blooms/bitset`, `charmbracelet/x/exp/golden`,
+  `cpuguy83/go-md2man/v2`, `dlclark/regexp2`, `rogpeppe/go-internal`,
+  `sahilm/fuzzy`, `golang.org/x/exp`, `golang.org/x/mod`,
+  `golang.org/x/tools`, plus direct bumps of `google/jsonschema-go` and
+  `spf13/cast`. Full test suite green (unit + `-race`).
+
 ## [0.0.13] — 2026-07-01
 
 Preflight visibility + real-world sync robustness.
