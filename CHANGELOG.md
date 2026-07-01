@@ -6,6 +6,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.10] — 2026-07-01
+
+MCP hardening pass — four v0 quality issues surfaced by post-release
+review, all closed in one PR.
+
+### Fixed
+
+- **Nested-namespace URI resolution.** `corral://repo/{owner}/{name}/…`
+  now resolves when `{owner}` matches **any** namespace segment in the
+  origin URL, not only the direct parent. Self-hosted GitLab / Gitea
+  layouts like `https://git.example.com/parent/subgroup/team/repo.git`
+  are queryable via `parent`, `subgroup`, *or* `team` as the owner
+  argument. `parseOwnerFromURL` return type changed from `string` to
+  `[]string` accordingly (internal, non-breaking to MCP clients).
+- **Silent git diagnostics.** `currentBranch` and `readState` used to
+  swallow errors, hiding detached-HEAD, corrupted-refs, and
+  permission-denied cases behind an empty-string result. Both now log
+  to `stderr` (never `stdout` — that's the JSON-RPC protocol stream)
+  with the repo path and underlying error, while preserving the same
+  return contract so tool results stay backward compatible.
+- **Docker permission failures under strict host mounts.** The README
+  Docker snippet now includes `--user 1000:1000` (documented as "replace
+  with `$(id -u):$(id -g)`") plus notes on the read-only `:ro` mount
+  and the `--root /workspace` sandbox. Without this, the containerised
+  scanner ran as a system UID and hit `permission denied` on any
+  workspace directory made group- or user-private on the host.
+
+### Changed
+
+- **In-memory scan cache with a 5-second TTL.** `Server.scan()` now
+  amortises filesystem walks across a burst of tool/resource calls in
+  a single client session — critical for workspaces with hundreds of
+  clones where an agent typically fires 5–10 tool calls in quick
+  succession. Cache is invalidated after `scanTTL` (5s) so a
+  just-cloned repo appears on the next call the agent makes.
+  `invalidateScanCache()` gives tests deterministic control without
+  needing time.Sleep.
+
 ## [0.0.9] — 2026-07-01
 
 Docker distribution + MCP Registry submission.
@@ -209,7 +247,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/sebastienrousseau/corral/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/sebastienrousseau/corral/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/sebastienrousseau/corral/compare/v0.0.6...v0.0.7

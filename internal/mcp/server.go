@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,6 +38,56 @@ type ServerOptions struct {
 type Server struct {
 	mcp  *server.MCPServer
 	opts ServerOptions
+
+	// scanMu guards the in-memory workspace-index cache below.
+	// Every tool and resource handler goes through Server.scan(),
+	// which walks the filesystem at most once every scanTTL and
+	// returns the cached snapshot in between. This trades a small
+	// amount of staleness (see scanTTL) for O(1) amortised cost on
+	// bursty client sessions where an agent fires 5-10 tool calls
+	// in quick succession.
+	scanMu      sync.Mutex
+	scanIndex   *Index
+	scanExpires time.Time
+}
+
+// scanTTL is how long a workspace scan is considered fresh. 5s is short
+// enough that an agent noticing a just-cloned repo can always retry and
+// see it, and long enough to amortise a burst of tool calls from a
+// single session. The value is deliberately in-package rather than a
+// ServerOptions field: this is v0 policy, not a user knob, and giving
+// users control over it invites confusion about staleness bugs.
+const scanTTL = 5 * time.Second
+
+// scan returns a cached workspace Index, walking the filesystem only
+// when the previous snapshot has expired. Safe for concurrent callers
+// (single mutex; the walk itself is not parallel so there is no gain
+// from a RWMutex here). On error the cache is not populated and the
+// error is propagated so the caller can surface it to the agent.
+func (s *Server) scan() (*Index, error) {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if s.scanIndex != nil && time.Now().Before(s.scanExpires) {
+		return s.scanIndex, nil
+	}
+	idx, err := Scan(s.opts.Root)
+	if err != nil {
+		return nil, err
+	}
+	s.scanIndex = idx
+	s.scanExpires = time.Now().Add(scanTTL)
+	return idx, nil
+}
+
+// invalidateScanCache drops the cached workspace index so the next
+// call to scan() re-walks the filesystem. Used by tests to make
+// consecutive assertions against different tree states deterministic
+// without waiting scanTTL between them.
+func (s *Server) invalidateScanCache() {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	s.scanIndex = nil
+	s.scanExpires = time.Time{}
 }
 
 // NewServer constructs and configures a Corral MCP server. It registers

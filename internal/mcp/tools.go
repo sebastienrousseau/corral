@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"sort"
 	"strings"
@@ -46,7 +47,7 @@ func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 	)
 
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
@@ -101,7 +102,7 @@ func (s *Server) findRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
@@ -133,7 +134,7 @@ func (s *Server) repoMetadataTool() (mcp.Tool, func(ctx context.Context, req mcp
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
@@ -159,7 +160,7 @@ func (s *Server) statusSummaryTool() (mcp.Tool, func(ctx context.Context, req mc
 		mcp.WithDescription("High-level workspace summary: total repository count and breakdowns by visibility and language. Cheap to compute; suitable as an agent's opening discovery call."),
 	)
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
@@ -198,7 +199,7 @@ func (s *Server) workspaceIndexTool() (mcp.Tool, func(ctx context.Context, req m
 		mcp.WithDescription("Return the full structured index of the Corral workspace in one call. Use this when an agent wants to prime its context with the complete repository list rather than make many filtered corral_list_repos calls. Mirrors the corral://workspace/index resource."),
 	)
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := Scan(s.opts.Root)
+		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
@@ -228,12 +229,28 @@ func sortedLangCounts(m map[string]int) []map[string]any {
 
 // currentBranch shells out to git rev-parse to resolve HEAD's branch.
 // Indirected through a package var so tests can stub without spawning
-// a real subprocess. Empty string on any error — callers display
-// "unknown" rather than failing the whole metadata call.
+// a real subprocess. On error the caller gets an empty string (the
+// tool result still succeeds with "current_branch": "") but the error
+// is logged to stderr so operators can debug detached-HEAD,
+// permission, and corrupt-git-tree cases that used to be silent.
+// stderr is the only safe channel — stdout carries the JSON-RPC
+// protocol stream and must not be polluted.
 var currentBranch = func(ctx context.Context, repoPath string) string {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
+		// Include stderr from the failed process so operators can tell
+		// "not a git repo" apart from "detached HEAD" apart from
+		// "permission denied" apart from "corrupted refs".
+		var stderr string
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = strings.TrimSpace(string(ee.Stderr))
+		}
+		if stderr != "" {
+			log.Printf("corral-mcp: git rev-parse in %s failed: %v (%s)", repoPath, err, stderr)
+		} else {
+			log.Printf("corral-mcp: git rev-parse in %s failed: %v", repoPath, err)
+		}
 		return ""
 	}
 	return strings.TrimSpace(string(out))

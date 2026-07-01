@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,6 +162,43 @@ func TestIndexFindUniqueAndAmbiguous(t *testing.T) {
 	_, err = idx.Find("")
 	if !errors.Is(err, ErrRepoNotFound) {
 		t.Errorf("expected ErrRepoNotFound on empty query, got %v", err)
+	}
+}
+
+// TestReadStateLogsOnMalformedJSON asserts that a present-but-malformed
+// .corral-state.json is logged to the log package (which the mcp
+// subcommand routes to stderr, keeping stdout clean for JSON-RPC). A
+// missing sidecar must NOT log — that's the expected state for any
+// clone made before smart-sync existed and would flood the output.
+func TestReadStateLogsOnMalformedJSON(t *testing.T) {
+	var buf strings.Builder
+	oldOut := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(oldOut)
+
+	// Missing sidecar: silent.
+	dirNoState := t.TempDir()
+	if _, ok := readState(dirNoState); ok {
+		t.Error("expected readState to report missing sidecar as absent")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("missing sidecar should not log, got: %s", buf.String())
+	}
+
+	// Malformed sidecar: logs with the path so operators can grep.
+	buf.Reset()
+	dirBad := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dirBad, stateFileName), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readState(dirBad); ok {
+		t.Error("expected readState to fail on malformed json")
+	}
+	if !strings.Contains(buf.String(), "parse state") {
+		t.Errorf("expected 'parse state' log line, got: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), stateFileName) {
+		t.Errorf("expected path in log line, got: %q", buf.String())
 	}
 }
 
