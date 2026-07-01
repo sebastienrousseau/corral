@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] — 2026-07-01
+
+Preflight visibility + real-world sync robustness.
+
 ### Fixed
 
 - **Empty upstream repositories no longer surface as sync errors.**
@@ -14,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Corral now detects that state locally via a cheap
   `git rev-parse --verify HEAD^{commit}` before calling pull and returns
   `SKIP: empty repository (no commits yet)` instead of `ERROR`.
+  Verified against six real cases on `sebastienrousseau` — all now
+  clean-skip instead of erroring at the tail of the run.
 
 ### Added
 
@@ -26,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other than `y` / `yes`. Skipped when `--yes` / `-y` is passed, when
   `--dry-run` is set (no side effects to warn about), and in
   `--interactive` mode (the TUI has its own /exit confirmation).
+- **`internal/git.IsEmpty(targetDir)`** helper — a cheap local
+  `git rev-parse --verify HEAD^{commit}` check that the engine now
+  calls before every pull. Exposed for reuse.
+
+### Stats
+
+- 7 packages, `-race -count=1` green across Ubuntu + macOS + Windows.
+- Doc coverage: 64/64 (100 %).
+- Adds 5 new tests (2 engine, 3 git) + tightens the shared
+  `withGitPullStub` helper so pre-v0.0.13 tests continue to exercise
+  the pull path.
 
 ## [0.0.12] — 2026-07-01
 
@@ -353,7 +370,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...HEAD
+[0.0.13]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/sebastienrousseau/corral/compare/v0.0.9...v0.0.10
