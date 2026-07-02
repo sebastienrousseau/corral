@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Package github provides functionality to interact with the GitHub API.
 package github
 
