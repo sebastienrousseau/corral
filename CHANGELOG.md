@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-file SPDX headers** — every `.go` file now carries
+  `SPDX-FileCopyrightText` and `SPDX-License-Identifier: GPL-3.0-only`
+  headers at the top (after any `//go:build` constraint). Applied via
+  a one-shot codegen tool committed at `scripts/spdx_sweep.go`, safe
+  to re-run on new files. Satisfies CII Best Practices Silver
+  `copyright_per_file` and `license_per_file` criteria.
 - **DCO enforcement** — every PR commit must carry a matching
   `Signed-off-by:` trailer, checked by a new
   `.github/workflows/dco.yml`. Contributor flow (`git commit -s`,

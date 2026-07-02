@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Package mcp implements the corral Model Context Protocol server: a
 // stdio-based JSON-RPC server that exposes the local Corral-organised
 // workspace (cloned repositories under ~/Code) to AI coding agents via

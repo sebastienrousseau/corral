@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // Package git provides helper functions to execute common Git commands
 // by wrapping the system's git binary using os/exec.
 package git
