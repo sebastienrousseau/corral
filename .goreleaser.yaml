@@ -119,17 +119,16 @@ nfpms:
     bindir: /usr/bin
 
 # 2. macOS & Linux Homebrew Tap
-brews:
-  - repository:
+homebrew_casks:
+  - name: corralctl
+    repository:
       owner: sebastienrousseau
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
+    binaries:
+      - corralctl
     homepage: "https://github.com/sebastienrousseau/corral"
     description: "Automatically clone and organise GitHub repositories by visibility and language."
-    license: "GPL-3.0"
-    test: |
-      system "#{bin}/corralctl --help"
 
 # 3. Arch Linux / CachyOS (AUR)
 aurs:

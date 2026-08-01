@@ -6,7 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] — 2026-08-01
+
+Security hardening, operational resilience, and complete unit coverage.
+
 ### Added
+
+- Native `make install` support, installing `corralctl` under
+  `~/.local/bin` by default with `PREFIX` and `DESTDIR` overrides.
+- Direct mise installation through the GitHub release backend.
+- Bounded repository discovery and MCP indexing, cancellation-aware git
+  execution, mutation audit durability, and stricter workspace containment.
+- Full tests for command, engine, git, GitHub, MCP, TUI, and entry-point paths,
+  bringing project statement coverage to 100%.
+
+### Security
+
+- Repository paths, clone URLs, redirects, response bodies, git output, audit
+  records, and concurrent work are now validated or explicitly bounded.
+- Unsafe Git transports, credential-bearing URLs, symlink escapes, ambiguous
+  remotes, insecure API origins, and option-like repository arguments fail
+  closed before network or filesystem mutation.
+- Release tags are verified as semantic versions pointing at commits on
+  `main`, and release source is tested before packaging.
+
+### Maintenance
+
+- GitHub Actions and Go dependencies were updated to their current pinned
+  releases.
+- Governance, assurance-case, DCO, SPDX, and fuzzing coverage were expanded.
+
+### Governance
 
 - **Per-file SPDX headers** — every `.go` file now carries
   `SPDX-FileCopyrightText` and `SPDX-License-Identifier: GPL-3.0-only`
@@ -414,7 +444,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.14...HEAD
+[0.0.14]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/sebastienrousseau/corral/compare/v0.0.10...v0.0.11

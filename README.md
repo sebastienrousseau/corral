@@ -57,6 +57,15 @@
 
 ## Install
 
+### mise (macOS / Linux)
+
+```bash
+mise use -g github:sebastienrousseau/corral
+```
+
+This installs the latest released `corralctl` binary and keeps it managed with
+the rest of your mise tools.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
@@ -76,7 +85,7 @@ Requires Go 1.26+ and Git:
 ```bash
 git clone https://github.com/sebastienrousseau/corral.git
 cd corral
-make build              # compiles ./corralctl
+make install            # installs ~/.local/bin/corralctl
 ```
 
 ### Platform Prerequisites
