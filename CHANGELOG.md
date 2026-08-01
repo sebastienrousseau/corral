@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.15] — 2026-08-01
+
+### Fixed
+
+- Homebrew cask updates now open pull requests against the protected tap.
+- AUR availability no longer blocks GitHub artifacts, checksums, container
+  images, or build-provenance attestations.
+
 ## [0.0.14] — 2026-08-01
 
 Security hardening, operational resilience, and complete unit coverage.
@@ -444,7 +452,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/sebastienrousseau/corral/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/sebastienrousseau/corral/compare/v0.0.11...v0.0.12
