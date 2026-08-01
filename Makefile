@@ -1,4 +1,5 @@
 BINARY_NAME=corralctl
+PREFIX ?= $(HOME)/.local
 
 # Build-time version. Resolved from `git describe` so local builds carry a
 # meaningful version (matching whatever tag/commit you built from) rather than
@@ -10,12 +11,16 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/cmd.Version=$(VERSION) \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
-.PHONY: all build test test-race vet lint clean format
+.PHONY: all build install test test-race vet lint clean format
 
 all: format vet test test-race build
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY_NAME) main.go
+
+install: build
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 0755 $(BINARY_NAME) $(DESTDIR)$(PREFIX)/bin/$(BINARY_NAME)
 
 test:
 	go test ./...
