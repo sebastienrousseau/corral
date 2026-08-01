@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.16] — 2026-08-01
+
+### Fixed
+
+- Case-only path aliases on case-insensitive filesystems no longer produce
+  false target-collision errors. Corral now compares filesystem identity before
+  deciding whether an existing clone and desired target are distinct.
+
 ## [0.0.15] — 2026-08-01
 
 ### Fixed
@@ -452,7 +460,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.15...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.16...HEAD
+[0.0.16]: https://github.com/sebastienrousseau/corral/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/sebastienrousseau/corral/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/sebastienrousseau/corral/compare/v0.0.12...v0.0.13
