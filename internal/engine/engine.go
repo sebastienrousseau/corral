@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -93,6 +94,8 @@ type Job struct {
 	Target string
 	// Legacy is the directory where the repository may exist under the old layout.
 	Legacy string
+	// Existing is an identity-matched clone at a previous layout path.
+	Existing string
 }
 
 // RepoResult represents the final status of processing a repository.
@@ -117,6 +120,8 @@ type RepoResult struct {
 	ClonedURL string `json:"clone_url,omitempty"`
 	// SyncAttempt indicates whether a sync (pull) was attempted.
 	SyncAttempt bool `json:"sync_attempt"`
+	// Moved indicates that an identity-matched clone was relocated.
+	Moved bool `json:"moved,omitempty"`
 }
 
 // Summary tracks aggregate run outcomes.
@@ -127,6 +132,8 @@ type Summary struct {
 	Cloned int `json:"cloned"`
 	// Synced is the number of repositories successfully synced.
 	Synced int `json:"synced"`
+	// Moved is the number of repositories relocated to their desired layout.
+	Moved int `json:"moved"`
 	// Skipped is the number of repositories skipped.
 	Skipped int `json:"skipped"`
 	// Failed is the number of repositories that failed to process.
@@ -143,6 +150,11 @@ type Summary struct {
 // callers can distinguish cancellation from other failures.
 const cancelExitCode = 130
 
+const (
+	defaultLayout = "{{.Visibility}}/{{.Language}}/{{.Name}}"
+	searchLayout  = "{{.Owner}}/{{.Visibility}}/{{.Language}}/{{.Name}}"
+)
+
 var (
 	fetchRepos       = github.FetchReposWithOptions
 	osExit           = os.Exit
@@ -153,6 +165,12 @@ var (
 	gitRemoteOrigin  = git.RemoteOriginFromConfig
 	isTerminal       = isatty.IsTerminal
 	runProgram       = func(p *tea.Program) (tea.Model, error) { return p.Run() }
+	runSelector      = tui.RunSelector
+	walkDir          = filepath.WalkDir
+	readDir          = os.ReadDir
+	statPath         = os.Stat
+	mkdirAll         = os.MkdirAll
+	renamePath       = os.Rename
 )
 
 // Run executes the core Corral workflow, orchestrating GitHub API fetches,
@@ -192,12 +210,17 @@ func Run(ctx context.Context, opts RunOptions) {
 
 	// Allow git to authenticate HTTPS clones/pulls of private repositories using
 	// the same credential resolved for the GitHub API.
-	git.TokenProvider = func() string { return github.Token(ctx, opts.Fetch.AuthMode) }
+	var tokenOnce sync.Once
+	var token string
+	git.TokenProvider = func() string {
+		tokenOnce.Do(func() { token = github.Token(ctx, opts.Fetch.AuthMode) })
+		return token
+	}
 
 	isTTY := isTerminal(os.Stdout.Fd())
-	if !isTTY {
-		log.SetOutput(os.Stdout)
-	}
+	// stdout is reserved for the selected output format. Diagnostics always go
+	// to stderr so JSON and NDJSON remain parseable.
+	log.SetOutput(os.Stderr)
 
 	var repos []github.Repo
 	var err error
@@ -205,7 +228,7 @@ func Run(ctx context.Context, opts RunOptions) {
 	if opts.Interactive {
 		var ok bool
 		tui.Version = opts.Version
-		repos, ok, err = tui.RunSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
+		repos, ok, err = runSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
 			return fetchRepos(ctx, opts.Owner, opts.Fetch)
 		})
 		if err != nil {
@@ -250,19 +273,18 @@ func Run(ctx context.Context, opts RunOptions) {
 		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
 	}
 
-	// Pre-validate layout template if provided
-	if opts.Layout != "" {
-		if _, err := template.New("layout").Parse(opts.Layout); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
-			osExit(1)
-			return
-		}
+	layoutTemplate, err := template.New("layout").Parse(effectiveLayout(opts, github.Repo{}))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
+		osExit(1)
+		return
 	}
 
-	if opts.Layout == "" || opts.Layout == "{{.Visibility}}/{{.Language}}/{{.Name}}" {
+	if usesClassicLayout(opts) {
 		migrateLegacy(opts.BaseDir, repos)
 		normalizeLanguageDirCase(opts.BaseDir, repos)
 	}
+	existingByRemote := discoverExistingRepos(opts.BaseDir)
 
 	jobs := make(chan Job, len(repos))
 	results := make(chan RepoResult, len(repos))
@@ -294,9 +316,15 @@ func Run(ctx context.Context, opts RunOptions) {
 	scheduled := 0
 enqueueLoop:
 	for _, repo := range repos {
-		relPath, err := evaluateLayout(opts.Layout, repo, opts.Owner)
+		relPath, err := executeLayout(layoutTemplate, repo, opts.Owner)
 		if err != nil {
-			log.Printf("WARN: failed to evaluate layout for %s: %v", repo.Name, err)
+			scheduled++
+			results <- RepoResult{
+				RepoName: repo.Name, Action: "ERROR",
+				Message:    fmt.Sprintf("failed to evaluate layout: %v", err),
+				Visibility: repo.Visibility, Language: normalizeLanguage(repo.Language),
+				DryRun: opts.DryRun, Protocol: opts.Protocol,
+			}
 			continue
 		}
 		targetDir := filepath.Join(opts.BaseDir, relPath)
@@ -304,7 +332,7 @@ enqueueLoop:
 		select {
 		case <-ctx.Done():
 			break enqueueLoop
-		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir}:
+		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir, Existing: existingByRemote[repoRemoteIdentity(repo)]}:
 			scheduled++
 		}
 	}
@@ -313,6 +341,7 @@ enqueueLoop:
 	var (
 		allResults []RepoResult
 		summary    Summary
+		outputErr  error
 	)
 
 	summary.Total = scheduled
@@ -334,13 +363,7 @@ enqueueLoop:
 			allResults = append(allResults, msg)
 			summary.add(msg)
 			if p != nil {
-				// p.Send writes to an unbuffered channel in bubbletea
-				// v1.x and blocks when the program isn't draining (e.g.
-				// when runProgram is stubbed out in tests, or after the
-				// TUI has quit). The goroutine wrapper decouples the
-				// consumer from the TUI's lifecycle so close(results)
-				// can still unblock this loop even if a Send is hung.
-				go p.Send(toLogMsg(msg))
+				p.Send(toLogMsg(msg))
 				continue
 			}
 			if opts.Output == OutputText {
@@ -356,6 +379,9 @@ enqueueLoop:
 			if opts.Output == OutputNDJSON {
 				if err := encoder.Encode(msg); err != nil {
 					fmt.Fprintf(os.Stderr, "ERROR: failed to encode ndjson result: %v\n", err)
+					if outputErr == nil {
+						outputErr = err
+					}
 				}
 			}
 		}
@@ -365,6 +391,9 @@ enqueueLoop:
 		if _, err := runProgram(p); err != nil {
 			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		}
+		// Ensure Send unblocks if an injected runner or an early TUI failure
+		// returns without shutting down Bubble Tea's context.
+		p.Kill()
 	}
 
 	wg.Wait()
@@ -381,23 +410,39 @@ enqueueLoop:
 		emitCancellation(opts.Output, isTTY, encoder, err)
 	}
 
-	if opts.Layout == "" || opts.Layout == "{{.Visibility}}/{{.Language}}/{{.Name}}" {
+	if usesClassicLayout(opts) {
 		cleanupEmptyFolders(opts.BaseDir, repos)
 	}
 
+	var orphanPaths []string
 	if opts.Orphans && !summary.Canceled {
 		// Skip orphan detection on cancel: the local tree may be mid-clone
 		// and the report would be misleading.
-		detectOrphans(opts.Owner, opts.BaseDir, repos)
+		orphanPaths = findOrphans(opts.Owner, opts.BaseDir, repos)
+		switch opts.Output {
+		case OutputText:
+			emitOrphans(opts.Owner, orphanPaths)
+		case OutputNDJSON:
+			for _, orphan := range orphanPaths {
+				if err := encoder.Encode(RepoResult{Action: "ORPHAN", Target: orphan, Message: "local repository is absent upstream"}); err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: failed to encode orphan result: %v\n", err)
+					if outputErr == nil {
+						outputErr = err
+					}
+				}
+			}
+		}
 	}
 
 	if opts.Output == OutputJSON {
 		payload := struct {
 			Summary Summary      `json:"summary"`
 			Repos   []RepoResult `json:"repos"`
+			Orphans []string     `json:"orphans,omitempty"`
 		}{
 			Summary: summary,
 			Repos:   allResults,
+			Orphans: orphanPaths,
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
@@ -413,6 +458,10 @@ enqueueLoop:
 		// POSIX 130 = killed by SIGINT. Lets scripted callers distinguish
 		// cancellation from other failure modes (which exit 1).
 		osExit(cancelExitCode)
+		return
+	}
+	if outputErr != nil || summary.Failed > 0 {
+		osExit(1)
 	}
 }
 
@@ -443,6 +492,9 @@ func emitCancellation(output OutputFormat, isTTY bool, encoder *json.Encoder, ca
 }
 
 func (s *Summary) add(msg RepoResult) {
+	if msg.Moved {
+		s.Moved++
+	}
 	switch msg.Action {
 	case "CLONE":
 		s.Cloned++
@@ -457,6 +509,58 @@ func (s *Summary) add(msg RepoResult) {
 
 func toLogMsg(msg RepoResult) tui.LogMsg {
 	return tui.LogMsg{RepoName: msg.RepoName, Action: msg.Action, Message: msg.Message}
+}
+
+func usesClassicLayout(opts RunOptions) bool {
+	return (opts.Layout == "" && !isSearchOwner(opts.Owner)) || opts.Layout == defaultLayout
+}
+
+func effectiveLayout(opts RunOptions, repo github.Repo) string {
+	if opts.Layout != "" {
+		return opts.Layout
+	}
+	if isSearchOwner(opts.Owner) {
+		return searchLayout
+	}
+	return defaultLayout
+}
+
+func isSearchOwner(owner string) bool {
+	return strings.HasPrefix(owner, "topic:") || strings.HasPrefix(owner, "language:")
+}
+
+func repoRemoteIdentity(repo github.Repo) string {
+	if repo.FullName != "" {
+		return strings.ToLower("github.com/" + repo.FullName)
+	}
+	if repo.Owner != "" && repo.Name != "" {
+		return strings.ToLower("github.com/" + repo.Owner + "/" + repo.Name)
+	}
+	return ""
+}
+
+func discoverExistingRepos(baseDir string) map[string]string {
+	found := make(map[string]string)
+	_ = walkDir(baseDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() || path == baseDir || !git.IsRepository(path) {
+			return nil
+		}
+		if remote, err := gitRemoteOrigin(path); err == nil {
+			if identity := git.CanonicalRemote(remote); identity != "" {
+				if _, exists := found[identity]; !exists {
+					found[identity] = path
+				}
+			}
+		}
+		return filepath.SkipDir
+	})
+	return found
 }
 
 func normalizeLanguage(lang string) string {
@@ -509,7 +613,7 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 	if len(languages) == 0 {
 		return
 	}
-	visEntries, err := os.ReadDir(baseDir)
+	visEntries, err := readDir(baseDir)
 	if err != nil {
 		return
 	}
@@ -518,7 +622,7 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 			continue
 		}
 		visDir := filepath.Join(baseDir, ve.Name())
-		langEntries, err := os.ReadDir(visDir)
+		langEntries, err := readDir(visDir)
 		if err != nil {
 			continue
 		}
@@ -537,13 +641,13 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 			src := filepath.Join(visDir, name)
 			dst := filepath.Join(visDir, lower)
 			tmp := filepath.Join(visDir, lower+".corral-rename-tmp")
-			if err := os.Rename(src, tmp); err != nil {
+			if err := renamePath(src, tmp); err != nil {
 				log.Printf("WARN: failed normalizing case for %s: %v", src, err)
 				continue
 			}
-			if err := os.Rename(tmp, dst); err != nil {
+			if err := renamePath(tmp, dst); err != nil {
 				log.Printf("WARN: failed normalizing case for %s -> %s: %v", tmp, dst, err)
-				_ = os.Rename(tmp, src) // best-effort revert
+				_ = renamePath(tmp, src) // best-effort revert
 			}
 		}
 	}
@@ -583,6 +687,35 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 		return result
 	}
 
+	if job.Existing != "" && filepath.Clean(job.Existing) != filepath.Clean(targetDir) {
+		if _, err := statPath(targetDir); err == nil {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("target collision: %s already exists while matching clone is at %s", targetDir, job.Existing)
+			return result
+		} else if !errors.Is(err, os.ErrNotExist) {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("failed checking target collision: %v", err)
+			return result
+		}
+		if dryRun {
+			result.Action = "DRY-RUN"
+			result.Message = fmt.Sprintf("move %s to %s", job.Existing, targetDir)
+			result.Moved = true
+			return result
+		}
+		if err := mkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("failed creating relocation target: %v", err)
+			return result
+		}
+		if err := renamePath(job.Existing, targetDir); err != nil {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("failed moving identity-matched clone from %s: %v", job.Existing, err)
+			return result
+		}
+		result.Moved = true
+	}
+
 	if !dryRun {
 		if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
 			result.Action = "ERROR"
@@ -591,8 +724,21 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 		}
 	}
 
-	gitDir := filepath.Join(targetDir, ".git")
-	if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
+	if git.IsRepository(targetDir) {
+		wantIdentity := repoRemoteIdentity(repo)
+		if wantIdentity != "" {
+			remote, remoteErr := gitRemoteOrigin(targetDir)
+			gotIdentity := git.CanonicalRemote(remote)
+			if remoteErr != nil || gotIdentity != wantIdentity {
+				result.Action = "ERROR"
+				if remoteErr != nil {
+					result.Message = fmt.Sprintf("cannot verify existing repository origin: %v", remoteErr)
+				} else {
+					result.Message = fmt.Sprintf("origin collision: target has %s, expected %s", gotIdentity, wantIdentity)
+				}
+				return result
+			}
+		}
 		if doSync {
 			result.SyncAttempt = true
 			if dryRun {
@@ -646,7 +792,11 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 			return result
 		}
 		result.Action = "SKIP"
-		result.Message = "already exists"
+		if result.Moved {
+			result.Message = "moved to desired layout; sync disabled"
+		} else {
+			result.Message = "already exists"
+		}
 		return result
 	} else if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
 		result.Action = "SKIP"
@@ -704,8 +854,7 @@ func repoNameFromURL(url string) string {
 	return url
 }
 
-func detectOrphans(owner, baseDir string, repos []github.Repo) {
-	fmt.Println("\n--- Orphan Detection ---")
+func findOrphans(owner, baseDir string, repos []github.Repo) []string {
 	repoMap := make(map[string]bool)
 	for _, r := range repos {
 		repoMap[r.Name] = true
@@ -719,8 +868,8 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() && d.Name() == ".git" {
-			repoDir := filepath.Dir(path)
+		if d.IsDir() && path != baseDir && git.IsRepository(path) {
+			repoDir := path
 			url, err := gitRemoteOrigin(repoDir)
 			if err == nil && (strings.Contains(url, "/"+owner+"/") || strings.Contains(url, ":"+owner+"/")) {
 				// Match against both the directory name and the name encoded in
@@ -735,12 +884,21 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 		return nil
 	})
 
+	return orphans
+}
+
+func emitOrphans(owner string, orphans []string) {
+	fmt.Println("\n--- Orphan Detection ---")
 	for _, orphan := range orphans {
 		fmt.Printf("Orphan found: %s\n", orphan)
 	}
 	if len(orphans) == 0 {
 		fmt.Printf("No orphaned repositories found for %s.\n", owner)
 	}
+}
+
+func detectOrphans(owner, baseDir string, repos []github.Repo) {
+	emitOrphans(owner, findOrphans(owner, baseDir, repos))
 }
 
 func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, error) {
@@ -751,18 +909,26 @@ func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, e
 	if err != nil {
 		return "", err
 	}
+	return executeLayout(tmpl, repo, owner)
+}
+
+func executeLayout(tmpl *template.Template, repo github.Repo, owner string) (string, error) {
 	var buf bytes.Buffer
 	data := struct {
 		Visibility    string
 		Language      string
 		Name          string
 		Owner         string
+		FullName      string
+		ID            int64
 		DefaultBranch string
 	}{
 		Visibility:    strings.ToLower(repo.Visibility),
 		Language:      normalizeLanguage(repo.Language),
 		Name:          repo.Name,
-		Owner:         owner,
+		Owner:         firstNonEmpty(repo.Owner, owner),
+		FullName:      repo.FullName,
+		ID:            repo.ID,
 		DefaultBranch: repo.DefaultBranch,
 	}
 	if err := tmpl.Execute(&buf, data); err != nil {
@@ -773,4 +939,13 @@ func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, e
 		return "", fmt.Errorf("layout escapes base directory: %s", cleanPath)
 	}
 	return filepath.ToSlash(cleanPath), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

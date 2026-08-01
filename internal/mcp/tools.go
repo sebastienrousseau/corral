@@ -239,7 +239,7 @@ func sortedLangCounts(m map[string]int) []map[string]any {
 // stderr is the only safe channel — stdout carries the JSON-RPC
 // protocol stream and must not be polluted.
 var currentBranch = func(ctx context.Context, repoPath string) string {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD") // #nosec G204 -- fixed executable and root-confined path
 	out, err := cmd.Output()
 	if err != nil {
 		// Include stderr from the failed process so operators can tell

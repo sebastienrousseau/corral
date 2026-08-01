@@ -18,18 +18,56 @@ import (
 // ServeStdio outcome so runMCP's branches are all reachable without a
 // real stdio loop.
 type stubMCPServer struct {
-	root            string
-	mutations       bool
-	serveErr        error
-	serveCallCount  int
+	root           string
+	mutations      bool
+	audit          string
+	serveErr       error
+	serveCallCount int
 }
 
 func (s *stubMCPServer) Root() string           { return s.root }
 func (s *stubMCPServer) MutationsEnabled() bool { return s.mutations }
-func (s *stubMCPServer) AuditLogPath() string   { return "" }
+func (s *stubMCPServer) AuditLogPath() string   { return s.audit }
 func (s *stubMCPServer) ServeStdio() error {
 	s.serveCallCount++
 	return s.serveErr
+}
+
+func TestRunMCPAdditionalPathBranches(t *testing.T) {
+	resetMCPFlags(t)
+	oldBase, oldAbs, oldStat := baseDir, absMCPPath, statMCP
+	t.Cleanup(func() { baseDir, absMCPPath, statMCP = oldBase, oldAbs, oldStat })
+	baseDir = ""
+	home := t.TempDir()
+	oldHome := userHomeDir
+	userHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { userHomeDir = oldHome })
+	defaultRoot := filepath.Join(home, "Code")
+	if err := os.Mkdir(defaultRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	stub := &stubMCPServer{root: defaultRoot, audit: "/tmp/audit.log"}
+	withStubServer(t, stub, nil)
+	if err := runMCP(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	absMCPPath = func(string) (string, error) { return "", errors.New("abs failed") }
+	if err := runMCP(nil, nil); err == nil || !strings.Contains(err.Error(), "resolving root") {
+		t.Fatalf("absolute path error = %v", err)
+	}
+	absMCPPath = filepath.Abs
+	statMCP = func(string) (os.FileInfo, error) { return nil, errors.New("stat failed") }
+	if err := runMCP(nil, nil); err == nil || !strings.Contains(err.Error(), "not accessible") {
+		t.Fatalf("stat error = %v", err)
+	}
+}
+
+func TestMCPNewServerFactory(t *testing.T) {
+	srv, err := mcpNewServer(mcp.ServerOptions{Root: t.TempDir()})
+	if err != nil || srv == nil {
+		t.Fatalf("factory result = %v, %v", srv, err)
+	}
 }
 
 // withStubServer swaps in the given stubMCPServer and restores the

@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	gitutil "github.com/sebastienrousseau/corral/internal/git"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +22,9 @@ var (
 	execLanguages    string
 	execExcludeLangs string
 	execVisibility   string
+	findRepos        = findLocalRepos
+	execBatch        = runExecCommands
+	walkLocalRepos   = filepath.WalkDir
 )
 
 var execCmd = &cobra.Command{
@@ -38,14 +43,14 @@ var execCmd = &cobra.Command{
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		commandStr := args[0]
+		commandStr := strings.Join(args, " ")
 		bDir := baseDir
 		if bDir == "" {
 			bDir = defaultBaseDir()
 		}
 
 		// Find all Git repos under bDir
-		repos, err := findLocalRepos(bDir)
+		repos, err := findRepos(bDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: failed to scan directory: %v\n", err)
 			osExit(1)
@@ -68,7 +73,10 @@ var execCmd = &cobra.Command{
 		}
 
 		// Run commands concurrently
-		runExecCommands(cmdContext(cmd), filtered, commandStr, execConcurrency)
+		summary := execBatch(cmdContext(cmd), filtered, commandStr, execConcurrency)
+		if summary.Failed > 0 || summary.Canceled {
+			osExit(1)
+		}
 	},
 }
 
@@ -78,15 +86,58 @@ type localRepoInfo struct {
 	Language   string
 }
 
+// ExecSummary is the aggregate outcome of a batch command.
+type ExecSummary struct {
+	Total    int
+	Failed   int
+	Canceled bool
+}
+
+const maxExecOutputBytes = 1 << 20
+
+type cappedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	originalLen := len(p)
+	remaining := b.limit - b.buf.Len()
+	if remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+			b.truncated = true
+		}
+		_, _ = b.buf.Write(p)
+	} else if len(p) > 0 {
+		b.truncated = true
+	}
+	return originalLen, nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := b.buf.String()
+	if b.truncated {
+		out += "\n[corralctl: output truncated at 1 MiB]\n"
+	}
+	return out
+}
+
 // findLocalRepos walks baseDir looking for directories containing a .git folder
 func findLocalRepos(baseDir string) ([]localRepoInfo, error) {
 	var repos []localRepoInfo
-	err := filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+	err := walkLocalRepos(baseDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() && d.Name() == ".git" {
-			repoDir := filepath.Dir(path)
+		if d.IsDir() && path != baseDir && gitutil.IsRepository(path) {
+			repoDir := path
 			rel, err := filepath.Rel(baseDir, repoDir)
 			if err == nil {
 				parts := strings.Split(filepath.ToSlash(rel), "/")
@@ -148,7 +199,7 @@ func toLookupSet(values []string) map[string]struct{} {
 	return out
 }
 
-func runExecCommands(ctx context.Context, repoPaths []string, commandStr string, concurrency int) {
+func runExecCommands(ctx context.Context, repoPaths []string, commandStr string, concurrency int) ExecSummary {
 	jobs := make(chan string, len(repoPaths))
 	for _, p := range repoPaths {
 		jobs <- p
@@ -157,6 +208,8 @@ func runExecCommands(ctx context.Context, repoPaths []string, commandStr string,
 
 	var wg sync.WaitGroup
 	var outMu sync.Mutex
+	summary := ExecSummary{Total: len(repoPaths)}
+	var summaryMu sync.Mutex
 
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
@@ -181,19 +234,26 @@ func runExecCommands(ctx context.Context, repoPaths []string, commandStr string,
 						shellFlag = "/c"
 					}
 
+					// #nosec G204,G702 -- exec intentionally runs the user-supplied command via their configured shell.
 					cmd := exec.CommandContext(ctx, shell, shellFlag, commandStr)
 					cmd.Dir = path
 					cmd.Env = os.Environ()
 
-					out, err := cmd.CombinedOutput()
+					out := &cappedBuffer{limit: maxExecOutputBytes}
+					cmd.Stdout = out
+					cmd.Stderr = out
+					err := cmd.Run()
 
 					outMu.Lock()
 					fmt.Printf("\n--- [%s] ---\n", repoName)
-					if len(out) > 0 {
-						fmt.Print(string(out))
+					if rendered := out.String(); rendered != "" {
+						fmt.Print(rendered)
 					}
 					if err != nil {
 						fmt.Printf("Command failed: %v\n", err)
+						summaryMu.Lock()
+						summary.Failed++
+						summaryMu.Unlock()
 					}
 					outMu.Unlock()
 				}
@@ -201,6 +261,8 @@ func runExecCommands(ctx context.Context, repoPaths []string, commandStr string,
 		}()
 	}
 	wg.Wait()
+	summary.Canceled = ctx.Err() != nil
+	return summary
 }
 
 func init() {

@@ -235,3 +235,25 @@ func TestSafePathRejectsTraversal(t *testing.T) {
 		t.Error("traversal via .. should be rejected")
 	}
 }
+
+func TestMarkStateSyncedPreservesPushedAt(t *testing.T) {
+	repo := t.TempDir()
+	wantPushed := "2026-07-01T12:00:00Z"
+	body := `{"last_synced_pushed_at":"` + wantPushed + `","last_synced_at":"2026-07-01T13:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(repo, stateFileName), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := markStateSynced(repo); err != nil {
+		t.Fatal(err)
+	}
+	state, ok := readState(repo)
+	if !ok {
+		t.Fatal("state was not readable after update")
+	}
+	if state.LastSyncedPushedAt != wantPushed {
+		t.Errorf("pushed_at changed: got %q want %q", state.LastSyncedPushedAt, wantPushed)
+	}
+	if state.LastSyncedAt == "" || state.LastSyncedAt == "2026-07-01T13:00:00Z" {
+		t.Errorf("last_synced_at was not refreshed: %+v", state)
+	}
+}

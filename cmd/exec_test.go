@@ -6,7 +6,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +53,9 @@ func TestExecCmdRun(t *testing.T) {
 	dryRun = true
 	execCmd.Run(execCmd, []string{"echo test"})
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
 	_, _ = io.Copy(&buf, r)
 	output := buf.String()
@@ -93,6 +97,100 @@ func TestExecCmdRun(t *testing.T) {
 	filtered = filterLocalRepos(repos)
 	if len(filtered) != 1 || !strings.Contains(filtered[0], "repo2") {
 		t.Errorf("expected only repo2 with visibility private filter, got %v", filtered)
+	}
+}
+
+func TestExecCommandAdditionalBranches(t *testing.T) {
+	oldFind, oldBatch, oldExit := findRepos, execBatch, osExit
+	oldBase, oldDry, oldConcurrency, oldVisibility := baseDir, dryRun, execConcurrency, execVisibility
+	t.Cleanup(func() {
+		findRepos, execBatch, osExit = oldFind, oldBatch, oldExit
+		baseDir, dryRun, execConcurrency, execVisibility = oldBase, oldDry, oldConcurrency, oldVisibility
+	})
+	execConcurrency, execVisibility, baseDir, dryRun = 1, "all", "", false
+	if err := execCmd.PreRunE(execCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+	exitCode := 0
+	osExit = func(code int) { exitCode = code }
+	findRepos = func(string) ([]localRepoInfo, error) { return nil, errors.New("scan failed") }
+	execCmd.Run(execCmd, []string{"echo", "test"})
+	if exitCode != 1 {
+		t.Fatalf("scan failure exit = %d", exitCode)
+	}
+
+	exitCode = 0
+	findRepos = func(string) ([]localRepoInfo, error) { return nil, nil }
+	out := captureStdout(t, func() { execCmd.Run(execCmd, []string{"echo", "test"}) })
+	if !strings.Contains(out, "No matching") {
+		t.Fatalf("empty exec output = %q", out)
+	}
+
+	findRepos = func(string) ([]localRepoInfo, error) { return []localRepoInfo{{Path: "/repo"}}, nil }
+	execBatch = func(context.Context, []string, string, int) ExecSummary { return ExecSummary{Failed: 1} }
+	execCmd.Run(execCmd, []string{"echo", "joined"})
+	if exitCode != 1 {
+		t.Fatalf("batch failure exit = %d", exitCode)
+	}
+	execBatch = func(context.Context, []string, string, int) ExecSummary { return ExecSummary{Canceled: true} }
+	execCmd.Run(execCmd, []string{"echo"})
+}
+
+func TestCappedBufferEdges(t *testing.T) {
+	buffer := &cappedBuffer{limit: 3}
+	n, err := buffer.Write([]byte("abcdef"))
+	if err != nil || n != 6 || !strings.Contains(buffer.String(), "abc") || !strings.Contains(buffer.String(), "truncated") {
+		t.Fatalf("partial buffer = %d %v %q", n, err, buffer.String())
+	}
+	if n, err := buffer.Write(nil); err != nil || n != 0 {
+		t.Fatalf("nil write = %d %v", n, err)
+	}
+	if n, err := buffer.Write([]byte("z")); err != nil || n != 1 {
+		t.Fatalf("full write = %d %v", n, err)
+	}
+	plain := &cappedBuffer{limit: 3}
+	_, _ = plain.Write([]byte("abc"))
+	if got := plain.String(); got != "abc" {
+		t.Fatalf("plain buffer = %q", got)
+	}
+}
+
+func TestFindLocalReposWalkErrorsAndTwoLevelLayout(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "go", "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	repos, err := findLocalRepos(base)
+	if err != nil || len(repos) != 1 || repos[0].Language != "go" {
+		t.Fatalf("two-level repos = %+v, %v", repos, err)
+	}
+	oldWalk := walkLocalRepos
+	t.Cleanup(func() { walkLocalRepos = oldWalk })
+	walkLocalRepos = func(root string, fn fs.WalkDirFunc) error {
+		_ = fn(filepath.Join(root, "bad"), nil, errors.New("entry failed"))
+		return errors.New("walk failed")
+	}
+	if _, err := findLocalRepos(base); err == nil {
+		t.Fatal("expected outer walk error")
+	}
+}
+
+func TestRunExecCommandsCOMSPEC(t *testing.T) {
+	t.Setenv("SHELL", "")
+	t.Setenv("COMSPEC", "sh")
+	summary := runExecCommands(context.Background(), []string{t.TempDir()}, "echo hi", 1)
+	if summary.Failed != 1 {
+		t.Fatalf("COMSPEC command should fail with /c on Unix: %+v", summary)
+	}
+}
+
+func TestFilterLocalReposPublicMismatch(t *testing.T) {
+	oldVisibility, oldLanguages, oldExclude := execVisibility, execLanguages, execExcludeLangs
+	t.Cleanup(func() { execVisibility, execLanguages, execExcludeLangs = oldVisibility, oldLanguages, oldExclude })
+	execVisibility, execLanguages, execExcludeLangs = "public", "", ""
+	if got := filterLocalRepos([]localRepoInfo{{Path: "/private", Visibility: "private"}}); len(got) != 0 {
+		t.Fatalf("public filter result = %v", got)
 	}
 }
 

@@ -52,8 +52,10 @@ var (
 	retryMax            int
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
+	apiTimeout          time.Duration
 	osExit              = os.Exit
 	engineRun           = engine.Run
+	preflightRunner     = runPreflight
 )
 
 var rootCmd = &cobra.Command{
@@ -86,6 +88,9 @@ var rootCmd = &cobra.Command{
 		}
 		if retryMaxBackoff < retryMinBackoff {
 			return fmt.Errorf("--retry-max-backoff must be >= --retry-min-backoff")
+		}
+		if apiTimeout <= 0 {
+			return fmt.Errorf("--api-timeout must be > 0")
 		}
 		if protocol != "https" && protocol != "ssh" {
 			return fmt.Errorf("--protocol must be either ssh or https")
@@ -154,7 +159,6 @@ var rootCmd = &cobra.Command{
 				osExit(1)
 				return
 			}
-			argIdx++
 		}
 
 		// Preflight banner + confirm. Prints the parsed owner + resolved
@@ -164,7 +168,7 @@ var rootCmd = &cobra.Command{
 		// confirmation; --yes bypasses it, --dry-run implies bypass.
 		// Interactive TUI mode has its own confirmation via /exit and
 		// doesn't need the extra prompt.
-		if !interactive && !runPreflight(owner, bDir) {
+		if !interactive && !preflightRunner(owner, bDir) {
 			fmt.Fprintln(os.Stderr, "Aborted.")
 			osExit(0)
 			return
@@ -191,6 +195,7 @@ var rootCmd = &cobra.Command{
 				RetryMax:         retryMax,
 				RetryMinBackoff:  retryMinBackoff,
 				RetryMaxBackoff:  retryMaxBackoff,
+				Timeout:          apiTimeout,
 				Type:             filterType,
 				Sort:             filterSort,
 			},
@@ -298,4 +303,5 @@ func init() {
 	rootCmd.Flags().IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
 	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	rootCmd.Flags().DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
+	rootCmd.Flags().DurationVar(&apiTimeout, "api-timeout", 30*time.Second, "GitHub API request deadline")
 }

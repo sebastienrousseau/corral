@@ -15,13 +15,20 @@ import (
 	"github.com/sebastienrousseau/corral/internal/git"
 )
 
+var (
+	resolveGitBinary = git.ResolveGitBinary
+	executeContext   = cmd.ExecuteContext
+	exitMain         = os.Exit
+)
+
 // main invokes the Cobra CLI execution.
 func main() {
-	if err := git.ResolveGitBinary(); err != nil {
+	if err := resolveGitBinary(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(1)
+		exitMain(1)
+		return
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	cmd.ExecuteContext(ctx)
+	executeContext(ctx)
 }

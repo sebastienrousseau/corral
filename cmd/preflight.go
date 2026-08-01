@@ -43,7 +43,7 @@ func preflightSummary(owner, baseDir string) string {
 // isTerminal / stdin are indirected so tests can drive the prompt
 // without a real TTY.
 func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir string, yes, dryRun bool) bool {
-	fmt.Fprintln(w, preflightSummary(owner, baseDir))
+	_, _ = fmt.Fprintln(w, preflightSummary(owner, baseDir))
 
 	if yes || dryRun {
 		return true
@@ -55,7 +55,7 @@ func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir stri
 		return true // target already exists; nothing surprising to confirm
 	}
 
-	fmt.Fprintf(w, "The target directory does not exist yet — corral will create it.\n"+
+	_, _ = fmt.Fprintf(w, "The target directory does not exist yet — corral will create it.\n"+
 		"Continue? [y/N] ")
 
 	scanner := bufio.NewScanner(in)

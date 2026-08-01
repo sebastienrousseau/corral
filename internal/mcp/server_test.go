@@ -77,15 +77,15 @@ func TestNewServerMutationsToggle(t *testing.T) {
 
 func TestIsAbsolutePath(t *testing.T) {
 	cases := map[string]bool{
-		"":           false,
-		"foo":        false,
-		"./foo":      false,
-		"/foo":       true,
-		"/":          true,
-		"C:\\Users":  true,
-		"D:/foo":     true,
-		"C:foo":      false, // missing separator after colon
-		"~/Code":     false, // ~ is shell-expanded; we want literal abs
+		"":          false,
+		"foo":       false,
+		"./foo":     false,
+		"/foo":      true,
+		"/":         true,
+		"C:\\Users": true,
+		"D:/foo":    true,
+		"C:foo":     false, // missing separator after colon
+		"~/Code":    false, // ~ is shell-expanded; we want literal abs
 	}
 	for in, want := range cases {
 		if got := isAbsolutePath(in); got != want {

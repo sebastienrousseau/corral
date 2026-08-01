@@ -22,6 +22,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Published image version without the leading v (for example 0.0.13)'
+        required: true
+        type: string
 
 permissions: {}
 
@@ -80,12 +85,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Resolve immutable release tag
+        id: image
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG:-${MANUAL_VERSION}}"
+          version="${version#v}"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          echo "tag=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Run Trivy on the published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          # Scan the immutable, digest-pinned :latest manifest so
-          # this workflow always inspects the artefact users pull.
-          image-ref: 'ghcr.io/sebastienrousseau/corral:latest'
+          image-ref: 'ghcr.io/sebastienrousseau/corral:${{ steps.image.outputs.tag }}'
           format: 'sarif'
           output: 'trivy.sarif'
           # Only flag high and critical for now — anything below

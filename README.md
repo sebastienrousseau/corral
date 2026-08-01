@@ -353,8 +353,9 @@ corralctl mcp --root /custom/workspace
 
 ### Safety
 
-- **Read-only by default.** Phase-3 write tools (`corral_sync_repo`, `corral_clone_repo`) are reserved for a follow-up release; `--enable-mutations` is a placeholder flag today.
-- **Path-traversal protected.** File-resource lookups canonicalise both the configured root and the candidate path before comparison, so a malicious `{path}` cannot escape the sandbox via `..` or symlinks.
+- **Read-only by default.** `--enable-mutations` unlocks clone and sync. Deletion additionally requires `--enable-destructive-mutations`; every mutation writes intent and completion records to the audit log.
+- **Deletion fails closed.** MCP and CLI pruning refuse repositories with working-tree changes, commits on any local branch not reachable from a remote, stashes, unpublished tags, or unverifiable Git state.
+- **Path-traversal protected.** File-resource lookups canonicalise the selected repository root and candidate path, blocking `..` and symlink escapes into sibling repositories or outside the workspace.
 - **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
 
 ---
@@ -394,6 +395,36 @@ corralctl <owner> [base_dir] [limit]
 | `--languages` | — | — | Comma-separated language filter (e.g. `go,rust`) |
 | `--exclude-languages`| — | — | Comma-separated language exclude list |
 | `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
+| `--api-timeout` | — | `30s` | Deadline for GitHub API operations |
+
+### Operational Commands
+
+```bash
+corralctl status --base-dir ~/Code
+corralctl plan sebastienrousseau --base-dir ~/Code
+corralctl prune sebastienrousseau --base-dir ~/Code --dry-run
+corralctl prune sebastienrousseau --base-dir ~/Code --yes
+```
+
+`status` inventories local clones, `plan` emits a non-mutating reconciliation,
+and `prune` removes only upstream-orphaned clones that pass the unpublished-work
+checks. JSON output is available on each command.
+
+Multi-owner profiles use a strict JSON config (default
+`~/.config/corral/config.json`) and run with `corralctl profile <name>`:
+
+```json
+{
+  "profiles": {
+    "work": {
+      "owners": ["org-one", "org-two"],
+      "base_dir": "/home/me/Code",
+      "layout": "{{.Owner}}/{{.Visibility}}/{{.Language}}/{{.Name}}",
+      "concurrency": 4
+    }
+  }
+}
+```
 
 ---
 
@@ -423,7 +454,7 @@ To inspect the package layout and programmatically run Corral modules, see the s
 - **Does it work with GitLab or other hosts?**  
   No. Corral is specifically built to integrate with the GitHub API and GitHub CLI (`gh`).
 - **What happens to repositories deleted on GitHub?**  
-  Corral never deletes your local checkouts. To see repositories that no longer exist upstream, run Corral with the `--orphans` flag.
+  Normal reconciliation never deletes them. `--orphans` reports them; the explicit `prune` command can remove verified-safe orphans after `--yes` confirmation.
 - **Can I run it inside Cron or systemd timers?**  
   Yes. The command runs non-interactively by default. All Git command credential prompts are bypassed to ensure automated jobs never hang.
 - **How are repositories with no primary language stored?**  

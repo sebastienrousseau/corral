@@ -5,6 +5,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func cleanup(t *testing.T, dir string) {
 
 func run(t *testing.T, name string, args ...string) {
 	t.Helper()
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) // #nosec G204 -- test helper invokes caller-selected fixtures only
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%s %v failed: %v (%s)", name, args, err, string(out))
@@ -450,7 +451,7 @@ func TestPullArgsContainCommitSigningOverride(t *testing.T) {
 	run(t, "git", "-C", targetDir, "add", "local.txt")
 	// The local commit must NOT be signed (we'd hit the bad key); use git
 	// directly with explicit overrides to make the test setup deterministic.
-	setup := exec.Command("git", "-C", targetDir,
+	setup := exec.Command("git", "-C", targetDir, // #nosec G204 -- fixed executable and test-owned path
 		"-c", "commit.gpgsign=false",
 		"-c", "user.name=Test",
 		"-c", "user.email=test@test.com",
@@ -530,6 +531,177 @@ func TestPullIgnoreSubmoduleFailures(t *testing.T) {
 	}
 }
 
+func TestCanonicalRemoteVariants(t *testing.T) {
+	// #nosec G101 -- the fake credential verifies that canonicalization strips userinfo.
+	tests := map[string]string{
+		"":                                      "",
+		"https://GitHub.com/Owner/Repo.git/":    "github.com/owner/repo",
+		"ssh://git@github.com/Owner/Repo.git":   "github.com/owner/repo",
+		"git@GitHub.com:Owner/Repo.git":         "github.com/owner/repo",
+		"relative/Owner/Repo.git":               "relative/owner/repo",
+		"https://user:pass@example.com/a/b.git": "example.com/a/b",
+	}
+	for input, want := range tests {
+		if got := CanonicalRemote(input); got != want {
+			t.Errorf("CanonicalRemote(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestHasLocalChanges(t *testing.T) {
+	upstream, work := setupTestRepo(t)
+	defer cleanup(t, upstream)
+	defer cleanup(t, work)
+	if dirty, detail := HasLocalChanges(context.Background(), work); dirty || detail != "" {
+		t.Fatalf("clean repository reported unsafe: %v %q", dirty, detail)
+	}
+	if err := os.WriteFile(filepath.Join(work, "untracked"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if dirty, detail := HasLocalChanges(context.Background(), work); !dirty || !strings.Contains(detail, "local changes") {
+		t.Fatalf("dirty repository not detected: %v %q", dirty, detail)
+	}
+	if dirty, detail := HasLocalChanges(context.Background(), filepath.Join(work, "missing")); !dirty || !strings.Contains(detail, "cannot inspect") {
+		t.Fatalf("inspection failure must be unsafe: %v %q", dirty, detail)
+	}
+}
+
+func TestHasUnpublishedWorkFailsClosedOnInvalidRepository(t *testing.T) {
+	if unsafe, detail := HasUnpublishedWork(context.Background(), t.TempDir()); !unsafe || !strings.Contains(detail, "cannot inspect") {
+		t.Fatalf("invalid repository must fail closed: %v %q", unsafe, detail)
+	}
+}
+
+func TestResolveGitDirErrorsAndRelativeWorktree(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := resolveGitDir(missing); err == nil {
+		t.Fatal("expected missing .git error")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveGitDir(dir); err == nil || !strings.Contains(err.Error(), "invalid gitdir") {
+		t.Fatalf("expected invalid worktree error, got %v", err)
+	}
+	gitDir := filepath.Join(dir, "meta")
+	if err := os.Mkdir(gitDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: meta\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveGitDir(dir)
+	if err != nil || got != gitDir {
+		t.Fatalf("relative worktree git dir = %q, %v", got, err)
+	}
+}
+
+func TestHasUnpublishedWorkVerificationFailures(t *testing.T) {
+	oldRun := runGitOutput
+	t.Cleanup(func() { runGitOutput = oldRun })
+	exitOne := exec.Command("sh", "-c", "exit 1").Run()
+	tests := []struct {
+		name string
+		stub func(context.Context, string, ...string) (string, error)
+		want string
+	}{
+		{"branches", func(ctx context.Context, dir string, args ...string) (string, error) {
+			if args[0] == "status" {
+				return "", nil
+			}
+			return "", errors.New("branch check")
+		}, "unable to verify local branches"},
+		{"stash", func(ctx context.Context, dir string, args ...string) (string, error) {
+			switch args[0] {
+			case "status":
+				return "", nil
+			case "rev-list":
+				return "0", nil
+			}
+			return "", errors.New("stash check")
+		}, "unable to verify stash"},
+		{"local tags", func(ctx context.Context, dir string, args ...string) (string, error) {
+			switch args[0] {
+			case "status":
+				return "", nil
+			case "rev-list":
+				return "0", nil
+			case "rev-parse":
+				return "", exitOne
+			}
+			return "", errors.New("tags check")
+		}, "unable to inspect local tags"},
+		{"remote tags", func(ctx context.Context, dir string, args ...string) (string, error) {
+			switch args[0] {
+			case "status":
+				return "", nil
+			case "rev-list":
+				return "0", nil
+			case "rev-parse":
+				return "", exitOne
+			case "show-ref":
+				return "abc refs/tags/v1\n", nil
+			}
+			return "", errors.New("remote check")
+		}, "unable to verify remote tags"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runGitOutput = tc.stub
+			unsafe, detail := HasUnpublishedWork(context.Background(), "/repo")
+			if !unsafe || !strings.Contains(detail, tc.want) {
+				t.Fatalf("result = %v %q, want %q", unsafe, detail, tc.want)
+			}
+		})
+	}
+}
+
+func TestPullSwallowsInjectedSubmoduleFailure(t *testing.T) {
+	upstream, work := setupTestRepo(t)
+	defer cleanup(t, upstream)
+	defer cleanup(t, work)
+	oldUpdate := updateSubmodulesFn
+	t.Cleanup(func() { updateSubmodulesFn = oldUpdate })
+	updateSubmodulesFn = func(context.Context, string) error { return errors.New("submodule failed") }
+	if err := Pull(context.Background(), work, PullOptions{RecurseSubmodules: true, IgnoreSubmoduleFailures: true}); err != nil {
+		t.Fatalf("injected submodule failure must be swallowed: %v", err)
+	}
+	if err := updateSubmodules(context.Background(), filepath.Join(work, "missing")); err == nil {
+		t.Fatal("expected direct submodule update failure")
+	}
+}
+
+func TestRemoteOriginConfigAdditionalErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RemoteOriginFromConfig(dir); err == nil {
+		t.Fatal("expected missing config error")
+	}
+	config := "[remote \"origin\"]\nthis line has no equals\n" + strings.Repeat("x", 70_000)
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RemoteOriginFromConfig(dir); err == nil {
+		t.Fatal("expected scanner error")
+	}
+}
+
+func TestResolveGitDirReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: meta"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldRead := readFile
+	t.Cleanup(func() { readFile = oldRead })
+	readFile = func(string) ([]byte, error) { return nil, errors.New("read failed") }
+	if _, err := resolveGitDir(dir); err == nil || !strings.Contains(err.Error(), "read failed") {
+		t.Fatalf("expected read failure, got %v", err)
+	}
+}
+
 // TestIsEmptyOnFreshRepo covers the class of clone corral surfaced as
 // "sync failed: no such ref was fetched" — a repository that was
 // initialised but has never had a commit. IsEmpty must return true so
@@ -584,4 +756,88 @@ func TestIsEmptyOnNonRepo(t *testing.T) {
 	if !IsEmpty(dir) {
 		t.Error("non-repo directory should report empty (defence-in-depth)")
 	}
+}
+
+func TestWorktreeRepositoryAndOriginDetection(t *testing.T) {
+	upstream, workDir := setupTestRepo(t)
+	defer cleanup(t, upstream)
+	defer cleanup(t, workDir)
+	linked := filepath.Join(t.TempDir(), "linked")
+	run(t, "git", "-C", workDir, "worktree", "add", "-b", "linked", linked)
+	if !IsRepository(linked) {
+		t.Fatal("linked worktree should be recognized as a repository")
+	}
+	got, err := RemoteOriginFromConfig(linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != upstream {
+		t.Errorf("origin = %q, want %q", got, upstream)
+	}
+}
+
+func TestHasUnpublishedWork(t *testing.T) {
+	newClone := func(t *testing.T) (string, string, string) {
+		t.Helper()
+		upstream, workDir := setupTestRepo(t)
+		t.Cleanup(func() { cleanup(t, upstream) })
+		t.Cleanup(func() { cleanup(t, workDir) })
+		target := filepath.Join(t.TempDir(), "clone")
+		if err := Clone(context.Background(), upstream, target, CloneOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		run(t, "git", "-C", target, "config", "user.name", "Test")
+		run(t, "git", "-C", target, "config", "user.email", "test@test.com")
+		return upstream, workDir, target
+	}
+
+	t.Run("clean clone", func(t *testing.T) {
+		_, _, target := newClone(t)
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); unpublished {
+			t.Fatalf("clean clone reported unpublished: %s", detail)
+		}
+	})
+
+	t.Run("commit on another branch", func(t *testing.T) {
+		_, _, target := newClone(t)
+		run(t, "git", "-C", target, "switch", "-c", "local-only")
+		if err := os.WriteFile(filepath.Join(target, "local.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run(t, "git", "-C", target, "add", "local.txt")
+		run(t, "git", "-C", target, "commit", "-m", "local")
+		run(t, "git", "-C", target, "switch", "main")
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); !unpublished || !strings.Contains(detail, "local branches") {
+			t.Fatalf("expected unpublished branch commit, got %t %q", unpublished, detail)
+		}
+	})
+
+	t.Run("stash", func(t *testing.T) {
+		_, _, target := newClone(t)
+		if err := os.WriteFile(filepath.Join(target, "test.txt"), []byte("changed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run(t, "git", "-C", target, "stash", "push", "-m", "local")
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); !unpublished || !strings.Contains(detail, "stash") {
+			t.Fatalf("expected stash detection, got %t %q", unpublished, detail)
+		}
+	})
+
+	t.Run("local tag", func(t *testing.T) {
+		_, _, target := newClone(t)
+		run(t, "git", "-C", target, "tag", "local-only")
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); !unpublished || !strings.Contains(detail, "tag local-only") {
+			t.Fatalf("expected local tag detection, got %t %q", unpublished, detail)
+		}
+	})
+
+	t.Run("published tag", func(t *testing.T) {
+		_, workDir, target := newClone(t)
+		run(t, "git", "-C", workDir, "tag", "published")
+		run(t, "git", "-C", workDir, "push", "origin", "refs/tags/published")
+		run(t, "git", "-C", target, "fetch", "--tags")
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); unpublished {
+			t.Fatalf("published tag reported unpublished: %s", detail)
+		}
+	})
 }

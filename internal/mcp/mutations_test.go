@@ -91,6 +91,22 @@ func readAudit(t *testing.T, srv *Server) []AuditRecord {
 	return out
 }
 
+func assertAuditLifecycle(t *testing.T, records []AuditRecord, tool, result string) {
+	t.Helper()
+	if len(records) != 2 {
+		t.Fatalf("expected intent + completion records, got %+v", records)
+	}
+	if records[0].Tool != tool || records[0].Phase != "intent" || records[0].Result != "pending" {
+		t.Errorf("invalid intent record: %+v", records[0])
+	}
+	if records[1].Tool != tool || records[1].Phase != "completion" || records[1].Result != result {
+		t.Errorf("invalid completion record: %+v", records[1])
+	}
+	if records[0].OperationID == "" || records[0].OperationID != records[1].OperationID {
+		t.Errorf("audit records are not correlated: %+v", records)
+	}
+}
+
 func TestSyncRepoToolSuccess(t *testing.T) {
 	base := t.TempDir()
 	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
@@ -111,8 +127,10 @@ func TestSyncRepoToolSuccess(t *testing.T) {
 		t.Errorf("expected 1 pull call, got %d", pullCalls)
 	}
 	audit := readAudit(t, srv)
-	if len(audit) != 1 || audit[0].Tool != "corral_sync_repo" || audit[0].Result != "ok" {
-		t.Errorf("unexpected audit trail: %+v", audit)
+	assertAuditLifecycle(t, audit, "corral_sync_repo", "ok")
+	state, ok := readState(filepath.Join(base, "Public", "go", "alpha"))
+	if !ok || state.LastSyncedAt == "" {
+		t.Errorf("successful MCP sync should stamp state, got %+v", state)
 	}
 }
 
@@ -131,11 +149,9 @@ func TestSyncRepoToolPullFailure(t *testing.T) {
 		t.Error("expected error result")
 	}
 	audit := readAudit(t, srv)
-	if len(audit) != 1 || audit[0].Result != "error" {
-		t.Errorf("expected one 'error' audit entry, got %+v", audit)
-	}
-	if !strings.Contains(audit[0].Message, "network unreachable") {
-		t.Errorf("audit message should include upstream error: %+v", audit[0])
+	assertAuditLifecycle(t, audit, "corral_sync_repo", "error")
+	if !strings.Contains(audit[1].Message, "network unreachable") {
+		t.Errorf("audit message should include upstream error: %+v", audit[1])
 	}
 }
 
@@ -170,6 +186,7 @@ func TestCloneRepoToolSuccess(t *testing.T) {
 
 	srv := newMutationServer(t, base, false)
 	_, handler := srv.cloneRepoTool()
+	// #nosec G101 -- deliberate fake credential verifies redaction.
 	res := callTool(t, handler, map[string]any{
 		"url":    "https://github.com/o/repo.git",
 		"target": "Public/go/repo",
@@ -179,12 +196,61 @@ func TestCloneRepoToolSuccess(t *testing.T) {
 	}
 	// Confirm the audit trail captured it.
 	audit := readAudit(t, srv)
-	if len(audit) != 1 || audit[0].Tool != "corral_clone_repo" || audit[0].Result != "ok" {
-		t.Errorf("bad audit: %+v", audit)
-	}
+	assertAuditLifecycle(t, audit, "corral_clone_repo", "ok")
 	// Confirm the .git dir actually landed under Root.
 	if _, err := os.Stat(filepath.Join(base, "Public", "go", "repo", ".git")); err != nil {
 		t.Errorf("expected clone at target path: %v", err)
+	}
+}
+
+func TestCloneRepoToolRedactsCredentialsInAudit(t *testing.T) {
+	base := t.TempDir()
+	stubGitClone(t, func(ctx context.Context, rawURL, dir string, opts git.CloneOptions) error {
+		return os.MkdirAll(filepath.Join(dir, ".git"), 0o750)
+	})
+	srv := newMutationServer(t, base, false)
+	_, handler := srv.cloneRepoTool()
+	res := callTool(t, handler, map[string]any{
+		"url":    "https://user:super-secret@example.com/o/repo.git?token=also-secret", // #nosec G101 -- fake credential
+		"target": "Public/go/repo",
+	})
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", textOf(t, res))
+	}
+	body, err := os.ReadFile(srv.AuditLogPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "super-secret") || strings.Contains(string(body), "also-secret") {
+		t.Fatalf("audit log leaked clone credentials: %s", body)
+	}
+}
+
+func TestMutationRefusesWhenIntentCannotBeAudited(t *testing.T) {
+	base := t.TempDir()
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	stubGitClone(t, func(ctx context.Context, rawURL, dir string, opts git.CloneOptions) error {
+		called = true
+		return nil
+	})
+	srv, err := NewServer(ServerOptions{
+		Root: base, Version: "test", EnableMutations: true,
+		AuditLogPath: filepath.Join(blocker, "audit.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, handler := srv.cloneRepoTool()
+	res := callTool(t, handler, map[string]any{"url": "https://example.com/o/r.git", "target": "Public/go/r"})
+	if !res.IsError || !strings.Contains(textOf(t, res), "audit intent failed") {
+		t.Fatalf("expected audit-intent refusal, got %q", textOf(t, res))
+	}
+	if called {
+		t.Fatal("clone ran without a durable audit intent")
 	}
 }
 
@@ -257,9 +323,7 @@ func TestDeleteRepoToolSuccess(t *testing.T) {
 		t.Errorf("repo directory should have been removed")
 	}
 	audit := readAudit(t, srv)
-	if len(audit) != 1 || audit[0].Tool != "corral_delete_repo" || audit[0].Result != "ok" {
-		t.Errorf("bad audit: %+v", audit)
-	}
+	assertAuditLifecycle(t, audit, "corral_delete_repo", "ok")
 }
 
 func TestDeleteRepoToolRefusesDirtyTree(t *testing.T) {
@@ -301,8 +365,8 @@ func TestDeleteRepoToolRefusesUnpushedCommits(t *testing.T) {
 	if !res.IsError {
 		t.Error("expected refusal on unpushed commits")
 	}
-	if !strings.Contains(textOf(t, res), "unpushed commits") {
-		t.Errorf("expected 'unpushed commits' in error, got %q", textOf(t, res))
+	if !strings.Contains(textOf(t, res), "unpublished git state") {
+		t.Errorf("expected unpublished-state error, got %q", textOf(t, res))
 	}
 }
 
@@ -364,7 +428,7 @@ func TestAuditorWritesJSONL(t *testing.T) {
 	if err := a.Write(AuditRecord{Tool: "t2", Target: "b", Result: "refused", Message: "why"}); err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(logPath)
+	body, err := os.ReadFile(logPath) // #nosec G304 -- test-owned temporary path
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,12 +12,19 @@ import (
 	"time"
 )
 
+var auditUserHomeDir = os.UserHomeDir
+
 // AuditRecord is one entry in the mutation audit log. It captures enough
 // to reconstruct what an agent did after the fact — what tool was
 // invoked, what arguments it received, which repository was affected,
 // what the outcome was, and when. The fields are deliberately flat and
 // JSON-line encoded so `jq` and grep-style tools work naturally.
 type AuditRecord struct {
+	// OperationID correlates the durable intent and completion records emitted
+	// for a mutation.
+	OperationID string `json:"operation_id,omitempty"`
+	// Phase is either "intent" or "completion".
+	Phase string `json:"phase,omitempty"`
 	// Timestamp is the moment the audited operation completed, RFC 3339 UTC.
 	Timestamp string `json:"ts"`
 	// Tool is the MCP tool name that triggered the mutation
@@ -49,6 +56,16 @@ type Auditor struct {
 	mu   sync.Mutex
 }
 
+type auditFile interface {
+	Write([]byte) (int, error)
+	Close() error
+}
+
+var openAuditFile = func(name string, flag int, perm os.FileMode) (auditFile, error) {
+	// #nosec G304 -- name is the operator-configured audit destination, not request input.
+	return os.OpenFile(name, flag, perm)
+}
+
 // NewAuditor constructs an Auditor writing to the given path. When path
 // is empty, DefaultAuditLogPath is used. The parent directory is
 // created with 0o700 on first write so the log file itself is only
@@ -70,7 +87,7 @@ func DefaultAuditLogPath() string {
 	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
 		return filepath.Join(state, "corral", "mutations.log")
 	}
-	home, err := os.UserHomeDir()
+	home, err := auditUserHomeDir()
 	if err != nil {
 		// Rare — home dir is always resolvable on any supported platform.
 		// If it truly isn't, tempdir is a defensible last resort that at
@@ -101,7 +118,7 @@ func (a *Auditor) Write(r AuditRecord) error {
 	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
 		return fmt.Errorf("create audit dir: %w", err)
 	}
-	f, err := os.OpenFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := openAuditFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open audit log: %w", err)
 	}
