@@ -83,6 +83,11 @@ var mcpNewServer = func(opts mcp.ServerOptions) (mcpServer, error) {
 	return mcp.NewServer(opts)
 }
 
+var (
+	absMCPPath = filepath.Abs
+	statMCP    = os.Stat
+)
+
 func runMCP(cmd *cobra.Command, args []string) error {
 	root := mcpRoot
 	if root == "" {
@@ -91,11 +96,11 @@ func runMCP(cmd *cobra.Command, args []string) error {
 	if root == "" {
 		root = defaultBaseDir()
 	}
-	abs, err := filepath.Abs(root)
+	abs, err := absMCPPath(root)
 	if err != nil {
 		return fmt.Errorf("resolving root %q: %w", root, err)
 	}
-	info, err := os.Stat(abs)
+	info, err := statMCP(abs)
 	if err != nil {
 		return fmt.Errorf("root %q is not accessible: %w", abs, err)
 	}

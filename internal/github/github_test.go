@@ -191,6 +191,159 @@ func TestFetchReposWithClientOptions(t *testing.T) {
 	}
 }
 
+func TestFetchPaginationFailureAndCancellation(t *testing.T) {
+	t.Run("concurrent page failure", func(t *testing.T) {
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/users/org":
+				return jsonResp(req, http.StatusOK, `{"type":"Organization"}`, nil), nil
+			case "/orgs/org/repos":
+				if req.URL.Query().Get("page") == "2" {
+					return jsonResp(req, http.StatusInternalServerError, `{"message":"boom"}`, nil), nil
+				}
+				return jsonResp(req, http.StatusOK, `[{"name":"one"}]`, map[string]string{
+					"Link": `<https://api.test/orgs/org/repos?page=2>; rel="next", <https://api.test/orgs/org/repos?page=2>; rel="last"`,
+				}), nil
+			default:
+				return nil, fmt.Errorf("unexpected path %s", req.URL.Path)
+			}
+		})
+		_, err := FetchReposWithClientOptions(context.Background(), newTestClient(rt), "org", FetchOptions{IncludeForks: true, IncludeArchived: true})
+		if err == nil || !strings.Contains(err.Error(), "concurrent fetch failed") {
+			t.Fatalf("expected concurrent page failure, got %v", err)
+		}
+	})
+
+	t.Run("context canceled before concurrent pages", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/users/org" {
+				return jsonResp(req, http.StatusOK, `{"type":"Organization"}`, nil), nil
+			}
+			if req.URL.Query().Get("page") == "2" {
+				return nil, req.Context().Err()
+			}
+			cancel()
+			return jsonResp(req, http.StatusOK, `[{"name":"one"}]`, map[string]string{
+				"Link": `<https://api.test/orgs/org/repos?page=2>; rel="next", <https://api.test/orgs/org/repos?page=2>; rel="last"`,
+			}), nil
+		})
+		_, err := FetchReposWithClientOptions(ctx, newTestClient(rt), "org", FetchOptions{IncludeForks: true, IncludeArchived: true})
+		if err == nil || !strings.Contains(err.Error(), "concurrent fetch failed") {
+			t.Fatalf("expected canceled concurrent fetch, got %v", err)
+		}
+	})
+}
+
+func TestFetchSequentialPaginationAndSorts(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/users/person":
+			return jsonResp(req, http.StatusOK, `{"type":"User","login":"person"}`, nil), nil
+		case "/user":
+			return jsonResp(req, http.StatusForbidden, `{"message":"no auth"}`, nil), nil
+		case "/users/person/repos":
+			page := req.URL.Query().Get("page")
+			switch page {
+			case "2":
+				return jsonResp(req, http.StatusOK, `[{"name":"alpha","stargazers_count":9,"pushed_at":"2026-02-01T00:00:00Z"}]`, map[string]string{
+					"Link": `<https://api.test/users/person/repos?page=3>; rel="next"`,
+				}), nil
+			case "3":
+				return jsonResp(req, http.StatusOK, `[{"name":"middle","stargazers_count":3,"pushed_at":"2026-01-15T00:00:00Z"}]`, nil), nil
+			default:
+				return jsonResp(req, http.StatusOK, `[{"name":"zulu","stargazers_count":1,"pushed_at":"2026-01-01T00:00:00Z"}]`, map[string]string{
+					"Link": `<https://api.test/users/person/repos?page=2>; rel="next"`,
+				}), nil
+			}
+		default:
+			return nil, fmt.Errorf("unexpected path %s", req.URL.Path)
+		}
+	})
+	client := newTestClient(rt)
+	for _, tc := range []struct {
+		sort, first string
+	}{{"name", "alpha"}, {"stars", "alpha"}, {"updated", "alpha"}, {"last updated", "alpha"}} {
+		repos, err := FetchReposWithClientOptions(context.Background(), client, "person", FetchOptions{
+			Sort: tc.sort, IncludeForks: true, IncludeArchived: true,
+		})
+		if err != nil || len(repos) != 3 || repos[0].Name != tc.first {
+			t.Fatalf("sort %q result = %+v, %v", tc.sort, repos, err)
+		}
+	}
+}
+
+func TestMapRepositoryBuildsFullName(t *testing.T) {
+	repo := mapRepository(&gh.Repository{Name: gh.Ptr("repo"), Owner: &gh.User{Login: gh.Ptr("owner")}})
+	if repo.FullName != "owner/repo" || repo.Owner != "owner" {
+		t.Fatalf("mapped identity = %+v", repo)
+	}
+}
+
+func TestRemainingPaginationBranches(t *testing.T) {
+	t.Run("search error", func(t *testing.T) {
+		client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return jsonResp(req, http.StatusInternalServerError, `{"message":"boom"}`, nil), nil
+		}))
+		if _, err := FetchReposWithClientOptions(context.Background(), client, "topic:test", FetchOptions{}); err == nil {
+			t.Fatal("expected search error")
+		}
+	})
+
+	t.Run("concurrent page limit", func(t *testing.T) {
+		client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/users/org" {
+				return jsonResp(req, http.StatusOK, `{"type":"Organization"}`, nil), nil
+			}
+			if req.URL.Query().Get("page") == "2" {
+				return jsonResp(req, http.StatusOK, `[{"name":"two"},{"name":"three"}]`, nil), nil
+			}
+			return jsonResp(req, http.StatusOK, `[{"name":"one"}]`, map[string]string{
+				"Link": `<https://api.test/orgs/org/repos?page=2>; rel="next", <https://api.test/orgs/org/repos?page=2>; rel="last"`,
+			}), nil
+		}))
+		repos, err := FetchReposWithClientOptions(context.Background(), client, "org", FetchOptions{Limit: 2, IncludeForks: true, IncludeArchived: true})
+		if err != nil || len(repos) != 2 {
+			t.Fatalf("limited concurrent repos = %+v, %v", repos, err)
+		}
+	})
+
+	t.Run("sequential error and filtered limit", func(t *testing.T) {
+		failing := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/users/person" {
+				return jsonResp(req, http.StatusOK, `{"type":"User"}`, nil), nil
+			}
+			if req.URL.Path == "/user" {
+				return jsonResp(req, http.StatusForbidden, `{}`, nil), nil
+			}
+			if req.URL.Query().Get("page") == "2" {
+				return jsonResp(req, http.StatusInternalServerError, `{"message":"boom"}`, nil), nil
+			}
+			return jsonResp(req, http.StatusOK, `[{"name":"one"}]`, map[string]string{"Link": `<https://api.test/users/person/repos?page=2>; rel="next"`}), nil
+		}))
+		if _, err := FetchReposWithClientOptions(context.Background(), failing, "person", FetchOptions{}); err == nil || !strings.Contains(err.Error(), "fallback fetch failed") {
+			t.Fatalf("expected fallback error, got %v", err)
+		}
+
+		filtered := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Path == "/users/person" {
+				return jsonResp(req, http.StatusOK, `{"type":"User"}`, nil), nil
+			}
+			if req.URL.Path == "/user" {
+				return jsonResp(req, http.StatusForbidden, `{}`, nil), nil
+			}
+			if req.URL.Query().Get("page") == "2" {
+				return jsonResp(req, http.StatusOK, `[{"name":"skip","archived":true},{"name":"two"},{"name":"three"}]`, map[string]string{"Link": `<https://api.test/users/person/repos?page=3>; rel="next"`}), nil
+			}
+			return jsonResp(req, http.StatusOK, `[{"name":"one"}]`, map[string]string{"Link": `<https://api.test/users/person/repos?page=2>; rel="next"`}), nil
+		}))
+		repos, err := FetchReposWithClientOptions(context.Background(), filtered, "person", FetchOptions{Limit: 2, IncludeForks: true})
+		if err != nil || len(repos) != 2 {
+			t.Fatalf("filtered sequential repos = %+v, %v", repos, err)
+		}
+	})
+}
+
 func TestRetryTransport(t *testing.T) {
 	var calls int32
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -576,10 +729,10 @@ func TestFetchReposTypeAndSort(t *testing.T) {
 
 	// Test sort by stars (descending)
 	repos, err = FetchReposWithClientOptions(context.Background(), client, "topic:ai", FetchOptions{
-		Type: "all",
-		Sort: "stars",
+		Type:            "all",
+		Sort:            "stars",
 		IncludeArchived: true,
-		IncludeForks: true,
+		IncludeForks:    true,
 	})
 	if err != nil {
 		t.Fatalf("expected success, got %v", err)

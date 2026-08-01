@@ -74,6 +74,10 @@ type Server struct {
 // users control over it invites confusion about staleness bugs.
 const scanTTL = 5 * time.Second
 
+var serveStdio = server.ServeStdio
+
+var scanWorkspace = Scan
+
 // scan returns a cached workspace Index, walking the filesystem only
 // when the previous snapshot has expired. Safe for concurrent callers
 // (single mutex; the walk itself is not parallel so there is no gain
@@ -85,7 +89,7 @@ func (s *Server) scan() (*Index, error) {
 	if s.scanIndex != nil && time.Now().Before(s.scanExpires) {
 		return s.scanIndex, nil
 	}
-	idx, err := Scan(s.opts.Root)
+	idx, err := scanWorkspace(s.opts.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +164,7 @@ func (s *Server) AuditLogPath() string {
 // Stdout is reserved for the JSON-RPC protocol stream — any debug logging
 // the cmd layer wants to emit must go to stderr.
 func (s *Server) ServeStdio() error {
-	return server.ServeStdio(s.mcp)
+	return serveStdio(s.mcp)
 }
 
 // Root returns the sandbox root the server was configured with. Useful

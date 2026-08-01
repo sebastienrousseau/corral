@@ -75,6 +75,11 @@ func TestEngineRunInvalidConfig(t *testing.T) {
 }
 
 func TestEngineRunHeadlessErrors(t *testing.T) {
+	oldOsExit := osExit
+	exitCode := 0
+	osExit = func(code int) { exitCode = code }
+	t.Cleanup(func() { osExit = oldOsExit })
+
 	oldFetchRepos := fetchRepos
 	defer func() { fetchRepos = oldFetchRepos }()
 	fetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
@@ -106,6 +111,9 @@ func TestEngineRunHeadlessErrors(t *testing.T) {
 	opts.Fetch.Limit = 2
 	opts.DoSync = false
 	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Errorf("Expected exit code 1 for a failed repository, got %d", exitCode)
+	}
 }
 
 func TestEngineRunSuccess(t *testing.T) {
@@ -410,7 +418,7 @@ func TestRunProgramDefault(t *testing.T) {
 	p := tea.NewProgram(
 		quitModel{},
 		tea.WithoutRenderer(),
-		tea.WithInput(nil),
+		tea.WithInput(strings.NewReader("")),
 		tea.WithOutput(io.Discard),
 	)
 	if _, err := runProgram(p); err != nil {
@@ -800,8 +808,7 @@ func TestEngineRunCanceledTextSilentOnTTY(t *testing.T) {
 
 // TestEngineRunCanceledTextNoisyOnNonTTY is the inverse: scripted callers
 // piping the text output should get one log line documenting the cancel.
-// Note: Run rewires log.SetOutput(os.Stdout) on the non-TTY path, so we
-// capture stdout rather than redirecting the log package.
+// Diagnostics are written to stderr so stdout remains safe for structured output.
 func TestEngineRunCanceledTextNoisyOnNonTTY(t *testing.T) {
 	oldFetchRepos := fetchRepos
 	oldGitClone := gitClone
@@ -831,8 +838,8 @@ func TestEngineRunCanceledTextNoisyOnNonTTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldStdout := os.Stdout
-	os.Stdout = w
+	oldStderr := os.Stderr
+	os.Stderr = w
 
 	opts := defaultRunOptions(baseDir)
 	opts.Output = OutputText
@@ -841,7 +848,7 @@ func TestEngineRunCanceledTextNoisyOnNonTTY(t *testing.T) {
 	Run(ctx, opts)
 
 	_ = w.Close()
-	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 	captured, _ := io.ReadAll(r)
 
 	if !strings.Contains(string(captured), "operation canceled") {
@@ -913,6 +920,11 @@ func TestEngineRunJSONEncodeError(t *testing.T) {
 // TestEngineRunNDJSONEncodeError covers the OutputNDJSON per-result
 // encode-failure branch by directing stdout to a broken pipe.
 func TestEngineRunNDJSONEncodeError(t *testing.T) {
+	oldOsExit := osExit
+	exitCode := 0
+	osExit = func(code int) { exitCode = code }
+	t.Cleanup(func() { osExit = oldOsExit })
+
 	oldFetchRepos := fetchRepos
 	oldGitClone := gitClone
 	defer func() {
@@ -940,6 +952,10 @@ func TestEngineRunNDJSONEncodeError(t *testing.T) {
 	restore := withRedirectedStdout(t)
 	Run(context.Background(), opts)
 	restore()
+
+	if exitCode != 1 {
+		t.Errorf("expected exit 1 on ndjson encode failure, got %d", exitCode)
+	}
 }
 
 // TestMigrateLegacyFailures covers the MkdirAll-failure and Rename-failure
@@ -1147,6 +1163,62 @@ func TestRunWiresGitTokenProvider(t *testing.T) {
 	}
 	if got := git.TokenProvider(); got != "tok-xyz" {
 		t.Errorf("git.TokenProvider() = %q, want tok-xyz", got)
+	}
+}
+
+func TestProcessRepoRelocatesByCanonicalIdentity(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "Public", "go", "old")
+	target := filepath.Join(base, "acme", "Public", "go", "repo")
+	if err := os.MkdirAll(filepath.Join(existing, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(existing, ".git", "config"), []byte("[remote \"origin\"]\nurl = git@github.com:acme/repo.git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := processRepo(context.Background(), "acme", "https", false, false, git.CloneOptions{}, SyncOptions{}, Job{
+		Repo:   github.Repo{Name: "repo", Owner: "acme", FullName: "acme/repo", Visibility: "Public", Language: "Go"},
+		Target: target, Existing: existing,
+	})
+	if !result.Moved || result.Action != "SKIP" {
+		t.Fatalf("unexpected relocation result: %+v", result)
+	}
+	if !git.IsRepository(target) {
+		t.Fatalf("expected repository at relocated target %s", target)
+	}
+}
+
+func TestProcessRepoRejectsIdentityCollision(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "old")
+	target := filepath.Join(base, "target")
+	for _, path := range []string{existing, target} {
+		if err := os.MkdirAll(filepath.Join(path, ".git"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result := processRepo(context.Background(), "acme", "https", false, false, git.CloneOptions{}, SyncOptions{}, Job{
+		Repo:   github.Repo{Name: "repo", Owner: "acme", FullName: "acme/repo"},
+		Target: target, Existing: existing,
+	})
+	if result.Action != "ERROR" || !strings.Contains(result.Message, "target collision") {
+		t.Fatalf("unexpected collision result: %+v", result)
+	}
+}
+
+func TestSearchLayoutIncludesRepositoryOwner(t *testing.T) {
+	repo := github.Repo{Name: "shared", Owner: "second", FullName: "second/shared", Visibility: "Public", Language: "Go"}
+	opts := defaultRunOptions(t.TempDir())
+	opts.Owner = "topic:shared"
+	if got := effectiveLayout(opts, repo); got != searchLayout {
+		t.Fatalf("effective layout = %q, want %q", got, searchLayout)
+	}
+	rel, err := evaluateLayout(effectiveLayout(opts, repo), repo, opts.Owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel != "second/public/go/shared" {
+		t.Fatalf("search path = %q", rel)
 	}
 }
 
@@ -1467,4 +1539,3 @@ func TestEvaluateLayout(t *testing.T) {
 		})
 	}
 }
-

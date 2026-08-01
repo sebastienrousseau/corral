@@ -43,7 +43,7 @@ Corral operates across four trust boundaries:
 | 1 | User's shell → `corralctl` process    | in            | CLI flags, environment (`GITHUB_TOKEN`), stdin   |
 | 2 | `corralctl` → GitHub API              | out           | REST requests with the user's PAT                |
 | 3 | `corralctl` → local filesystem        | out           | `git clone`/`git pull` writes under target dir   |
-| 4 | MCP client (LLM host) → MCP server    | in            | JSON-RPC tool calls; no filesystem writes        |
+| 4 | MCP client (LLM host) → MCP server    | in            | JSON-RPC calls; gated mutations may write locally |
 
 Boundary 2 also includes `git clone` traffic to `github.com` over HTTPS.
 
@@ -51,17 +51,18 @@ Boundary 2 also includes `git clone` traffic to `github.com` over HTTPS.
 
 We claim the following properties. Each is followed by the evidence.
 
-### C1. Corral cannot exfiltrate credentials to a third party
+### C1. Corral does not persist or log resolved GitHub credentials
 
-**Argument.** The only credential Corral reads is `GITHUB_TOKEN` (or the
-value passed via `--token`). It is used exclusively as an
-`Authorization: token …` header on requests to `https://api.github.com`
-and as the `git`-embedded credential for `https://github.com` clones. No
-other outbound host is contacted.
+**Argument.** Corral resolves credentials from `GITHUB_TOKEN`, `GH_TOKEN`,
+or `gh auth token`. HTTPS Git authentication is injected through process
+environment configuration, not command arguments or repository config. Clone
+URLs accepted by the opt-in MCP mutation API may target other hosts, but their
+userinfo and query strings are redacted before audit logging.
 
 **Evidence.**
-- `git grep -n 'http'` in `internal/github/` shows every request goes to
-  `api.github.com`.
+- `internal/git/git.go` supplies the GitHub authorization header through
+  `GIT_CONFIG_*` environment variables scoped to `https://github.com/`.
+- Mutation tests assert credential-bearing URLs are redacted in audit records.
 - No telemetry / analytics dependency. `go list -deps ./...` includes no
   analytics SDK.
 - `--dry-run` prints the exact operations without executing them, so an
@@ -69,12 +70,10 @@ other outbound host is contacted.
 
 ### C2. Corral cannot write outside the user-specified target directory
 
-**Argument.** The single target directory is derived from a positional
-argument or CLI flag, resolved once via `filepath.Abs`, and used as the
-root for every subsequent `git clone`/`git pull`. The engine does not
-consume any path from GitHub API responses; only the API-provided
-repository *name* is joined onto the resolved root, and repository names
-containing `/`, `..`, or path separators are rejected upstream by GitHub.
+**Argument.** Engine layout results reject absolute paths and traversal.
+MCP paths are canonicalised against the workspace, while file resources are
+additionally confined to the selected repository. Mutation targets are checked
+with the same root sandbox before any filesystem operation.
 
 **Evidence.**
 - Preflight (`cmd/preflight.go`) prints the absolute target path before
@@ -88,7 +87,8 @@ containing `/`, `..`, or path separators are rejected upstream by GitHub.
 
 **Argument.** Every release is:
 
-1. Built by a GitHub-hosted runner from a signed tag on `main`.
+1. Built by a GitHub-hosted runner from a semantic-version tag whose commit is
+   verified as reachable from `main`.
 2. Signed keylessly with cosign (Sigstore/Fulcio/Rekor).
 3. Accompanied by an SLSA v1.0 provenance attestation produced by
    `actions/attest-build-provenance`.
@@ -99,29 +99,32 @@ Users can verify with:
 ```bash
 gh attestation verify corralctl_*_linux_amd64.tar.gz \
   --owner sebastienrousseau
-cosign verify-blob corralctl_*_linux_amd64.tar.gz \
-  --signature corralctl_*_linux_amd64.tar.gz.sig \
-  --certificate corralctl_*_linux_amd64.tar.gz.pem \
-  --certificate-identity-regexp 'https://github.com/sebastienrousseau/corral' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+cosign verify \
+  --certificate-identity-regexp='https://github.com/sebastienrousseau/corral/.github/workflows/release.yml@refs/tags/.*' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+  ghcr.io/sebastienrousseau/corral:VERSION
 ```
 
 **Evidence.**
 - `.github/workflows/release.yml` shows the full pipeline; every action
   is SHA-pinned per OpenSSF Scorecard `Pinned-Dependencies`.
-- v0.0.13 release page shows the `.pem`/`.sig` pair per artefact and the
-  Sigstore bundle inline in the attestation.
+- The release workflow runs `go test ./...` before GoReleaser and attests the
+  generated checksum manifest; OCI images are signed separately with cosign.
 
-### C4. The MCP server does not modify the local mirror
+### C4. MCP mutations require explicit capability gates and durable audit intent
 
-**Argument.** The MCP server (`cmd/mcp/…`) registers only read-shaped
-tools: `list_repos`, `find_repo`, `stats`, etc. There is no tool that
-invokes `git`, writes files, or shells out. It reads the JSON manifest
-Corral produced during the last `sync`.
+**Argument.** The default server registers only read operations. Clone and sync
+require `--enable-mutations`; deletion additionally requires
+`--enable-destructive-mutations`. A mutation refuses to start unless its intent
+record is durably appended. Completion or failure is linked by operation ID.
+Deletion refuses dirty or unpublished state across every branch, stashes, and
+tags, and fails closed when verification is unavailable.
 
 **Evidence.**
-- `git grep -n 'exec.Command\|os.WriteFile\|os.Create' cmd/mcp internal/mcp`
-  returns no hits.
+- `internal/mcp/mutations_test.go` covers capability gates, audit failures,
+  credential redaction, and delete refusal paths.
+- `internal/git/git_test.go` covers non-current branches, stashes, tags, and
+  linked worktrees.
 
 ### C5. Corral fails closed on empty or hostile upstream state
 

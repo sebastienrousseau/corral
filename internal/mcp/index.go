@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/sebastienrousseau/corral/internal/git"
 )
@@ -77,6 +78,8 @@ type Index struct {
 	// Repos is the discovered set of clones, sorted deterministically
 	// by RelPath for stable agent output.
 	Repos []RepoEntry
+	// Truncated reports that the configured repository cap was reached.
+	Truncated bool
 }
 
 // stateFileName mirrors engine.StateFileName without importing the
@@ -90,6 +93,32 @@ const stateFileName = ".corral-state.json"
 // plus a generous one-level slack for custom Layouts.
 const maxIndexDepth = 4
 
+// maxIndexRepos bounds memory and response size for accidentally broad roots.
+var maxIndexRepos = 10_000
+
+var (
+	absIndex         = filepath.Abs
+	statIndex        = os.Stat
+	walkIndex        = filepath.WalkDir
+	relIndex         = filepath.Rel
+	readStateFile    = os.ReadFile
+	absSafePath      = filepath.Abs
+	relSafePath      = filepath.Rel
+	evalSafePath     = filepath.EvalSymlinks
+	renameSyncFile   = os.Rename
+	marshalSyncState = json.MarshalIndent
+)
+
+type syncTempFile interface {
+	Write([]byte) (int, error)
+	Close() error
+	Name() string
+}
+
+var createSyncTemp = func(dir, pattern string) (syncTempFile, error) {
+	return os.CreateTemp(dir, pattern)
+}
+
 // Scan walks root looking for directories that contain a .git child
 // and returns an Index. The walk stops descending into a directory
 // once it has been identified as a repository root (no recursing into
@@ -100,11 +129,11 @@ const maxIndexDepth = 4
 // the root itself is unreadable, so a caller can distinguish a
 // misconfigured root from an empty workspace.
 func Scan(root string) (*Index, error) {
-	absRoot, err := filepath.Abs(root)
+	absRoot, err := absIndex(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolving root: %w", err)
 	}
-	info, err := os.Stat(absRoot)
+	info, err := statIndex(absRoot)
 	if err != nil {
 		return nil, fmt.Errorf("stat root: %w", err)
 	}
@@ -118,7 +147,11 @@ func Scan(root string) (*Index, error) {
 	// because the walk is best-effort discovery, not a transactional
 	// scan: surfacing every unreadable directory would force the agent
 	// into noise.
-	_ = filepath.WalkDir(absRoot, func(path string, d fs.DirEntry, walkErr error) error {
+	_ = walkIndex(absRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if len(idx.Repos) >= maxIndexRepos {
+			idx.Truncated = true
+			return fs.SkipAll
+		}
 		if walkErr != nil {
 			// Unreadable: skip its subtree without aborting the scan.
 			if d != nil && d.IsDir() {
@@ -129,7 +162,7 @@ func Scan(root string) (*Index, error) {
 		if !d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(absRoot, path)
+		rel, err := relIndex(absRoot, path)
 		if err != nil {
 			return fs.SkipDir
 		}
@@ -140,10 +173,8 @@ func Scan(root string) (*Index, error) {
 		if depth > maxIndexDepth {
 			return fs.SkipDir
 		}
-		// A directory containing .git is a repository root. Capture it
-		// and don't descend further into the working tree.
-		gitDir := filepath.Join(path, ".git")
-		if st, err := os.Stat(gitDir); err == nil && st.IsDir() {
+		// Accept both regular clones and linked worktrees (.git is a file).
+		if git.IsRepository(path) {
 			idx.Repos = append(idx.Repos, buildEntry(absRoot, path))
 			return fs.SkipDir
 		}
@@ -199,7 +230,7 @@ func buildEntry(root, repoPath string) RepoEntry {
 // tool call itself.
 func readState(repoPath string) (*StateRecord, bool) {
 	path := filepath.Join(repoPath, stateFileName)
-	b, err := os.ReadFile(path)
+	b, err := readStateFile(path) // #nosec G304 -- repoPath comes from the root-confined index
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("corral-mcp: read state %s: %v", path, err)
@@ -212,6 +243,37 @@ func readState(repoPath string) (*StateRecord, bool) {
 		return nil, false
 	}
 	return &s, true
+}
+
+// markStateSynced records a successful MCP-triggered pull while preserving the
+// last upstream pushed_at value observed by the GitHub-backed sync engine.
+func markStateSynced(repoPath string) error {
+	state, ok := readState(repoPath)
+	if !ok {
+		state = &StateRecord{}
+	}
+	state.LastSyncedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	b, err := marshalSyncState(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal sync state: %w", err)
+	}
+	tmp, err := createSyncTemp(repoPath, stateFileName+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create sync state: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write sync state: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close sync state: %w", err)
+	}
+	if err := renameSyncFile(tmpPath, filepath.Join(repoPath, stateFileName)); err != nil {
+		return fmt.Errorf("replace sync state: %w", err)
+	}
+	return nil
 }
 
 // Find returns the entry whose Name, RelPath, or RemoteURL repo segment
@@ -272,19 +334,19 @@ func (i *Index) SafePath(path string) (string, error) {
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(i.Root, path)
 	}
-	rawAbs, err := filepath.Abs(candidate)
+	rawAbs, err := absSafePath(candidate)
 	if err != nil {
 		return "", fmt.Errorf("resolving path: %w", err)
 	}
 
 	rootCanon := i.Root
-	if r, err := filepath.EvalSymlinks(i.Root); err == nil {
+	if r, err := evalSafePath(i.Root); err == nil {
 		rootCanon = r
 	}
 
 	absCanon := canonicalizeExistingPrefix(rawAbs)
 
-	rel, err := filepath.Rel(rootCanon, absCanon)
+	rel, err := relSafePath(rootCanon, absCanon)
 	if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
 		return "", fmt.Errorf("path %q escapes root %q", path, i.Root)
 	}
@@ -298,7 +360,7 @@ func (i *Index) SafePath(path string) (string, error) {
 // canonical form we can use. Falls back to the raw path when no
 // ancestor resolves (shouldn't happen on a normal POSIX root).
 func canonicalizeExistingPrefix(abs string) string {
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+	if resolved, err := evalSafePath(abs); err == nil {
 		return resolved
 	}
 	dir := abs
@@ -308,7 +370,7 @@ func canonicalizeExistingPrefix(abs string) string {
 		if parent == dir {
 			return abs
 		}
-		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		if resolved, err := evalSafePath(parent); err == nil {
 			out := resolved
 			// Re-append the un-resolved children in original order.
 			suffixParts = append([]string{filepath.Base(dir)}, suffixParts...)

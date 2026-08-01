@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sebastienrousseau/corral/internal/engine"
 	"github.com/spf13/cobra"
@@ -26,6 +27,59 @@ func TestDefaultBaseDir(t *testing.T) {
 	userHomeDir = func() (string, error) { return "", fmt.Errorf("no home") }
 	if got, want := defaultBaseDir(), filepath.Join(".", "Code"); got != want {
 		t.Errorf("defaultBaseDir() fallback = %q, want %q", got, want)
+	}
+}
+
+func TestRootRunParsesTypeSortBaseAndLimit(t *testing.T) {
+	oldRun, oldYes, oldInteractive, oldExit := engineRun, assumeYes, interactive, osExit
+	oldTimeout := apiTimeout
+	t.Cleanup(func() {
+		engineRun, assumeYes, interactive, osExit = oldRun, oldYes, oldInteractive, oldExit
+		apiTimeout = oldTimeout
+	})
+	assumeYes, interactive = true, false
+	apiTimeout = time.Second
+	osExit = func(code int) { t.Fatalf("unexpected exit %d", code) }
+	var got engine.RunOptions
+	engineRun = func(ctx context.Context, opts engine.RunOptions) { got = opts }
+	base := t.TempDir()
+	rootCmd.Run(rootCmd, []string{"owner", "forks", "stars", base, "5"})
+	if got.Owner != "owner" || got.BaseDir != base || got.Fetch.Limit != 5 || got.Fetch.Type != "forks" || got.Fetch.Sort != "stars" {
+		t.Fatalf("parsed options = %+v", got)
+	}
+	rootCmd.Run(rootCmd, []string{"owner", "updated", base, "6"})
+	if got.Fetch.Type != "" || got.Fetch.Sort != "updated" || got.Fetch.Limit != 6 {
+		t.Fatalf("sort-only options = %+v", got.Fetch)
+	}
+	interactive = true
+	rootCmd.Run(rootCmd, []string{"owner"})
+	if !got.Interactive {
+		t.Fatal("interactive option not propagated")
+	}
+}
+
+func TestRootAPITimeoutValidation(t *testing.T) {
+	old := apiTimeout
+	t.Cleanup(func() { apiTimeout = old })
+	apiTimeout = 0
+	if err := rootCmd.PreRunE(rootCmd, []string{"owner"}); err == nil {
+		t.Fatal("expected non-positive API timeout error")
+	}
+}
+
+func TestRootRunPreflightAbort(t *testing.T) {
+	oldPreflight, oldRun, oldExit, oldInteractive := preflightRunner, engineRun, osExit, interactive
+	t.Cleanup(func() {
+		preflightRunner, engineRun, osExit, interactive = oldPreflight, oldRun, oldExit, oldInteractive
+	})
+	preflightRunner = func(string, string) bool { return false }
+	engineRun = func(context.Context, engine.RunOptions) { t.Fatal("engine must not run after abort") }
+	exitCode := -1
+	osExit = func(code int) { exitCode = code }
+	interactive = false
+	rootCmd.Run(rootCmd, []string{"owner"})
+	if exitCode != 0 {
+		t.Fatalf("abort exit = %d", exitCode)
 	}
 }
 

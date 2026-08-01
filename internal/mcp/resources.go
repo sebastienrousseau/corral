@@ -30,6 +30,15 @@ const (
 // bound documented for VS Code MCP clients and is plenty for source.
 const maxFileBytes = 1 << 20
 
+const maxTreeEntries = 2_000
+
+var (
+	marshalResource = json.MarshalIndent
+	walkResource    = filepath.WalkDir
+	openResource    = os.Open
+	readResourceAll = io.ReadAll
+)
+
 // registerResources attaches the v0 resource set (one static index +
 // three URI templates) to the underlying MCP server. URI scheme is
 // `corral://` per the design doc; templated paths use RFC 6570
@@ -57,7 +66,7 @@ func (s *Server) workspaceIndexResource() (mcp.Resource, func(ctx context.Contex
 		if err != nil {
 			return nil, fmt.Errorf("scan workspace: %w", err)
 		}
-		b, err := json.MarshalIndent(idx, "", "  ")
+		b, err := marshalResource(idx, "", "  ")
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +101,7 @@ func (s *Server) repoStateResource() (mcp.ResourceTemplate, func(ctx context.Con
 		if !ok {
 			return nil, fmt.Errorf("no .corral-state.json sidecar found in %s", repo.RelPath)
 		}
-		b, err := json.MarshalIndent(state, "", "  ")
+		b, err := marshalResource(state, "", "  ")
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +134,13 @@ func (s *Server) repoTreeResource() (mcp.ResourceTemplate, func(ctx context.Cont
 			return nil, err
 		}
 		var lines []string
-		err = filepath.WalkDir(repo.Path, func(path string, d os.DirEntry, walkErr error) error {
+		err = walkResource(repo.Path, func(path string, d os.DirEntry, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if len(lines) >= maxTreeEntries {
+				return filepath.SkipAll
+			}
 			if walkErr != nil {
 				return nil
 			}
@@ -154,6 +169,9 @@ func (s *Server) repoTreeResource() (mcp.ResourceTemplate, func(ctx context.Cont
 		})
 		if err != nil {
 			return nil, err
+		}
+		if len(lines) >= maxTreeEntries {
+			lines = append(lines, "[corral-mcp: tree truncated at 2000 entries]")
 		}
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{
@@ -187,22 +205,22 @@ func (s *Server) repoFileResource() (mcp.ResourceTemplate, func(ctx context.Cont
 		if err != nil {
 			return nil, err
 		}
-		idx := &Index{Root: s.opts.Root}
-		// Compose the candidate from the repo path so the traversal check
-		// uses the workspace root, not the per-repo root.
+		// Scope validation to the selected repository, not merely the wider
+		// workspace. Otherwise ../ traversal could read a sibling clone.
+		idx := &Index{Root: repo.Path}
 		candidate := filepath.Join(repo.Path, path)
 		safe, err := idx.SafePath(candidate)
 		if err != nil {
 			return nil, err
 		}
-		f, err := os.Open(safe) // #nosec G304 -- SafePath enforces the workspace sandbox
+		f, err := openResource(safe) // #nosec G304 -- SafePath enforces the workspace sandbox
 		if err != nil {
 			return nil, fmt.Errorf("open file: %w", err)
 		}
 		defer func() { _ = f.Close() }()
 
 		limited := io.LimitReader(f, maxFileBytes+1)
-		body, err := io.ReadAll(limited)
+		body, err := readResourceAll(limited)
 		if err != nil {
 			return nil, fmt.Errorf("read file: %w", err)
 		}

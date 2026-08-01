@@ -9,8 +9,10 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,12 @@ import (
 // it is never written to a repository's .git/config or exposed in the process
 // argument list.
 var TokenProvider func() string
+
+var (
+	runGitOutput       = gitOutput
+	updateSubmodulesFn = updateSubmodules
+	readFile           = os.ReadFile
+)
 
 // authEnv returns the environment variables that inject an Authorization header
 // for github.com HTTPS requests, or nil when no token is available. The header
@@ -51,10 +59,10 @@ func authEnv() []string {
 // askpass helper, or GPG pinentry.
 func nonInteractiveEnv() []string {
 	return []string{
-		"GIT_TERMINAL_PROMPT=0",   // disable interactive username/password prompts
-		"GIT_ASKPASS=/bin/true",   // suppress any askpass helper (GUI or CLI)
-		"SSH_ASKPASS=/bin/true",   // suppress SSH passphrase pinentry
-		"GCM_INTERACTIVE=Never",   // Git Credential Manager on macOS/Windows
+		"GIT_TERMINAL_PROMPT=0", // disable interactive username/password prompts
+		"GIT_ASKPASS=/bin/true", // suppress any askpass helper (GUI or CLI)
+		"SSH_ASKPASS=/bin/true", // suppress SSH passphrase pinentry
+		"GCM_INTERACTIVE=Never", // Git Credential Manager on macOS/Windows
 	}
 }
 
@@ -109,7 +117,9 @@ func Clone(ctx context.Context, url, targetDir string, opts CloneOptions) error 
 	withGitEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		// Do not include args here: MCP callers may supply clone URLs with
+		// embedded credentials, and errors are persisted to the audit log.
+		return fmt.Errorf("git clone failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -165,7 +175,7 @@ func Pull(ctx context.Context, targetDir string, opts PullOptions) error {
 	}
 
 	if opts.RecurseSubmodules && opts.IgnoreSubmoduleFailures {
-		if sErr := updateSubmodules(ctx, targetDir); sErr != nil {
+		if sErr := updateSubmodulesFn(ctx, targetDir); sErr != nil {
 			// Best-effort: log and swallow, matching the documented contract.
 			log.Printf("WARN: submodule update failed in %s: %v (continuing)", targetDir, sErr)
 		}
@@ -220,6 +230,123 @@ func IsEmpty(targetDir string) bool {
 	return cmd.Run() != nil
 }
 
+// IsRepository reports whether targetDir is a Git repository. It accepts both
+// the usual .git directory and the .git indirection file used by worktrees.
+func IsRepository(targetDir string) bool {
+	_, err := os.Stat(filepath.Join(targetDir, ".git"))
+	return err == nil
+}
+
+// CanonicalRemote normalizes common HTTPS, SSH, and scp-like Git remote URLs
+// into a host/path identity suitable for equality checks.
+func CanonicalRemote(raw string) string {
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, "/"))
+	if raw == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" {
+		host := strings.ToLower(parsed.Hostname())
+		path := strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/")
+		if host != "" && path != "" {
+			return strings.ToLower(host + "/" + path)
+		}
+	}
+	// scp-style SSH: git@github.com:owner/repo.git
+	if colon := strings.Index(raw, ":"); colon >= 0 {
+		hostPart := raw[:colon]
+		if at := strings.LastIndex(hostPart, "@"); at >= 0 {
+			hostPart = hostPart[at+1:]
+		}
+		path := strings.Trim(strings.TrimSuffix(raw[colon+1:], ".git"), "/")
+		if hostPart != "" && path != "" {
+			return strings.ToLower(hostPart + "/" + path)
+		}
+	}
+	return strings.ToLower(strings.TrimSuffix(raw, ".git"))
+}
+
+// HasUnpublishedWork reports whether deleting targetDir could discard Git
+// objects or state that are not represented by its remotes. It checks commits
+// reachable from every local branch, working-tree changes, stashes, and
+// local-only or divergent tags.
+// Verification errors fail closed and are returned in the detail string.
+func HasUnpublishedWork(ctx context.Context, targetDir string) (bool, string) {
+	if dirty, detail := HasLocalChanges(ctx, targetDir); dirty {
+		return true, detail
+	}
+	branchOut, err := runGitOutput(ctx, targetDir, "rev-list", "--count", "--branches", "--not", "--remotes")
+	if err != nil {
+		return true, "unable to verify local branches: " + err.Error()
+	}
+	branchCount := strings.TrimSpace(branchOut)
+	if branchCount != "" && branchCount != "0" {
+		return true, branchCount + " commits reachable only from local branches"
+	}
+
+	if _, err := runGitOutput(ctx, targetDir, "rev-parse", "--verify", "--quiet", "refs/stash"); err == nil {
+		return true, "stash entries are present"
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		return true, "unable to verify stash state: " + err.Error()
+	}
+
+	localTags, err := refMap(ctx, targetDir, "show-ref", "--tags")
+	if err != nil {
+		return true, "unable to inspect local tags: " + err.Error()
+	}
+	if len(localTags) == 0 {
+		return false, ""
+	}
+	remoteTags, err := refMap(ctx, targetDir, "ls-remote", "--tags", "--refs", "origin")
+	if err != nil {
+		return true, "unable to verify remote tags: " + err.Error()
+	}
+	for ref, hash := range localTags {
+		if remoteTags[ref] != hash {
+			return true, "local-only or divergent tag " + strings.TrimPrefix(ref, "refs/tags/")
+		}
+	}
+	return false, ""
+}
+
+// HasLocalChanges reports tracked, staged, or untracked working-tree changes.
+// Git errors are treated as unsafe so destructive callers fail closed.
+func HasLocalChanges(ctx context.Context, targetDir string) (bool, string) {
+	out, err := runGitOutput(ctx, targetDir, "status", "--porcelain")
+	if err != nil {
+		return true, fmt.Sprintf("cannot inspect working tree: %v", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		return true, "working tree has local changes"
+	}
+	return false, ""
+}
+
+func gitOutput(ctx context.Context, targetDir string, args ...string) (string, error) {
+	fullArgs := append([]string{"-C", targetDir}, args...)
+	cmd := exec.CommandContext(ctx, gitBinary, fullArgs...) // #nosec G204 -- fixed git binary and structured arguments
+	withGitEnv(cmd)
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+func refMap(ctx context.Context, targetDir string, args ...string) (map[string]string, error) {
+	out, err := runGitOutput(ctx, targetDir, args...)
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 && len(out) == 0 {
+			return map[string]string{}, nil
+		}
+		return nil, err
+	}
+	refs := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 {
+			refs[fields[1]] = fields[0]
+		}
+	}
+	return refs, nil
+}
+
 // RemoteOrigin retrieves the remote origin URL of the target directory by
 // invoking `git remote get-url origin`. Prefer RemoteOriginFromConfig on hot
 // paths (e.g. orphan detection over hundreds of clones) to avoid the
@@ -241,7 +368,23 @@ func RemoteOrigin(targetDir string) (string, error) {
 // is missing. Tolerates blank lines, `#` / `;` comments, indented entries,
 // and CRLF line endings.
 func RemoteOriginFromConfig(targetDir string) (string, error) {
-	f, err := os.Open(filepath.Join(targetDir, ".git", "config"))
+	gitDir, err := resolveGitDir(targetDir)
+	if err != nil {
+		return "", err
+	}
+	configPath := filepath.Join(gitDir, "config")
+	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+		// Linked worktrees keep config in the common repository directory.
+		// #nosec G304 -- gitDir is resolved from the repository's .git metadata.
+		if b, readErr := readFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+			common := strings.TrimSpace(string(b))
+			if !filepath.IsAbs(common) {
+				common = filepath.Join(gitDir, common)
+			}
+			configPath = filepath.Join(filepath.Clean(common), "config")
+		}
+	}
+	f, err := os.Open(configPath) // #nosec G304 -- path is resolved from targetDir's .git metadata
 	if err != nil {
 		return "", err
 	}
@@ -268,11 +411,39 @@ func RemoteOriginFromConfig(targetDir string) (string, error) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(k), "url") {
-			return strings.TrimSpace(v), nil
+			value := strings.Trim(strings.TrimSpace(v), `"`)
+			return strings.ReplaceAll(value, `\\`, `\`), nil
 		}
 	}
 	if err := s.Err(); err != nil {
 		return "", err
 	}
-	return "", fmt.Errorf("origin url not found in %s", filepath.Join(targetDir, ".git", "config"))
+	return "", fmt.Errorf("origin url not found in %s", configPath)
+}
+
+// resolveGitDir resolves targetDir/.git to the actual Git metadata directory.
+// Worktrees store a `gitdir: ...` pointer in a regular .git file.
+func resolveGitDir(targetDir string) (string, error) {
+	dotGit := filepath.Join(targetDir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return dotGit, nil
+	}
+	b, err := readFile(dotGit) // #nosec G304 -- dotGit is scoped to targetDir
+	if err != nil {
+		return "", err
+	}
+	line := strings.TrimSpace(string(b))
+	const prefix = "gitdir:"
+	if !strings.HasPrefix(strings.ToLower(line), prefix) {
+		return "", fmt.Errorf("invalid gitdir file %s", dotGit)
+	}
+	dir := strings.TrimSpace(line[len(prefix):])
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(targetDir, dir)
+	}
+	return filepath.Clean(dir), nil
 }

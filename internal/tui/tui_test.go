@@ -4,11 +4,15 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/sebastienrousseau/corral/internal/github"
 )
@@ -17,6 +21,109 @@ func TestModelInit(t *testing.T) {
 	m := NewModel(10)
 	if m.Init() != nil {
 		t.Errorf("Expected Init to return nil")
+	}
+}
+
+func TestRepositoryIdentityKeepsDuplicateNamesDistinct(t *testing.T) {
+	first := github.Repo{Name: "shared", Owner: "one", FullName: "one/shared"}
+	second := github.Repo{Name: "shared", Owner: "two", FullName: "two/shared"}
+	if repoSelectionKey(first) == repoSelectionKey(second) {
+		t.Fatal("owner-qualified repositories must have distinct selection keys")
+	}
+	if repoDisplayName(first) != "one/shared" {
+		t.Fatalf("display name = %q", repoDisplayName(first))
+	}
+	fallback := github.Repo{Name: "repo", Owner: "owner"}
+	if repoSelectionKey(fallback) != "owner/repo" || repoDisplayName(fallback) != "repo" {
+		t.Fatalf("unexpected fallback identity: %q %q", repoSelectionKey(fallback), repoDisplayName(fallback))
+	}
+}
+
+func TestRunSelectorOutcomes(t *testing.T) {
+	oldRun := runSelectorProgram
+	t.Cleanup(func() { runSelectorProgram = oldRun })
+	wantErr := errors.New("runner failed")
+	runSelectorProgram = func(context.Context, tea.Model) (tea.Model, error) { return nil, wantErr }
+	if _, _, err := RunSelector(context.Background(), "owner", github.FetchOptions{}, nil); !errors.Is(err, wantErr) {
+		t.Fatalf("runner error = %v", err)
+	}
+
+	runSelectorProgram = func(ctx context.Context, model tea.Model) (tea.Model, error) {
+		selected := model.(*selectorModel)
+		selected.loadingErr = errors.New("fetch failed")
+		return selected, nil
+	}
+	if _, _, err := RunSelector(context.Background(), "owner", github.FetchOptions{}, nil); err == nil {
+		t.Fatal("expected loading error")
+	}
+
+	for _, configure := range []func(*selectorModel){
+		func(m *selectorModel) { m.quitting = true },
+		func(m *selectorModel) { m.confirmed = false },
+	} {
+		runSelectorProgram = func(ctx context.Context, model tea.Model) (tea.Model, error) {
+			selected := model.(*selectorModel)
+			configure(selected)
+			return selected, nil
+		}
+		if repos, ok, err := RunSelector(context.Background(), "owner", github.FetchOptions{}, nil); err != nil || ok || repos != nil {
+			t.Fatalf("cancel outcome = %v %v %v", repos, ok, err)
+		}
+	}
+
+	first := github.Repo{Name: "a", Owner: "one", FullName: "one/a"}
+	second := github.Repo{Name: "b", Owner: "two", FullName: "two/b"}
+	runSelectorProgram = func(ctx context.Context, model tea.Model) (tea.Model, error) {
+		selected := model.(*selectorModel)
+		selected.confirmed = true
+		selected.repos = []github.Repo{first, second}
+		selected.selected[repoSelectionKey(second)] = true
+		return selected, nil
+	}
+	repos, ok, err := RunSelector(context.Background(), "owner", github.FetchOptions{}, nil)
+	if err != nil || !ok || len(repos) != 1 || repos[0].FullName != second.FullName {
+		t.Fatalf("selection outcome = %+v %v %v", repos, ok, err)
+	}
+}
+
+func TestSelectorInitFetchAndRenderingEdges(t *testing.T) {
+	want := []github.Repo{{Name: "repo"}}
+	m := NewSelectorModel(func() ([]github.Repo, error) { return want, nil })
+	batch, ok := m.Init()().(tea.BatchMsg)
+	if !ok || len(batch) < 2 {
+		t.Fatalf("Init message = %#v", batch)
+	}
+	msg := batch[1]().(fetchedReposMsg)
+	if len(msg.repos) != 1 || msg.err != nil {
+		t.Fatalf("fetch message = %+v", msg)
+	}
+
+	m.loading = false
+	m.repos = []github.Repo{
+		{Name: strings.Repeat("n", 40), Language: strings.Repeat("l", 20), Visibility: strings.Repeat("v", 15)},
+	}
+	for i := 0; i < 12; i++ {
+		m.repos = append(m.repos, github.Repo{Name: fmt.Sprintf("repo-%d", i), Language: "Go", Visibility: "Public"})
+	}
+	m.filteredRepos = m.repos
+	m.filteredRepos[11] = github.Repo{Name: strings.Repeat("n", 40), Language: strings.Repeat("l", 20), Visibility: strings.Repeat("v", 15)}
+	m.updateTableRows()
+	m.table.SetCursor(11)
+	m.selected[repoSelectionKey(m.repos[0])] = true
+	view := m.renderCustomTable()
+	if !strings.Contains(view, "...") {
+		t.Fatal("expected long cells to be truncated")
+	}
+
+	m.filter = "no-match"
+	m.applyFilter()
+	if len(m.filteredRepos) != 0 {
+		t.Fatal("expected empty filtered set")
+	}
+	m.filter = "/help"
+	m.applyFilter()
+	if m.filter != "/help" {
+		t.Fatal("slash filter unexpectedly changed")
 	}
 }
 
@@ -228,10 +335,10 @@ func TestSlashCommands(t *testing.T) {
 	m := NewSelectorModel(func() ([]github.Repo, error) {
 		return repos, nil
 	})
-	
+
 	newM, _ := m.Update(fetchedReposMsg{repos: repos, err: nil})
 	model := newM.(*selectorModel)
-	
+
 	// Test /all
 	model.executeSlashCommand("/all")
 	if !model.selected["a-repo"] || !model.selected["b-repo"] || !model.selected["c-repo"] {
@@ -438,4 +545,89 @@ func TestSelectorModelCoverage(t *testing.T) {
 	// Test ctrl+a / ctrl+n when loading (should ignore)
 	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	_, _ = mLoadKeys.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+}
+
+func TestRemainingSelectorStates(t *testing.T) {
+	t.Setenv("CORRAL_SHOW_LOGO", "0")
+	progressModel := NewModel(0).(model)
+	if view := progressModel.View(); !strings.Contains(view, "Corral - Organising Repositories") {
+		t.Fatalf("compact progress header missing: %q", view)
+	}
+
+	if runtime.GOOS != "windows" {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := runSelectorProgram(ctx, NewSelectorModel(func() ([]github.Repo, error) { return nil, nil })); err == nil {
+			t.Fatal("cancelled default selector runner must return an error")
+		}
+	}
+
+	repos := []github.Repo{
+		{Name: "alpha", Language: "Go", Visibility: "Private"},
+		{Name: "beta", Language: "Python", Visibility: "Public"},
+		{Name: "gamma", Language: "Rust", Visibility: "Public"},
+	}
+	m := NewSelectorModel(func() ([]github.Repo, error) { return repos, nil })
+	if _, cmd := m.Update(spinner.TickMsg{}); cmd == nil {
+		t.Fatal("spinner tick must schedule its next update")
+	}
+	if _, cmd := m.Update(fetchedReposMsg{err: errors.New("fetch failed")}); cmd == nil || m.loadingErr == nil {
+		t.Fatal("fetch failure must stop the selector")
+	}
+	m.loadingErr = nil
+	m.loading = false
+	m.repos = repos
+	m.filteredRepos = repos
+	m.updateTableRows()
+	m.table.SetCursor(2)
+	m.filter = "alpha"
+	m.applyFilter()
+	if m.table.Cursor() != 0 {
+		t.Fatalf("filtered cursor = %d", m.table.Cursor())
+	}
+	m.table.SetCursor(-1)
+	m.filter = ""
+	m.applyFilter()
+	if m.table.Cursor() != 0 {
+		t.Fatalf("negative cursor was not normalized: %d", m.table.Cursor())
+	}
+
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC}); cmd == nil || !m.quitting {
+		t.Fatal("ctrl+c must quit")
+	}
+	m.quitting = false
+	m.filter = "/"
+	if view := m.View(); !strings.Contains(view, "Command:") {
+		t.Fatalf("command prompt missing: %q", view)
+	}
+	m.filter = "/sort"
+	m.cmdErr = "bad command"
+	if view := m.View(); !strings.Contains(view, "bad command") {
+		t.Fatalf("command error missing: %q", view)
+	}
+
+	if cmd := m.executeSlashCommand("   "); cmd != nil {
+		t.Fatal("blank slash command returned a command")
+	}
+	m.executeSlashCommand("/help")
+	if !m.showHelp {
+		t.Fatal("/help did not enable help")
+	}
+	m.filteredRepos = []github.Repo{repos[0], repos[1]}
+	m.repos = append([]github.Repo(nil), m.filteredRepos...)
+	m.executeSlashCommand("/sort go")
+	if m.filteredRepos[0].Language != "Go" {
+		t.Fatalf("language preference sort = %+v", m.filteredRepos)
+	}
+
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = ""
+	if footer := m.renderFooter(); !strings.Contains(footer, "vdev") {
+		t.Fatalf("development footer = %q", footer)
+	}
+	Version = strings.Repeat("v", 100)
+	if footer := m.renderFooter(); !strings.Contains(footer, Version) {
+		t.Fatalf("long-version footer = %q", footer)
+	}
 }

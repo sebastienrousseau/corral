@@ -32,13 +32,24 @@ type cloneState struct {
 	LastSyncedAt time.Time `json:"last_synced_at"`
 }
 
+type stateTempFile interface {
+	Write([]byte) (int, error)
+	Close() error
+	Name() string
+}
+
+var (
+	createStateTemp = func(dir, pattern string) (stateTempFile, error) { return os.CreateTemp(dir, pattern) }
+	renameStateFile = os.Rename
+)
+
 // readCloneState parses repoDir/.corral-state.json. A missing file returns
 // the zero value and a nil error so callers can treat "never synced" the
 // same as "no state available". A malformed file surfaces as an error so
 // the caller can decide whether to fall through to a full sync or abort.
 func readCloneState(repoDir string) (cloneState, error) {
 	path := filepath.Join(repoDir, StateFileName)
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- repoDir is an engine-managed repository path
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return cloneState{}, nil
@@ -62,7 +73,7 @@ func writeCloneState(repoDir string, s cloneState) error {
 		return err
 	}
 	finalPath := filepath.Join(repoDir, StateFileName)
-	tmp, err := os.CreateTemp(repoDir, StateFileName+".*.tmp")
+	tmp, err := createStateTemp(repoDir, StateFileName+".*.tmp")
 	if err != nil {
 		return err
 	}
@@ -78,5 +89,5 @@ func writeCloneState(repoDir string, s cloneState) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, finalPath)
+	return renameStateFile(tmpPath, finalPath)
 }

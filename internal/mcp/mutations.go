@@ -24,10 +24,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sebastienrousseau/corral/internal/git"
@@ -37,9 +40,35 @@ import (
 // stub the "actually shell out and hit the network" branch. Production
 // callers get the real git package functions.
 var (
-	gitPull  = git.Pull
-	gitClone = git.Clone
+	gitPull            = git.Pull
+	gitClone           = git.Clone
+	hasUnpushedCommits = git.HasUnpublishedWork
+	statMutation       = os.Stat
+	mkdirMutation      = os.MkdirAll
+	removeMutation     = os.RemoveAll
+	markSynced         = markStateSynced
 )
+
+var mutationSequence atomic.Uint64
+
+func mutationID() string {
+	return fmt.Sprintf("%d-%d", time.Now().UTC().UnixNano(), mutationSequence.Add(1))
+}
+
+func redactCloneURL(raw string) string {
+	if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" {
+		if parsed.User != nil {
+			parsed.User = url.User("REDACTED")
+		}
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+	if at := strings.LastIndex(raw, "@"); at >= 0 {
+		return "REDACTED@" + raw[at+1:]
+	}
+	return raw
+}
 
 // registerMutationTools attaches the non-destructive write tools
 // (corral_sync_repo, corral_clone_repo) to the underlying MCP server.
@@ -69,6 +98,29 @@ func (s *Server) audit(rec AuditRecord) error {
 		return fmt.Errorf("mutation attempted with no auditor configured")
 	}
 	return s.auditor.Write(rec)
+}
+
+func (s *Server) beginMutation(rec AuditRecord) (AuditRecord, error) {
+	rec.OperationID = mutationID()
+	rec.Phase = "intent"
+	rec.Result = "pending"
+	if err := s.audit(rec); err != nil {
+		return rec, err
+	}
+	return rec, nil
+}
+
+func (s *Server) completeMutation(rec AuditRecord, result, message string) error {
+	rec.Phase = "completion"
+	rec.Result = result
+	rec.Message = message
+	rec.Timestamp = ""
+	return s.audit(rec)
+}
+
+func (s *Server) auditRefusal(rec AuditRecord, message string) error {
+	rec.OperationID = mutationID()
+	return s.completeMutation(rec, "refused", message)
 }
 
 // syncRepoTool returns corral_sync_repo. Wraps git.Pull for a resolved
@@ -108,17 +160,26 @@ func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 			Tool:   "corral_sync_repo",
 			Target: safe,
 			Args:   map[string]any{"query": query},
-			Result: "ok",
+		}
+		rec, err = s.beginMutation(rec)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit intent failed: %v", err)), nil
 		}
 		pullErr := gitPull(ctx, safe, git.PullOptions{})
 		if pullErr != nil {
-			rec.Result = "error"
-			rec.Message = pullErr.Error()
-			_ = s.audit(rec)
+			if auditErr := s.completeMutation(rec, "error", pullErr.Error()); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("git pull failed: %v; audit completion failed: %v", pullErr, auditErr)), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("git pull failed: %v", pullErr)), nil
 		}
-		if err := s.audit(rec); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("audit failed: %v", err)), nil
+		if err := markSynced(safe); err != nil {
+			if auditErr := s.completeMutation(rec, "error", err.Error()); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("state update failed: %v; audit completion failed: %v", err, auditErr)), nil
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("state update failed: %v", err)), nil
+		}
+		if err := s.completeMutation(rec, "ok", ""); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit completion failed: %v", err)), nil
 		}
 		s.invalidateScanCache()
 		return jsonResult(map[string]any{
@@ -169,20 +230,23 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if _, err := os.Stat(safeTarget); err == nil {
+		if _, err := statMutation(safeTarget); err == nil {
 			return mcp.NewToolResultError(fmt.Sprintf("target %s already exists", safeTarget)), nil
 		}
 
 		rec := AuditRecord{
 			Tool:   "corral_clone_repo",
 			Target: safeTarget,
-			Args:   map[string]any{"url": url, "target": target, "depth": depth, "blobless": blobless},
-			Result: "ok",
+			Args:   map[string]any{"url": redactCloneURL(url), "target": target, "depth": depth, "blobless": blobless},
 		}
-		if err := os.MkdirAll(filepath.Dir(safeTarget), 0o750); err != nil {
-			rec.Result = "error"
-			rec.Message = err.Error()
-			_ = s.audit(rec)
+		rec, err = s.beginMutation(rec)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit intent failed: %v", err)), nil
+		}
+		if err := mkdirMutation(filepath.Dir(safeTarget), 0o750); err != nil {
+			if auditErr := s.completeMutation(rec, "error", err.Error()); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("create target parent: %v; audit completion failed: %v", err, auditErr)), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("create target parent: %v", err)), nil
 		}
 		cloneErr := gitClone(ctx, url, safeTarget, git.CloneOptions{
@@ -190,13 +254,13 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 			Blobless: blobless,
 		})
 		if cloneErr != nil {
-			rec.Result = "error"
-			rec.Message = cloneErr.Error()
-			_ = s.audit(rec)
+			if auditErr := s.completeMutation(rec, "error", cloneErr.Error()); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("git clone failed: %v; audit completion failed: %v", cloneErr, auditErr)), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("git clone failed: %v", cloneErr)), nil
 		}
-		if err := s.audit(rec); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("audit failed: %v", err)), nil
+		if err := s.completeMutation(rec, "ok", ""); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit completion failed: %v", err)), nil
 		}
 		s.invalidateScanCache()
 		return jsonResult(map[string]any{
@@ -212,16 +276,16 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 // operation the MCP server exposes: it removes a local clone from
 // disk. The safeguards are deliberately paranoid:
 //
-//   1. Requires BOTH EnableMutations and EnableDestructiveMutations
-//      to be registered at all.
-//   2. Resolves the target via SafePath so path traversal cannot
-//      escape the sandbox.
-//   3. Refuses if the working tree has uncommitted changes.
-//   4. Refuses if there are unpushed commits on any branch.
-//   5. Refuses if the target isn't a git repository at all
-//      (defence against typos deleting an unrelated directory).
-//   6. Always writes an audit record before removing anything, so a
-//      race between the check and the removal is still logged.
+//  1. Requires BOTH EnableMutations and EnableDestructiveMutations
+//     to be registered at all.
+//  2. Resolves the target via SafePath so path traversal cannot
+//     escape the sandbox.
+//  3. Refuses if the working tree has uncommitted changes.
+//  4. Refuses if there are unpushed commits on any branch.
+//  5. Refuses if the target isn't a git repository at all
+//     (defence against typos deleting an unrelated directory).
+//  6. Always writes an audit record before removing anything, so a
+//     race between the check and the removal is still logged.
 func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_delete_repo",
 		mcp.WithDescription("Permanently remove one clone from the Corral workspace. Requires BOTH --enable-mutations and --enable-destructive-mutations. Refuses when uncommitted changes exist, unpushed commits exist, or the target isn't a git repository. Every attempt (successful or refused) is logged to the mutation audit trail."),
@@ -252,37 +316,44 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 			Tool:   "corral_delete_repo",
 			Target: safe,
 			Args:   map[string]any{"query": query},
-			Result: "refused",
 		}
 
 		// Refusal cascade: any single check failing aborts, audits,
 		// and returns to the agent with a specific reason.
-		if _, err := os.Stat(filepath.Join(safe, ".git")); err != nil {
+		if !git.IsRepository(safe) {
 			rec.Message = fmt.Sprintf("target %s is not a git repository", safe)
-			_ = s.audit(rec)
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s; audit failed: %v", rec.Message, auditErr)), nil
+			}
 			return mcp.NewToolResultError(rec.Message), nil
 		}
 		if dirty, out := hasDirtyWorkingTree(ctx, safe); dirty {
 			rec.Message = fmt.Sprintf("uncommitted changes present: %s", out)
-			_ = s.audit(rec)
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s; audit failed: %v", rec.Message, auditErr)), nil
+			}
 			return mcp.NewToolResultError(rec.Message), nil
 		}
 		if ahead, out := hasUnpushedCommits(ctx, safe); ahead {
-			rec.Message = fmt.Sprintf("unpushed commits present: %s", out)
-			_ = s.audit(rec)
+			rec.Message = fmt.Sprintf("unpublished git state present: %s", out)
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s; audit failed: %v", rec.Message, auditErr)), nil
+			}
 			return mcp.NewToolResultError(rec.Message), nil
 		}
 
-		if err := os.RemoveAll(safe); err != nil {
-			rec.Result = "error"
-			rec.Message = err.Error()
-			_ = s.audit(rec)
+		rec, err = s.beginMutation(rec)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit intent failed: %v", err)), nil
+		}
+		if err := removeMutation(safe); err != nil {
+			if auditErr := s.completeMutation(rec, "error", err.Error()); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("remove failed: %v; audit completion failed: %v", err, auditErr)), nil
+			}
 			return mcp.NewToolResultError(fmt.Sprintf("remove failed: %v", err)), nil
 		}
-		rec.Result = "ok"
-		rec.Message = ""
-		if err := s.audit(rec); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("audit failed: %v", err)), nil
+		if err := s.completeMutation(rec, "ok", ""); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("audit completion failed: %v", err)), nil
 		}
 		s.invalidateScanCache()
 		return jsonResult(map[string]any{
@@ -299,7 +370,7 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 // target repo. Indirected through a package var so tests can stub the
 // dangerous "actually run git" path.
 var hasDirtyWorkingTree = func(ctx context.Context, repoPath string) (bool, string) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain")
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain") // #nosec G204 -- fixed executable and root-confined path
 	out, err := cmd.Output()
 	if err != nil {
 		// If we can't even read the status, err on the side of refusal.
@@ -307,22 +378,4 @@ var hasDirtyWorkingTree = func(ctx context.Context, repoPath string) (bool, stri
 	}
 	trimmed := strings.TrimSpace(string(out))
 	return trimmed != "", trimmed
-}
-
-// hasUnpushedCommits reports whether HEAD has commits that aren't
-// present on its upstream tracking ref. Structured to also refuse
-// when the branch has no upstream configured (there is nothing to
-// push TO, so its commits are unshared by definition).
-var hasUnpushedCommits = func(ctx context.Context, repoPath string) (bool, string) {
-	// @{u} is git shorthand for "the upstream of the current branch."
-	// This returns non-zero exit code + a specific message when no
-	// upstream is configured, which we treat as a refusal (there is
-	// nowhere to push the commits, so they are still unshared).
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-list", "--count", "@{u}..HEAD")
-	out, err := cmd.Output()
-	if err != nil {
-		return true, "no upstream configured or history unreadable"
-	}
-	trimmed := strings.TrimSpace(string(out))
-	return trimmed != "0", fmt.Sprintf("%s commits ahead of upstream", trimmed)
 }

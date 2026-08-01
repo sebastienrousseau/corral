@@ -156,6 +156,22 @@ func TestRepoFileResourceRejectsTraversal(t *testing.T) {
 	}
 }
 
+func TestRepoFileResourceRejectsSiblingRepositoryTraversal(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+	beta := makeFakeRepo(t, base, "Private", "go", "beta", "", "")
+	if err := writeFile(filepath.Join(beta, "secret.txt"), "private"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := newTestServer(t, base)
+	_, handler := srv.repoFileResource()
+	_, err := readResource(t, handler, "corral://repo/Public/alpha/file/../../../Private/go/beta/secret.txt")
+	if err == nil {
+		t.Fatal("expected traversal into a sibling repository to be rejected")
+	}
+}
+
 func TestRepoFileResourceMissingPath(t *testing.T) {
 	base := t.TempDir()
 	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
@@ -215,10 +231,10 @@ func TestExtractFilePath(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		"corral://repo/o/n/file/main.go":        {want: "main.go"},
-		"corral://repo/o/n/file/sub%2Fmain.go":  {want: "sub/main.go"},
-		"corral://repo/o/n/state":               {wantErr: true},
-		"corral://repo/o/n/file/":               {wantErr: true},
+		"corral://repo/o/n/file/main.go":       {want: "main.go"},
+		"corral://repo/o/n/file/sub%2Fmain.go": {want: "sub/main.go"},
+		"corral://repo/o/n/state":              {wantErr: true},
+		"corral://repo/o/n/file/":              {wantErr: true},
 	}
 	for uri, tc := range cases {
 		got, err := extractFilePath(uri)
@@ -319,9 +335,9 @@ func TestResolveURIRepoNestedNamespace(t *testing.T) {
 // return would silently break TestResolveURIRepoNestedNamespace.
 func TestParseOwnerFromURLReturnsSegments(t *testing.T) {
 	cases := map[string][]string{
-		"":                                              nil,
-		"https://github.com/o/r.git":                    {"o"},
-		"https://gitlab.com/g/sub/r":                    {"g", "sub"},
+		"":                           nil,
+		"https://github.com/o/r.git": {"o"},
+		"https://gitlab.com/g/sub/r": {"g", "sub"},
 		"https://git.example.com/parent/sub/team/r.git": {"parent", "sub", "team"},
 		"git@github.com:o/r.git":                        {"o"},
 		"git@gitea.corp:group/subgroup/r":               {"group", "subgroup"},
@@ -347,7 +363,7 @@ func TestResolveURIRepoWithOwner(t *testing.T) {
 	makeFakeRepo(t, base, "Private", "rust", "beta", "git@github.com:openclaw/beta.git", "")
 
 	srv := newTestServer(t, base)
-	
+
 	// Test HTTPS owner resolution
 	repo, err := srv.resolveURIRepo("corral://repo/sebastienrousseau/alpha/state")
 	if err != nil {

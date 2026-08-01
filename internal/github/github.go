@@ -14,9 +14,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
-	"sort"
 	"sync"
 	"time"
 
@@ -25,6 +25,12 @@ import (
 
 // Repo represents a simplified repository structure returned by the GitHub API.
 type Repo struct {
+	// ID is GitHub's immutable repository identifier.
+	ID int64
+	// Owner is the repository owner's login.
+	Owner string
+	// FullName is the canonical owner/name identity.
+	FullName string
 	// Name is the repository name (without the owner prefix).
 	Name string
 	// Language is the primary programming language, or "Other" when unknown.
@@ -93,6 +99,8 @@ type FetchOptions struct {
 	RetryMinBackoff time.Duration
 	// RetryMaxBackoff is the maximum delay between retry attempts.
 	RetryMaxBackoff time.Duration
+	// Timeout bounds the complete GitHub API operation and each HTTP request.
+	Timeout time.Duration
 }
 
 const (
@@ -137,11 +145,11 @@ func FetchReposWithOptions(ctx context.Context, owner string, opts FetchOptions)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, fetchReposTimeout)
+	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
 	httpClient := &http.Client{
-		Timeout: fetchReposTimeout,
+		Timeout: opts.Timeout,
 		Transport: &retryTransport{
 			base:       http.DefaultTransport,
 			maxRetries: opts.RetryMax,
@@ -581,6 +589,9 @@ func normalizeFetchOptions(opts FetchOptions) FetchOptions {
 	if opts.RetryMaxBackoff < opts.RetryMinBackoff {
 		opts.RetryMaxBackoff = opts.RetryMinBackoff
 	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = fetchReposTimeout
+	}
 	return opts
 }
 
@@ -681,6 +692,11 @@ func matchesFilters(repo Repo, includeLang, excludeLang map[string]struct{}, opt
 }
 
 func mapRepository(r *gh.Repository) Repo {
+	owner := r.GetOwner().GetLogin()
+	fullName := r.GetFullName()
+	if fullName == "" && owner != "" && r.GetName() != "" {
+		fullName = owner + "/" + r.GetName()
+	}
 	lang := "Other"
 	if r.Language != nil {
 		lang = *r.Language
@@ -706,6 +722,9 @@ func mapRepository(r *gh.Repository) Repo {
 	}
 
 	return Repo{
+		ID:             r.GetID(),
+		Owner:          owner,
+		FullName:       fullName,
 		Name:           r.GetName(),
 		Language:       lang,
 		Visibility:     visibility,

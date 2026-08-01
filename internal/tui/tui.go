@@ -167,7 +167,7 @@ type selectorModel struct {
 	repos         []github.Repo
 	filteredRepos []github.Repo
 	filter        string
-	selected      map[string]bool // key is repo.Name
+	selected      map[string]bool // key is owner/name when available
 	table         table.Model
 	spinner       spinner.Model
 	loading       bool
@@ -176,12 +176,33 @@ type selectorModel struct {
 	quitting      bool
 	fetchFn       FetchFunc
 
-	showHelp      bool
-	cmdErr        string
+	showHelp bool
+	cmdErr   string
 }
 
 // FetchFunc represents the function signature used by the selector to fetch repositories.
 type FetchFunc func() ([]github.Repo, error)
+
+var runSelectorProgram = func(ctx context.Context, model tea.Model) (tea.Model, error) {
+	return tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx)).Run()
+}
+
+func repoSelectionKey(repo github.Repo) string {
+	if repo.FullName != "" {
+		return strings.ToLower(repo.FullName)
+	}
+	if repo.Owner != "" {
+		return strings.ToLower(repo.Owner + "/" + repo.Name)
+	}
+	return strings.ToLower(repo.Name)
+}
+
+func repoDisplayName(repo github.Repo) string {
+	if repo.FullName != "" {
+		return repo.FullName
+	}
+	return repo.Name
+}
 
 // NewSelectorModel creates and initializes a new Bubble Tea model for the repository selector.
 func NewSelectorModel(fetchFn FetchFunc) *selectorModel {
@@ -256,13 +277,6 @@ func (m *selectorModel) applyFilter() {
 	}
 	m.filteredRepos = filtered
 	m.updateTableRows()
-
-	if m.table.Cursor() >= len(filtered) {
-		m.table.SetCursor(len(filtered) - 1)
-	}
-	if m.table.Cursor() < 0 && len(filtered) > 0 {
-		m.table.SetCursor(0)
-	}
 }
 
 func (m *selectorModel) updateTableRows() {
@@ -299,13 +313,13 @@ func (m *selectorModel) renderCustomTable() string {
 		r := m.filteredRepos[i]
 
 		var checkChar string
-		if m.selected[r.Name] {
+		if m.selected[repoSelectionKey(r)] {
 			checkChar = "✔"
 		} else {
 			checkChar = "·"
 		}
 
-		repoVal := r.Name
+		repoVal := repoDisplayName(r)
 		if len(repoVal) > 35 {
 			repoVal = repoVal[:32] + "..."
 		}
@@ -337,14 +351,14 @@ func (m *selectorModel) renderCustomTable() string {
 		} else {
 			// For inactive rows, we style cells individually.
 			styledCheck := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(checkChar)
-			if m.selected[r.Name] {
+			if m.selected[repoSelectionKey(r)] {
 				styledCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("#F56B5E")).Render(checkChar)
 			}
 			repoStr := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render(fmt.Sprintf("%-35s", repoVal))
 			langStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-15s", langVal))
 			visStr := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(fmt.Sprintf("%-10s", visVal))
 
-			sb.WriteString(fmt.Sprintf("%s    %s  %s  %s\n", styledCheck, repoStr, langStr, visStr))
+			_, _ = fmt.Fprintf(&sb, "%s    %s  %s  %s\n", styledCheck, repoStr, langStr, visStr)
 		}
 	}
 
@@ -372,7 +386,7 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.repos = msg.repos
 		m.filteredRepos = msg.repos
 		for _, r := range msg.repos {
-			m.selected[r.Name] = true
+			m.selected[repoSelectionKey(r)] = true
 		}
 		m.updateTableRows()
 		return m, nil
@@ -435,8 +449,8 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.filteredRepos) > 0 {
 				idx := m.table.Cursor()
 				if idx >= 0 && idx < len(m.filteredRepos) {
-					name := m.filteredRepos[idx].Name
-					m.selected[name] = !m.selected[name]
+					key := repoSelectionKey(m.filteredRepos[idx])
+					m.selected[key] = !m.selected[key]
 					m.updateTableRows()
 				}
 			}
@@ -455,7 +469,7 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			for _, r := range m.filteredRepos {
-				m.selected[r.Name] = true
+				m.selected[repoSelectionKey(r)] = true
 			}
 			m.updateTableRows()
 			return m, nil
@@ -464,7 +478,7 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			for _, r := range m.filteredRepos {
-				m.selected[r.Name] = false
+				m.selected[repoSelectionKey(r)] = false
 			}
 			m.updateTableRows()
 			return m, nil
@@ -524,7 +538,7 @@ func (m *selectorModel) View() string {
 		promptStr = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(fmt.Sprintf("  Search repositories (%d found): %s_", len(m.filteredRepos), m.filter))
 	}
 	out += promptStr + "\n"
-	
+
 	divider := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("  " + strings.Repeat("─", 58))
 	out += divider + "\n\n"
 
@@ -562,8 +576,7 @@ func (m *selectorModel) View() string {
 
 // RunSelector launches the interactive terminal selector program to choose repositories.
 func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOptions, fetchFn FetchFunc) ([]github.Repo, bool, error) {
-	p := tea.NewProgram(NewSelectorModel(fetchFn), tea.WithAltScreen())
-	m, err := p.Run()
+	m, err := runSelectorProgram(ctx, NewSelectorModel(fetchFn))
 	if err != nil {
 		return nil, false, err
 	}
@@ -576,7 +589,7 @@ func RunSelector(ctx context.Context, owner string, fetchOpts github.FetchOption
 	}
 	var out []github.Repo
 	for _, r := range selModel.repos {
-		if selModel.selected[r.Name] {
+		if selModel.selected[repoSelectionKey(r)] {
 			out = append(out, r)
 		}
 	}
@@ -640,13 +653,13 @@ func (m *selectorModel) executeSlashCommand(cmdStr string) tea.Cmd {
 
 	case "/all":
 		for _, r := range m.filteredRepos {
-			m.selected[r.Name] = true
+			m.selected[repoSelectionKey(r)] = true
 		}
 		m.updateTableRows()
 
 	case "/none":
 		for _, r := range m.filteredRepos {
-			m.selected[r.Name] = false
+			m.selected[repoSelectionKey(r)] = false
 		}
 		m.updateTableRows()
 
@@ -742,7 +755,7 @@ func (m *selectorModel) renderHelpPanel() string {
 
 	sb.WriteString("\n")
 	sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("   Press [?] or [esc] to return to the repository list.") + "\n")
-	
+
 	for i := len(commands) + 5; i < 15; i++ {
 		sb.WriteString("\n")
 	}
@@ -756,17 +769,17 @@ func (m *selectorModel) renderFooter() string {
 	}
 	left := " ? for commands"
 	right := fmt.Sprintf("Made with ❤️ in London, UK (v%s)", vStr)
-	
+
 	leftLen := len(left)
 	rightRunes := []rune(right)
 	rightLenVisual := len(rightRunes)
-	
+
 	totalWidth := 71
 	spacesCount := totalWidth - leftLen - rightLenVisual + 1
 	if spacesCount < 1 {
 		spacesCount = 2
 	}
-	
+
 	spaces := strings.Repeat(" ", spacesCount)
 	footerText := fmt.Sprintf(" %s%s%s", left, spaces, right)
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render(footerText) + "\n"
