@@ -125,6 +125,8 @@ homebrew_casks:
       owner: sebastienrousseau
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      pull_request:
+        enabled: true
     binaries:
       - corralctl
     homepage: "https://github.com/sebastienrousseau/corral"
@@ -140,6 +142,9 @@ aurs:
     license: "GPL-3.0"
     private_key: '{{ .Env.AUR_KEY }}'
     git_url: 'ssh://aur@aur.archlinux.org/corralctl-bin.git'
+    # AUR availability must not block release artifacts and attestations.
+    # The package definition is still generated in dist for manual publishing.
+    skip_upload: true
     package: |-
       # bin
       install -Dm755 "./corralctl" "${pkgdir}/usr/bin/corralctl"
