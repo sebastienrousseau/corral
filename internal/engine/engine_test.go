@@ -5,6 +5,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1203,6 +1204,58 @@ func TestProcessRepoRejectsIdentityCollision(t *testing.T) {
 	})
 	if result.Action != "ERROR" || !strings.Contains(result.Message, "target collision") {
 		t.Fatalf("unexpected collision result: %+v", result)
+	}
+}
+
+func TestProcessRepoAcceptsCaseInsensitivePathAlias(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "Public", "go", "repo")
+	target := filepath.Join(base, "public", "go", "repo")
+	for _, path := range []string{existing, target} {
+		if err := os.MkdirAll(filepath.Join(path, ".git"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(existing, ".git", "config"), []byte("[remote \"origin\"]\nurl = https://github.com/acme/repo.git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldSameFile := sameFile
+	sameFile = func(os.FileInfo, os.FileInfo) bool { return true }
+	t.Cleanup(func() { sameFile = oldSameFile })
+
+	result := processRepo(context.Background(), "acme", "https", false, false, git.CloneOptions{}, SyncOptions{}, Job{
+		Repo:   github.Repo{Name: "repo", Owner: "acme", FullName: "acme/repo"},
+		Target: target, Existing: existing,
+	})
+	if result.Action != "SKIP" || result.Target != existing || result.Moved {
+		t.Fatalf("case-insensitive alias result: %+v", result)
+	}
+}
+
+func TestProcessRepoReportsCaseAliasStatFailure(t *testing.T) {
+	base := t.TempDir()
+	existing := filepath.Join(base, "Public", "go", "repo")
+	target := filepath.Join(base, "public", "go", "repo")
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStat := statPath
+	statPath = func(path string) (os.FileInfo, error) {
+		if path == existing {
+			return nil, errors.New("existing stat")
+		}
+		return oldStat(path)
+	}
+	t.Cleanup(func() { statPath = oldStat })
+
+	result := processRepo(context.Background(), "acme", "https", false, false, git.CloneOptions{}, SyncOptions{}, Job{
+		Repo:   github.Repo{Name: "repo", Owner: "acme", FullName: "acme/repo"},
+		Target: target, Existing: existing,
+	})
+	if result.Action != "ERROR" || !strings.Contains(result.Message, "failed checking existing clone") {
+		t.Fatalf("case alias stat failure result: %+v", result)
 	}
 }
 

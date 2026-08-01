@@ -169,6 +169,7 @@ var (
 	walkDir          = filepath.WalkDir
 	readDir          = os.ReadDir
 	statPath         = os.Stat
+	sameFile         = os.SameFile
 	mkdirAll         = os.MkdirAll
 	renamePath       = os.Rename
 )
@@ -688,32 +689,49 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	}
 
 	if job.Existing != "" && filepath.Clean(job.Existing) != filepath.Clean(targetDir) {
-		if _, err := statPath(targetDir); err == nil {
-			result.Action = "ERROR"
-			result.Message = fmt.Sprintf("target collision: %s already exists while matching clone is at %s", targetDir, job.Existing)
-			return result
+		needsMove := true
+		if targetInfo, err := statPath(targetDir); err == nil {
+			existingInfo, existingErr := statPath(job.Existing)
+			if existingErr != nil {
+				result.Action = "ERROR"
+				result.Message = fmt.Sprintf("failed checking existing clone: %v", existingErr)
+				return result
+			}
+			if sameFile(existingInfo, targetInfo) {
+				// Case-insensitive filesystems can resolve Public and public to
+				// the same directory even though their cleaned strings differ.
+				targetDir = job.Existing
+				result.Target = targetDir
+				needsMove = false
+			} else {
+				result.Action = "ERROR"
+				result.Message = fmt.Sprintf("target collision: %s already exists while matching clone is at %s", targetDir, job.Existing)
+				return result
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			result.Action = "ERROR"
 			result.Message = fmt.Sprintf("failed checking target collision: %v", err)
 			return result
 		}
-		if dryRun {
+		if needsMove && dryRun {
 			result.Action = "DRY-RUN"
 			result.Message = fmt.Sprintf("move %s to %s", job.Existing, targetDir)
 			result.Moved = true
 			return result
 		}
-		if err := mkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
-			result.Action = "ERROR"
-			result.Message = fmt.Sprintf("failed creating relocation target: %v", err)
-			return result
+		if needsMove {
+			if err := mkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
+				result.Action = "ERROR"
+				result.Message = fmt.Sprintf("failed creating relocation target: %v", err)
+				return result
+			}
+			if err := renamePath(job.Existing, targetDir); err != nil {
+				result.Action = "ERROR"
+				result.Message = fmt.Sprintf("failed moving identity-matched clone from %s: %v", job.Existing, err)
+				return result
+			}
+			result.Moved = true
 		}
-		if err := renamePath(job.Existing, targetDir); err != nil {
-			result.Action = "ERROR"
-			result.Message = fmt.Sprintf("failed moving identity-matched clone from %s: %v", job.Existing, err)
-			return result
-		}
-		result.Moved = true
 	}
 
 	if !dryRun {
