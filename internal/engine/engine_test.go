@@ -1771,3 +1771,9 @@ func TestEvaluateLayout(t *testing.T) {
 		})
 	}
 }
+
+func TestParseLayoutTemplateRejectsOversizedInput(t *testing.T) {
+	if _, err := parseLayoutTemplate(strings.Repeat("x", maxLayoutTemplateBytes+1)); err == nil {
+		t.Fatal("expected oversized layout error")
+	}
+}

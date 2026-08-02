@@ -154,8 +154,9 @@ type Summary struct {
 const cancelExitCode = 130
 
 const (
-	defaultLayout = "{{.Collection}}/{{.Bucket}}/{{.Name}}"
-	searchLayout  = "{{.Owner}}/{{.Collection}}/{{.Bucket}}/{{.Name}}"
+	defaultLayout          = "{{.Collection}}/{{.Bucket}}/{{.Name}}"
+	searchLayout           = "{{.Owner}}/{{.Collection}}/{{.Bucket}}/{{.Name}}"
+	maxLayoutTemplateBytes = 4096
 )
 
 var (
@@ -278,7 +279,7 @@ func Run(ctx context.Context, opts RunOptions) {
 		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
 	}
 
-	layoutTemplate, err := template.New("layout").Parse(effectiveLayout(opts, github.Repo{}))
+	layoutTemplate, err := parseLayoutTemplate(effectiveLayout(opts, github.Repo{}))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
 		osExit(1)
@@ -1049,11 +1050,18 @@ func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, e
 	if layoutTpl == "" {
 		layoutTpl = defaultLayout
 	}
-	tmpl, err := template.New("layout").Parse(layoutTpl)
+	tmpl, err := parseLayoutTemplate(layoutTpl)
 	if err != nil {
 		return "", err
 	}
 	return executeLayout(tmpl, repo, owner)
+}
+
+func parseLayoutTemplate(layout string) (*template.Template, error) {
+	if len(layout) > maxLayoutTemplateBytes {
+		return nil, fmt.Errorf("layout template exceeds %d bytes", maxLayoutTemplateBytes)
+	}
+	return template.New("layout").Parse(layout)
 }
 
 func executeLayout(tmpl *template.Template, repo github.Repo, owner string) (string, error) {
