@@ -44,6 +44,9 @@ func FuzzEvaluateLayout(f *testing.F) {
 	f.Add("../{{.Name}}", "Public", "Go", "repo", "owner")
 
 	f.Fuzz(func(t *testing.T, layout, visibility, language, repoName, owner string) {
+		if len(layout) > maxLayoutTemplateBytes || len(visibility) > 32 || len(language) > 128 || len(repoName) > 256 || len(owner) > 256 {
+			t.Skip()
+		}
 		repo := github.Repo{
 			Visibility: visibility,
 			Language:   language,

@@ -281,13 +281,11 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 			wg.Add(1)
 			go func(pNum int) {
 				defer wg.Done()
-				select {
-				case <-ctx.Done():
+				if err := acquirePageSlot(ctx, sem); err != nil {
 					mu.Lock()
-					errs = append(errs, ctx.Err())
+					errs = append(errs, err)
 					mu.Unlock()
 					return
-				case sem <- struct{}{}:
 				}
 				defer func() { <-sem }()
 
@@ -364,6 +362,15 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 	}
 
 	return allRepos, nil
+}
+
+func acquirePageSlot(ctx context.Context, sem chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case sem <- struct{}{}:
+		return nil
+	}
 }
 
 type retryTransport struct {

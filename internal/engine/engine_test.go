@@ -102,7 +102,7 @@ func TestEngineRunHeadlessErrors(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_skip", ".git"), 0o750)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "Go", "repo_skip", ".git"), 0o750)
 
 	oldIsTerminal := isTerminal
 	defer func() { isTerminal = oldIsTerminal }()
@@ -176,7 +176,7 @@ func TestProcessRepo(t *testing.T) {
 		CloneURL:      "http://clone",
 		SSHURL:        "ssh://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
 	msg := processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, SyncOptions{}, job)
@@ -244,7 +244,7 @@ func TestProcessRepoFull(t *testing.T) {
 		CloneURL:      "http://clone",
 		SSHURL:        "ssh://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
 	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
@@ -301,7 +301,7 @@ func TestProcessRepoCanceled(t *testing.T) {
 		DefaultBranch: "main",
 		CloneURL:      "http://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,7 +318,7 @@ func TestDetectOrphansError(t *testing.T) {
 	baseDir, _ := os.MkdirTemp("", "engine_test")
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo1", ".git"), 0o750)
+	_ = os.MkdirAll(filepath.Join(baseDir, "Public", "Go", "repo1", ".git"), 0o750)
 
 	oldGitRemoteOrigin := gitRemoteOrigin
 	defer func() { gitRemoteOrigin = oldGitRemoteOrigin }()
@@ -365,6 +365,51 @@ func TestRepoNameFromURL(t *testing.T) {
 	}
 }
 
+func TestSkipDiscoveryDirectory(t *testing.T) {
+	for _, name := range []string{".git", ".cache", ".next", ".venv", "DerivedData", "Pods", "build", "dist", "node_modules", "target", "vendor", "venv"} {
+		if !skipDiscoveryDirectory(name) {
+			t.Errorf("expected %q to be skipped", name)
+		}
+	}
+	if skipDiscoveryDirectory("source") {
+		t.Fatal("source directory should not be skipped")
+	}
+}
+
+func TestFirstPath(t *testing.T) {
+	if firstPath(nil) != "" || firstPath([]string{"one", "two"}) != "one" {
+		t.Fatal("firstPath returned an unexpected value")
+	}
+}
+
+func TestRunReportsDuplicateCloneLocations(t *testing.T) {
+	base := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		dir := filepath.Join(base, name, ".git")
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		config := "[remote \"origin\"]\nurl = https://github.com/owner/repo.git\n"
+		if err := os.WriteFile(filepath.Join(dir, "config"), []byte(config), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldFetch, oldExit := fetchRepos, osExit
+	t.Cleanup(func() { fetchRepos, osExit = oldFetch, oldExit })
+	fetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "repo", Owner: "owner", FullName: "owner/repo", Language: "Go", Visibility: "Public"}}, nil
+	}
+	exitCode := 0
+	osExit = func(code int) { exitCode = code }
+	opts := defaultRunOptions(base)
+	opts.DryRun = true
+	Run(context.Background(), opts)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+}
+
 func TestNormalizeLanguage(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -386,6 +431,125 @@ func TestNormalizeLanguage(t *testing.T) {
 	}
 }
 
+func TestRepositoryBucketUsesWebForGitHubPages(t *testing.T) {
+	tests := []struct {
+		repo github.Repo
+		want string
+	}{
+		{repo: github.Repo{Name: "site.github.io", Language: "JavaScript"}, want: "Web"},
+		{repo: github.Repo{Name: "SITE.GITHUB.IO", Language: "SCSS"}, want: "Web"},
+		{repo: github.Repo{Name: "site", Language: "Python"}, want: "Python"},
+	}
+
+	for _, tt := range tests {
+		if got := repositoryBucket(tt.repo); got != tt.want {
+			t.Errorf("repositoryBucket(%q, %q) = %q, want %q", tt.repo.Name, tt.repo.Language, got, tt.want)
+		}
+	}
+}
+
+func TestCanonicalLanguageAndCollection(t *testing.T) {
+	tests := []struct{ language, want string }{
+		{"C", "C"}, {"C++", "Cpp"}, {"C#", "CSharp"}, {"CSS", "CSS"},
+		{"Dockerfile", "Docker"}, {"Go", "Go"}, {"HTML", "HTML"},
+		{"JavaScript", "JavaScript"}, {"Jupyter Notebook", "Python"}, {"Lua", "Lua"},
+		{"Objective-C", "Objective-C"}, {"Objective-C++", "Objective-Cpp"}, {"", "Other"},
+		{"PHP", "PHP"}, {"Python", "Python"}, {"Ruby", "Ruby"}, {"Rust", "Rust"},
+		{"SCSS", "SCSS"}, {"Shell", "Shell"}, {"Solidity", "Solidity"}, {"Stylus", "Stylus"},
+		{"Swift", "Swift"}, {"TeX", "TeX"}, {"TypeScript", "TypeScript"},
+		{"Vim Script", "VimScript"}, {"F#", "F#"},
+	}
+	for _, tt := range tests {
+		if got := canonicalLanguage(tt.language); got != tt.want {
+			t.Errorf("canonicalLanguage(%q) = %q, want %q", tt.language, got, tt.want)
+		}
+	}
+
+	if got := repositoryCollection(github.Repo{Fork: true, Visibility: "Private"}); got != "Forks" {
+		t.Errorf("fork collection = %q", got)
+	}
+	if got := repositoryCollection(github.Repo{Visibility: "private"}); got != "Private" {
+		t.Errorf("private collection = %q", got)
+	}
+	if got := repositoryCollection(github.Repo{Visibility: "Public"}); got != "Public" {
+		t.Errorf("public collection = %q", got)
+	}
+	for _, name := range []string{"public", "PRIVATE", "Forks", "work"} {
+		if canonicalCollectionName(name) == "" {
+			t.Errorf("canonicalCollectionName(%q) was empty", name)
+		}
+	}
+	if got := canonicalCollectionName("Clients"); got != "" {
+		t.Errorf("unknown collection = %q", got)
+	}
+}
+
+func TestEnsureAppleCollections(t *testing.T) {
+	base := t.TempDir()
+	if err := ensureAppleCollections(base); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Public", "Private", "Work", "Forks"} {
+		if info, err := os.Stat(filepath.Join(base, name)); err != nil || !info.IsDir() {
+			t.Errorf("collection %s was not created", name)
+		}
+	}
+
+	oldMkdir := mkdirAll
+	mkdirAll = func(string, os.FileMode) error { return errors.New("mkdir") }
+	t.Cleanup(func() { mkdirAll = oldMkdir })
+	if err := ensureAppleCollections(base); err == nil {
+		t.Fatal("expected collection creation error")
+	}
+}
+
+func TestRunReportsCollectionCreationFailure(t *testing.T) {
+	oldFetch, oldMkdir, oldExit := fetchRepos, mkdirAll, osExit
+	t.Cleanup(func() { fetchRepos, mkdirAll, osExit = oldFetch, oldMkdir, oldExit })
+	fetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return nil, nil
+	}
+	mkdirAll = func(string, os.FileMode) error { return errors.New("collections") }
+	exitCode := 0
+	osExit = func(code int) { exitCode = code }
+	Run(context.Background(), defaultRunOptions(t.TempDir()))
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
+	}
+}
+
+func TestRunDryRunDoesNotMigrateLayout(t *testing.T) {
+	base := t.TempDir()
+	legacy := filepath.Join(base, "Public", "go", "repo")
+	if err := os.MkdirAll(filepath.Join(legacy, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	config := "[remote \"origin\"]\nurl = https://github.com/owner/repo.git\n"
+	if err := os.WriteFile(filepath.Join(legacy, ".git", "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	oldFetch := fetchRepos
+	t.Cleanup(func() { fetchRepos = oldFetch })
+	fetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "repo", Owner: "owner", FullName: "owner/repo", Language: "Go", Visibility: "Public"}}, nil
+	}
+	opts := defaultRunOptions(base)
+	opts.DryRun = true
+	Run(context.Background(), opts)
+
+	entries, err := os.ReadDir(filepath.Join(base, "Public"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "go" {
+		t.Fatalf("dry run changed bucket names: %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(base, "Work")); !os.IsNotExist(err) {
+		t.Fatal("dry run created collection folders")
+	}
+}
+
 func TestMigrateLegacy(t *testing.T) {
 	baseDir, err := os.MkdirTemp("", "engine_test")
 	if err != nil {
@@ -399,7 +563,7 @@ func TestMigrateLegacy(t *testing.T) {
 	repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
 	migrateLegacy(baseDir, repos)
 
-	targetDir := filepath.Join(baseDir, "Public", "go", "myrepo")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "myrepo")
 	if _, err := os.Stat(targetDir); os.IsNotExist(err) {
 		t.Errorf("Expected %s to exist after migration", targetDir)
 	}
@@ -528,7 +692,7 @@ func TestEngineRunJSON(t *testing.T) {
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	// Pre-create an existing git repo so repo_sync triggers a SYNC action.
-	if err := os.MkdirAll(filepath.Join(baseDir, "Public", "go", "repo_sync", ".git"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(baseDir, "Public", "Go", "repo_sync", ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -998,7 +1162,7 @@ func TestMigrateLegacyFailures(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Target dir: <base>/Public/go/myrepo, pre-populated so rename fails.
-		target := filepath.Join(baseDir, "Public", "go", "myrepo")
+		target := filepath.Join(baseDir, "Public", "Go", "myrepo")
 		if err := os.MkdirAll(target, 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -1025,7 +1189,7 @@ func TestProcessRepoMkdirFail(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(baseDir, "Public"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(baseDir, "Public", "go"), []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(baseDir, "Public", "Go"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1036,7 +1200,7 @@ func TestProcessRepoMkdirFail(t *testing.T) {
 		DefaultBranch: "main",
 		CloneURL:      "http://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "repo1")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
 
 	msg := processRepo(context.Background(), "owner", "https", false, false, git.CloneOptions{}, SyncOptions{}, job)
@@ -1081,27 +1245,27 @@ func TestCleanupEmptyFolders(t *testing.T) {
 	}
 }
 
-func TestNormalizeLanguageDirCase(t *testing.T) {
+func TestNormalizeLayoutDirCase(t *testing.T) {
 	baseDir, err := os.MkdirTemp("", "engine_test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
-	// Existing title-case language dir under a visibility dir.
-	mixed := filepath.Join(baseDir, "Public", "JavaScript", "repo1")
+	// Existing lowercase collection and language directories.
+	mixed := filepath.Join(baseDir, "public", "javascript", "repo1")
 	if err := os.MkdirAll(mixed, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
-	// Already-lowercase dir: idempotent no-op.
-	already := filepath.Join(baseDir, "Public", "go", "repo2")
+	// Already-canonical bucket: idempotent no-op.
+	already := filepath.Join(baseDir, "public", "Go", "repo2")
 	if err := os.MkdirAll(already, 0o750); err != nil {
 		t.Fatal(err)
 	}
 
 	// Unrelated dir whose name doesn't match any fetched language: untouched.
-	unrelated := filepath.Join(baseDir, "Public", "Configurations", "stuff")
+	unrelated := filepath.Join(baseDir, "public", "Configurations", "stuff")
 	if err := os.MkdirAll(unrelated, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -1115,24 +1279,25 @@ func TestNormalizeLanguageDirCase(t *testing.T) {
 		{Name: "repo1", Language: "JavaScript", Visibility: "Public"},
 		{Name: "repo2", Language: "Go", Visibility: "Public"},
 	}
-	normalizeLanguageDirCase(baseDir, repos)
+	normalizeLayoutDirCase(baseDir, repos)
 
-	lowered := filepath.Join(baseDir, "Public", "javascript", "repo1")
-	if _, err := os.Stat(lowered); err != nil {
-		t.Errorf("expected %s to exist after case normalization: %v", lowered, err)
+	canonical := filepath.Join(baseDir, "Public", "JavaScript", "repo1")
+	if _, err := os.Stat(canonical); err != nil {
+		t.Errorf("expected %s to exist after case normalization: %v", canonical, err)
 	}
-	if _, err := os.Stat(already); err != nil {
+	if _, err := os.Stat(filepath.Join(baseDir, "Public", "Go", "repo2")); err != nil {
 		t.Errorf("expected idempotent dir %s to remain: %v", already, err)
 	}
-	if _, err := os.Stat(unrelated); err != nil {
-		t.Errorf("expected unrelated dir %s to remain untouched: %v", unrelated, err)
+	canonicalUnrelated := filepath.Join(baseDir, "Public", "Configurations", "stuff")
+	if _, err := os.Stat(canonicalUnrelated); err != nil {
+		t.Errorf("expected unrelated dir %s to remain untouched: %v", canonicalUnrelated, err)
 	}
 
 	// Empty repos list short-circuits without error.
-	normalizeLanguageDirCase(baseDir, nil)
+	normalizeLayoutDirCase(baseDir, nil)
 
 	// Unreadable base dir is a no-op (just exercising the early-return).
-	normalizeLanguageDirCase("/invalid_dir_that_does_not_exist", repos)
+	normalizeLayoutDirCase("/invalid_dir_that_does_not_exist", repos)
 }
 
 func TestRunWiresGitTokenProvider(t *testing.T) {
@@ -1169,8 +1334,8 @@ func TestRunWiresGitTokenProvider(t *testing.T) {
 
 func TestProcessRepoRelocatesByCanonicalIdentity(t *testing.T) {
 	base := t.TempDir()
-	existing := filepath.Join(base, "Public", "go", "old")
-	target := filepath.Join(base, "acme", "Public", "go", "repo")
+	existing := filepath.Join(base, "Public", "Go", "old")
+	target := filepath.Join(base, "acme", "Public", "Go", "repo")
 	if err := os.MkdirAll(filepath.Join(existing, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -1209,7 +1374,7 @@ func TestProcessRepoRejectsIdentityCollision(t *testing.T) {
 
 func TestProcessRepoAcceptsCaseInsensitivePathAlias(t *testing.T) {
 	base := t.TempDir()
-	existing := filepath.Join(base, "Public", "go", "repo")
+	existing := filepath.Join(base, "Public", "Go", "repo")
 	target := filepath.Join(base, "public", "go", "repo")
 	for _, path := range []string{existing, target} {
 		if err := os.MkdirAll(filepath.Join(path, ".git"), 0o750); err != nil {
@@ -1235,7 +1400,7 @@ func TestProcessRepoAcceptsCaseInsensitivePathAlias(t *testing.T) {
 
 func TestProcessRepoReportsCaseAliasStatFailure(t *testing.T) {
 	base := t.TempDir()
-	existing := filepath.Join(base, "Public", "go", "repo")
+	existing := filepath.Join(base, "Public", "Go", "repo")
 	target := filepath.Join(base, "public", "go", "repo")
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		t.Fatal(err)
@@ -1270,7 +1435,7 @@ func TestSearchLayoutIncludesRepositoryOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel != "second/public/go/shared" {
+	if rel != "second/Public/Go/shared" {
 		t.Fatalf("search path = %q", rel)
 	}
 }
@@ -1310,7 +1475,7 @@ func mustExistingClone(t *testing.T, target string) {
 
 func TestProcessRepoSkipWhenPushedAtUnchanged(t *testing.T) {
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	mustExistingClone(t, target)
 
 	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
@@ -1346,7 +1511,7 @@ func TestProcessRepoSkipWhenPushedAtUnchanged(t *testing.T) {
 
 func TestProcessRepoSyncsWhenPushedAtAdvances(t *testing.T) {
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	mustExistingClone(t, target)
 
 	old := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
@@ -1387,7 +1552,7 @@ func TestProcessRepoSyncsWhenPushedAtAdvances(t *testing.T) {
 
 func TestProcessRepoForceSyncOverridesState(t *testing.T) {
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	mustExistingClone(t, target)
 
 	pushed := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
@@ -1418,7 +1583,7 @@ func TestProcessRepoForceSyncOverridesState(t *testing.T) {
 
 func TestProcessRepoStateMissingFallsThrough(t *testing.T) {
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	mustExistingClone(t, target)
 	// No state file at all -> the engine must pull (cannot know if upstream
 	// changed) and then stamp the state.
@@ -1451,7 +1616,7 @@ func TestProcessRepoZeroPushedAtFallsThrough(t *testing.T) {
 	// brand-new empty repos), the engine must pull rather than mistakenly
 	// treat zero-value as "everything up to date".
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	mustExistingClone(t, target)
 	if err := writeCloneState(target, cloneState{LastSyncedPushedAt: time.Now()}); err != nil {
 		t.Fatal(err)
@@ -1478,7 +1643,7 @@ func TestProcessRepoZeroPushedAtFallsThrough(t *testing.T) {
 
 func TestProcessRepoCloneStampsState(t *testing.T) {
 	baseDir := t.TempDir()
-	target := filepath.Join(baseDir, "Public", "go", "repo1")
+	target := filepath.Join(baseDir, "Public", "Go", "repo1")
 	// No pre-existing .git/, so processRepo will take the clone path.
 
 	oldClone := gitClone
@@ -1532,7 +1697,7 @@ func TestEvaluateLayout(t *testing.T) {
 			layout: "",
 			repo:   repo,
 			owner:  "user1",
-			want:   "public/go/repo1",
+			want:   "Public/Go/repo1",
 		},
 		{
 			name:   "custom flat layout",
@@ -1547,6 +1712,20 @@ func TestEvaluateLayout(t *testing.T) {
 			repo:   repo,
 			owner:  "user1",
 			want:   "go/repo1",
+		},
+		{
+			name:   "github pages uses html layout",
+			layout: "",
+			repo:   github.Repo{Name: "site.github.io", Language: "JavaScript", Visibility: "Public"},
+			owner:  "user1",
+			want:   "Public/Web/site.github.io",
+		},
+		{
+			name:   "fork uses forks collection",
+			layout: "",
+			repo:   github.Repo{Name: "forked", Language: "Rust", Visibility: "Public", Fork: true},
+			owner:  "user1",
+			want:   "Forks/Rust/forked",
 		},
 		{
 			name:       "escape folder path directory traversal",
@@ -1590,5 +1769,11 @@ func TestEvaluateLayout(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseLayoutTemplateRejectsOversizedInput(t *testing.T) {
+	if _, err := parseLayoutTemplate(strings.Repeat("x", maxLayoutTemplateBytes+1)); err == nil {
+		t.Fatal("expected oversized layout error")
 	}
 }

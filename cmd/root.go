@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -48,6 +49,7 @@ var (
 	ignoreSubmoduleErrs bool
 	layout              string
 	interactive         bool
+	finderTags          bool
 	assumeYes           bool
 	retryMax            int
 	retryMinBackoff     time.Duration
@@ -209,8 +211,9 @@ var rootCmd = &cobra.Command{
 				Force:                   forceSync,
 				IgnoreSubmoduleFailures: ignoreSubmoduleErrs,
 			},
-			Layout:  layout,
-			Version: Version,
+			Layout:     layout,
+			FinderTags: finderTags,
+			Version:    Version,
 		})
 	},
 }
@@ -288,9 +291,10 @@ func init() {
 	rootCmd.Flags().StringVar(&output, "output", string(engine.OutputText), "output format: text, json, ndjson")
 	rootCmd.Flags().StringVar(&authMode, "auth", string(github.AuthModeAuto), "authentication mode: auto, token, gh")
 	rootCmd.Flags().StringVar(&visibility, "visibility", "all", "repository visibility filter: all, public, private")
-	rootCmd.Flags().BoolVar(&includeForks, "include-forks", false, "include forked repositories")
-	rootCmd.Flags().BoolVar(&includeArchived, "include-archived", false, "include archived repositories")
+	rootCmd.Flags().BoolVar(&includeForks, "include-forks", true, "include forked repositories under the Forks collection")
+	rootCmd.Flags().BoolVar(&includeArchived, "include-archived", true, "include archived repositories and tag them On Hold")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "display an interactive selector dashboard to pick repositories to clone/sync")
+	rootCmd.Flags().BoolVar(&finderTags, "finder-tags", runtime.GOOS == "darwin", "apply managed macOS Finder Tags to repository folders")
 	rootCmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the preflight confirmation prompt when a new base directory would be created")
 	rootCmd.Flags().StringVar(&includeLanguagesCSV, "languages", "", "comma-separated language allow list")
 	rootCmd.Flags().StringVar(&excludeLanguagesCSV, "exclude-languages", "", "comma-separated language deny list")

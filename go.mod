@@ -10,6 +10,8 @@ require (
 	github.com/mark3labs/mcp-go v0.57.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sys v0.46.0
+	howett.net/plist v1.0.1
 )
 
 require (
@@ -42,6 +44,5 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/exp v0.0.0-20260611194520-c48552f49976 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 )

@@ -66,8 +66,11 @@ type RunOptions struct {
 	Clone git.CloneOptions
 	// Sync controls when an already-cloned repository is actually pulled.
 	Sync SyncOptions
-	// Layout specifies the templated path structure for repositories.
+	// Layout specifies the templated path structure for repositories. Custom
+	// layouts may use Collection and Bucket in addition to the legacy fields.
 	Layout string
+	// FinderTags enables managed macOS Finder metadata on repository folders.
+	FinderTags bool
 	// Version is the build version of Corral.
 	Version string
 }
@@ -151,8 +154,9 @@ type Summary struct {
 const cancelExitCode = 130
 
 const (
-	defaultLayout = "{{.Visibility}}/{{.Language}}/{{.Name}}"
-	searchLayout  = "{{.Owner}}/{{.Visibility}}/{{.Language}}/{{.Name}}"
+	defaultLayout          = "{{.Collection}}/{{.Bucket}}/{{.Name}}"
+	searchLayout           = "{{.Owner}}/{{.Collection}}/{{.Bucket}}/{{.Name}}"
+	maxLayoutTemplateBytes = 4096
 )
 
 var (
@@ -172,6 +176,7 @@ var (
 	sameFile         = os.SameFile
 	mkdirAll         = os.MkdirAll
 	renamePath       = os.Rename
+	applyTags        = applyFinderTags
 )
 
 // Run executes the core Corral workflow, orchestrating GitHub API fetches,
@@ -274,16 +279,21 @@ func Run(ctx context.Context, opts RunOptions) {
 		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
 	}
 
-	layoutTemplate, err := template.New("layout").Parse(effectiveLayout(opts, github.Repo{}))
+	layoutTemplate, err := parseLayoutTemplate(effectiveLayout(opts, github.Repo{}))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
 		osExit(1)
 		return
 	}
 
-	if usesClassicLayout(opts) {
+	if usesClassicLayout(opts) && !opts.DryRun {
+		if err := ensureAppleCollections(opts.BaseDir); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: failed creating repository collections: %v\n", err)
+			osExit(1)
+			return
+		}
 		migrateLegacy(opts.BaseDir, repos)
-		normalizeLanguageDirCase(opts.BaseDir, repos)
+		normalizeLayoutDirCase(opts.BaseDir, repos)
 	}
 	existingByRemote := discoverExistingRepos(opts.BaseDir)
 
@@ -304,6 +314,7 @@ func Run(ctx context.Context, opts RunOptions) {
 						return
 					}
 					msg := processRepo(ctx, opts.Owner, opts.Protocol, opts.DoSync, opts.DryRun, opts.Clone, opts.Sync, job)
+					applyJobFinderTags(opts, job, msg)
 					select {
 					case <-ctx.Done():
 						return
@@ -317,6 +328,7 @@ func Run(ctx context.Context, opts RunOptions) {
 	scheduled := 0
 enqueueLoop:
 	for _, repo := range repos {
+		existingPaths := existingByRemote[repoRemoteIdentity(repo)]
 		relPath, err := executeLayout(layoutTemplate, repo, opts.Owner)
 		if err != nil {
 			scheduled++
@@ -329,11 +341,21 @@ enqueueLoop:
 			continue
 		}
 		targetDir := filepath.Join(opts.BaseDir, relPath)
+		if len(existingPaths) > 1 {
+			scheduled++
+			results <- RepoResult{
+				RepoName: repo.Name, Action: "ERROR", Target: targetDir,
+				Message:    "duplicate clone locations: " + strings.Join(existingPaths, ", "),
+				Visibility: repo.Visibility, Language: normalizeLanguage(repo.Language),
+				DryRun: opts.DryRun, Protocol: opts.Protocol,
+			}
+			continue
+		}
 		legacyDir := filepath.Join(opts.BaseDir, normalizeLanguage(repo.Language), repo.Name)
 		select {
 		case <-ctx.Done():
 			break enqueueLoop
-		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir, Existing: existingByRemote[repoRemoteIdentity(repo)]}:
+		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir, Existing: firstPath(existingPaths)}:
 			scheduled++
 		}
 	}
@@ -411,7 +433,7 @@ enqueueLoop:
 		emitCancellation(opts.Output, isTTY, encoder, err)
 	}
 
-	if usesClassicLayout(opts) {
+	if usesClassicLayout(opts) && !opts.DryRun {
 		cleanupEmptyFolders(opts.BaseDir, repos)
 	}
 
@@ -463,6 +485,31 @@ enqueueLoop:
 	}
 	if outputErr != nil || summary.Failed > 0 {
 		osExit(1)
+	}
+}
+
+func ensureAppleCollections(baseDir string) error {
+	for _, collection := range []string{"Public", "Private", "Work", "Forks"} {
+		if err := mkdirAll(filepath.Join(baseDir, collection), 0o750); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyJobFinderTags(opts RunOptions, job Job, result RepoResult) {
+	if !opts.FinderTags || opts.DryRun {
+		return
+	}
+	tagPath := result.Target
+	if result.Action == "ERROR" || strings.HasPrefix(result.Action, "FAIL") {
+		tagPath = job.Existing
+	}
+	if tagPath == "" {
+		return
+	}
+	if err := applyTags(tagPath, job.Repo, result); err != nil {
+		log.Printf("WARN: failed applying Finder tags to %s: %v", tagPath, err)
 	}
 }
 
@@ -540,8 +587,15 @@ func repoRemoteIdentity(repo github.Repo) string {
 	return ""
 }
 
-func discoverExistingRepos(baseDir string) map[string]string {
-	found := make(map[string]string)
+func firstPath(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func discoverExistingRepos(baseDir string) map[string][]string {
+	found := make(map[string][]string)
 	_ = walkDir(baseDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if d != nil && d.IsDir() {
@@ -549,19 +603,32 @@ func discoverExistingRepos(baseDir string) map[string]string {
 			}
 			return nil
 		}
-		if !d.IsDir() || path == baseDir || !git.IsRepository(path) {
+		if !d.IsDir() || path == baseDir {
 			return nil
 		}
-		if remote, err := gitRemoteOrigin(path); err == nil {
-			if identity := git.CanonicalRemote(remote); identity != "" {
-				if _, exists := found[identity]; !exists {
-					found[identity] = path
+		if git.IsRepository(path) {
+			if remote, err := gitRemoteOrigin(path); err == nil {
+				if identity := git.CanonicalRemote(remote); identity != "" {
+					found[identity] = append(found[identity], path)
 				}
 			}
+			return filepath.SkipDir
 		}
-		return filepath.SkipDir
+		if skipDiscoveryDirectory(d.Name()) {
+			return filepath.SkipDir
+		}
+		return nil
 	})
 	return found
+}
+
+func skipDiscoveryDirectory(name string) bool {
+	switch name {
+	case ".git", ".cache", ".next", ".venv", "DerivedData", "Pods", "build", "dist", "node_modules", "target", "vendor", "venv":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeLanguage(lang string) string {
@@ -580,12 +647,48 @@ func normalizeLanguage(lang string) string {
 	return strings.ToLower(l)
 }
 
+func repositoryBucket(repo github.Repo) string {
+	if strings.HasSuffix(strings.ToLower(repo.Name), ".github.io") {
+		return "Web"
+	}
+	return canonicalLanguage(repo.Language)
+}
+
+func canonicalLanguage(lang string) string {
+	normalized := normalizeLanguage(lang)
+	canonical := map[string]string{
+		"c": "C", "cpp": "Cpp", "csharp": "CSharp", "css": "CSS",
+		"dockerfile": "Docker", "go": "Go", "html": "HTML",
+		"javascript": "JavaScript", "jupyter_notebook": "Python", "lua": "Lua",
+		"objective-c": "Objective-C", "objective-c++": "Objective-Cpp", "other": "Other",
+		"php": "PHP", "python": "Python", "ruby": "Ruby", "rust": "Rust",
+		"scss": "SCSS", "shell": "Shell", "solidity": "Solidity", "stylus": "Stylus",
+		"swift": "Swift", "tex": "TeX", "typescript": "TypeScript",
+	}
+	if bucket, ok := canonical[normalized]; ok {
+		return bucket
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == '_' || r == '-' })
+	for i, part := range parts {
+		parts[i] = strings.ToUpper(part[:1]) + part[1:]
+	}
+	return strings.Join(parts, "")
+}
+
+func repositoryCollection(repo github.Repo) string {
+	if repo.Fork {
+		return "Forks"
+	}
+	if strings.EqualFold(repo.Visibility, "private") {
+		return "Private"
+	}
+	return "Public"
+}
+
 func migrateLegacy(baseDir string, repos []github.Repo) {
 	for _, repo := range repos {
-		langDir := normalizeLanguage(repo.Language)
-		visDir := repo.Visibility
-		legacyDir := filepath.Join(baseDir, langDir, repo.Name)
-		targetDir := filepath.Join(baseDir, visDir, langDir, repo.Name)
+		legacyDir := filepath.Join(baseDir, normalizeLanguage(repo.Language), repo.Name)
+		targetDir := filepath.Join(baseDir, repositoryCollection(repo), repositoryBucket(repo), repo.Name)
 
 		if info, err := os.Stat(legacyDir); err == nil && info.IsDir() {
 			if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
@@ -599,19 +702,16 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 	}
 }
 
-// normalizeLanguageDirCase renames any case-variant language subdirectory
-// under each visibility directory to its lowercase form. On case-insensitive
-// filesystems (APFS, HFS+, NTFS) a direct os.Rename("JavaScript","javascript")
-// is a silent no-op, so the rename is performed via a temporary name. Only
-// directories whose lowercased name matches a normalized language from the
-// fetched repos are touched, so unrelated entries (e.g. "Configurations") are
-// left alone.
-func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
-	languages := make(map[string]struct{}, len(repos))
+// normalizeLayoutDirCase applies Finder-facing capitalization to collection
+// and ecosystem directories. APFS/HFS+ need an intermediate name for a
+// case-only rename.
+func normalizeLayoutDirCase(baseDir string, repos []github.Repo) {
+	buckets := make(map[string]string, len(repos))
 	for _, r := range repos {
-		languages[normalizeLanguage(r.Language)] = struct{}{}
+		bucket := repositoryBucket(r)
+		buckets[strings.ToLower(bucket)] = bucket
 	}
-	if len(languages) == 0 {
+	if len(buckets) == 0 {
 		return
 	}
 	visEntries, err := readDir(baseDir)
@@ -622,7 +722,17 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 		if !ve.IsDir() {
 			continue
 		}
+		collection := canonicalCollectionName(ve.Name())
+		if collection == "" {
+			continue
+		}
 		visDir := filepath.Join(baseDir, ve.Name())
+		if ve.Name() != collection && strings.EqualFold(ve.Name(), collection) {
+			canonicalPath := filepath.Join(baseDir, collection)
+			if renameCaseOnly(visDir, canonicalPath) {
+				visDir = canonicalPath
+			}
+		}
 		langEntries, err := readDir(visDir)
 		if err != nil {
 			continue
@@ -632,26 +742,38 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 				continue
 			}
 			name := le.Name()
-			lower := strings.ToLower(name)
-			if name == lower {
-				continue
-			}
-			if _, ok := languages[lower]; !ok {
+			canonical, ok := buckets[strings.ToLower(name)]
+			if !ok || name == canonical {
 				continue
 			}
 			src := filepath.Join(visDir, name)
-			dst := filepath.Join(visDir, lower)
-			tmp := filepath.Join(visDir, lower+".corral-rename-tmp")
-			if err := renamePath(src, tmp); err != nil {
-				log.Printf("WARN: failed normalizing case for %s: %v", src, err)
-				continue
-			}
-			if err := renamePath(tmp, dst); err != nil {
-				log.Printf("WARN: failed normalizing case for %s -> %s: %v", tmp, dst, err)
-				_ = renamePath(tmp, src) // best-effort revert
-			}
+			dst := filepath.Join(visDir, canonical)
+			renameCaseOnly(src, dst)
 		}
 	}
+}
+
+func canonicalCollectionName(name string) string {
+	for _, collection := range []string{"Public", "Private", "Forks", "Work"} {
+		if strings.EqualFold(name, collection) {
+			return collection
+		}
+	}
+	return ""
+}
+
+func renameCaseOnly(src, dst string) bool {
+	tmp := dst + ".corral-rename-tmp"
+	if err := renamePath(src, tmp); err != nil {
+		log.Printf("WARN: failed normalizing case for %s: %v", src, err)
+		return false
+	}
+	if err := renamePath(tmp, dst); err != nil {
+		log.Printf("WARN: failed normalizing case for %s -> %s: %v", tmp, dst, err)
+		_ = renamePath(tmp, src)
+		return false
+	}
+	return true
 }
 
 // cleanupEmptyFolders removes the now-empty legacy top-level language
@@ -660,14 +782,19 @@ func normalizeLanguageDirCase(baseDir string, repos []github.Repo) {
 // when it is empty, so unrelated entries under baseDir (e.g. .claude, other
 // projects) are never touched.
 func cleanupEmptyFolders(baseDir string, repos []github.Repo) {
-	seen := make(map[string]struct{})
+	seenRoots := make(map[string]struct{})
+	seenBuckets := make(map[string]struct{})
 	for _, repo := range repos {
 		lang := normalizeLanguage(repo.Language)
-		if _, ok := seen[lang]; ok {
-			continue
+		if _, ok := seenRoots[lang]; !ok {
+			seenRoots[lang] = struct{}{}
+			_ = os.Remove(filepath.Join(baseDir, lang))
 		}
-		seen[lang] = struct{}{}
-		_ = os.Remove(filepath.Join(baseDir, lang)) // removes only when empty
+		legacyBucket := filepath.Join(repositoryCollection(repo), lang)
+		if _, ok := seenBuckets[legacyBucket]; !ok {
+			seenBuckets[legacyBucket] = struct{}{}
+			_ = os.Remove(filepath.Join(baseDir, legacyBucket))
+		}
 	}
 }
 
@@ -921,13 +1048,20 @@ func detectOrphans(owner, baseDir string, repos []github.Repo) {
 
 func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, error) {
 	if layoutTpl == "" {
-		layoutTpl = "{{.Visibility}}/{{.Language}}/{{.Name}}"
+		layoutTpl = defaultLayout
 	}
-	tmpl, err := template.New("layout").Parse(layoutTpl)
+	tmpl, err := parseLayoutTemplate(layoutTpl)
 	if err != nil {
 		return "", err
 	}
 	return executeLayout(tmpl, repo, owner)
+}
+
+func parseLayoutTemplate(layout string) (*template.Template, error) {
+	if len(layout) > maxLayoutTemplateBytes {
+		return nil, fmt.Errorf("layout template exceeds %d bytes", maxLayoutTemplateBytes)
+	}
+	return template.New("layout").Parse(layout)
 }
 
 func executeLayout(tmpl *template.Template, repo github.Repo, owner string) (string, error) {
@@ -935,6 +1069,8 @@ func executeLayout(tmpl *template.Template, repo github.Repo, owner string) (str
 	data := struct {
 		Visibility    string
 		Language      string
+		Collection    string
+		Bucket        string
 		Name          string
 		Owner         string
 		FullName      string
@@ -943,6 +1079,8 @@ func executeLayout(tmpl *template.Template, repo github.Repo, owner string) (str
 	}{
 		Visibility:    strings.ToLower(repo.Visibility),
 		Language:      normalizeLanguage(repo.Language),
+		Collection:    repositoryCollection(repo),
+		Bucket:        repositoryBucket(repo),
 		Name:          repo.Name,
 		Owner:         firstNonEmpty(repo.Owner, owner),
 		FullName:      repo.FullName,

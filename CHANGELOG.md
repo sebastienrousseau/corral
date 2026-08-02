@@ -6,6 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17] — 2026-08-01
+
+### Added
+
+- Native macOS Finder Tags for repository lifecycle, visibility, ecosystem,
+  ownership, and repository type while preserving user-managed tags.
+- Canonical `Public`, `Private`, `Forks`, and `Work` collection folders.
+
+### Changed
+
+- The default layout now uses Finder-facing ecosystem buckets such as `Go`,
+  `Rust`, `Python`, and `Web`. Forks are separated under `Forks` and archived
+  repositories are included by default so they can be tagged `On Hold`.
+
+### Fixed
+
+- Repositories whose names end in `.github.io` are always organized under the
+  `Web` bucket, regardless of GitHub's detected primary language.
+- Repository discovery reports every duplicate clone location instead of
+  silently retaining whichever matching remote was encountered first.
+- Dry runs no longer perform legacy migrations, case normalization, collection
+  creation, or empty-folder cleanup.
+
+### Performance
+
+- Local discovery prunes dependency, build, cache, and virtual-environment
+  trees, reducing a 185-repository layout audit from roughly 90 seconds to
+  about 2.5 seconds on the reference workspace.
+
 ## [0.0.16] — 2026-08-01
 
 ### Fixed

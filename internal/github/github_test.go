@@ -235,6 +235,22 @@ func TestFetchPaginationFailureAndCancellation(t *testing.T) {
 	})
 }
 
+func TestAcquirePageSlot(t *testing.T) {
+	sem := make(chan struct{}, 1)
+	if err := acquirePageSlot(context.Background(), sem); err != nil {
+		t.Fatal(err)
+	}
+	<-sem
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sem <- struct{}{}
+	if err := acquirePageSlot(ctx, sem); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquirePageSlot() error = %v", err)
+	}
+	<-sem
+}
+
 func TestFetchSequentialPaginationAndSorts(t *testing.T) {
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
