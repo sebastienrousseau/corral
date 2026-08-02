@@ -17,7 +17,8 @@ Versions pinned in `go.mod`. Refresh this table whenever a direct dependency is 
 | `github.com/charmbracelet/bubbletea` | v1.3.10 | TUI Architecture | MIT |
 | `github.com/charmbracelet/lipgloss` | v1.1.0 | TUI Styling | MIT |
 | `github.com/charmbracelet/bubbles` | v1.0.0 | TUI Components | MIT |
-| `github.com/mattn/go-isatty` | v0.0.22 | Terminal Detection | MIT |
+| `github.com/mattn/go-isatty` | v0.0.24 | Terminal Detection | MIT |
+| `howett.net/plist` | v1.0.1 | Native macOS Finder Tag property-list encoding | BSD-2-Clause |
 
 GitHub API authentication uses the `WithAuthToken` helper on the go-github client (no direct `golang.org/x/oauth2` dependency).
 

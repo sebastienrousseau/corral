@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"text/template"
@@ -101,16 +102,26 @@ func TestDiscoverExistingReposBranches(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(valid, ".git", "config"), []byte("[remote \"origin\"]\nurl = https://github.com/acme/a.git\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	skipped := filepath.Join(base, "node_modules", "nested")
+	if err := os.MkdirAll(filepath.Join(skipped, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skipped, ".git", "config"), []byte("[remote \"origin\"]\nurl = https://github.com/acme/skipped.git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	got := discoverExistingRepos(base)
-	if got["github.com/acme/a"] != valid {
+	if !reflect.DeepEqual(got["github.com/acme/a"], []string{valid}) {
 		t.Fatalf("discovery = %v", got)
+	}
+	if _, ok := got["github.com/acme/skipped"]; ok {
+		t.Fatal("dependency tree was traversed")
 	}
 	if got := discoverExistingRepos(filepath.Join(base, "missing")); len(got) != 0 {
 		t.Fatalf("missing root discovery = %v", got)
 	}
 }
 
-func TestNormalizeLanguageDirCaseFailureBranches(t *testing.T) {
+func TestNormalizeLayoutDirCaseFailureBranches(t *testing.T) {
 	base := t.TempDir()
 	visibility := filepath.Join(base, "Public")
 	if err := os.Mkdir(visibility, 0o750); err != nil {
@@ -124,10 +135,10 @@ func TestNormalizeLanguageDirCaseFailureBranches(t *testing.T) {
 	if err := os.Mkdir(source, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(visibility, "go.corral-rename-tmp"), 0o750); err != nil {
+	if err := os.Mkdir(filepath.Join(visibility, "Go.corral-rename-tmp"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	normalizeLanguageDirCase(base, []github.Repo{{Language: "Go"}})
+	normalizeLayoutDirCase(base, []github.Repo{{Language: "Go"}})
 }
 
 func TestProcessRepoRelocationAndOriginFailures(t *testing.T) {
@@ -247,10 +258,10 @@ func TestNDJSONOrphanAndCancellationEncodeFailures(t *testing.T) {
 	isTerminal = func(uintptr) bool { return false }
 	osExit = func(int) {}
 	base := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(base, "Public", "go", "orphan", ".git"), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(base, "Public", "Go", "orphan", ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(base, "Public", "go", "orphan", ".git", "config"), []byte("[remote \"origin\"]\nurl = https://github.com/owner/orphan.git\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(base, "Public", "Go", "orphan", ".git", "config"), []byte("[remote \"origin\"]\nurl = https://github.com/owner/orphan.git\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	opts := defaultRunOptions(base)
@@ -293,7 +304,23 @@ func TestInjectedFilesystemFailures(t *testing.T) {
 		}
 		return nil, errors.New("read failed")
 	}
-	normalizeLanguageDirCase(base, []github.Repo{{Language: "Go"}})
+	normalizeLayoutDirCase(base, []github.Repo{{Language: "Go"}})
+
+	nestedBase := t.TempDir()
+	if err := os.Mkdir(filepath.Join(nestedBase, "Public"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	nestedEntries, err := os.ReadDir(nestedBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDir = func(path string) ([]os.DirEntry, error) {
+		if path == nestedBase {
+			return nestedEntries, nil
+		}
+		return nil, errors.New("nested read failed")
+	}
+	normalizeLayoutDirCase(nestedBase, []github.Repo{{Language: "Go"}})
 
 	readDir = oldRead
 	caseBase := t.TempDir()
@@ -308,7 +335,7 @@ func TestInjectedFilesystemFailures(t *testing.T) {
 		}
 		return nil
 	}
-	normalizeLanguageDirCase(caseBase, []github.Repo{{Language: "Go"}})
+	normalizeLayoutDirCase(caseBase, []github.Repo{{Language: "Go"}})
 	if renames != 3 {
 		t.Fatalf("rename calls = %d, want failure plus revert", renames)
 	}

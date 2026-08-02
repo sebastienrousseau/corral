@@ -55,7 +55,7 @@ func TestProcessRepoSkipsEmptyRemote(t *testing.T) {
 		DefaultBranch: "main",
 		CloneURL:      "http://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "empty_upstream")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "empty_upstream")
 	if err := os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestProcessRepoStillSyncsNonEmpty(t *testing.T) {
 		DefaultBranch: "main",
 		CloneURL:      "http://clone",
 	}
-	targetDir := filepath.Join(baseDir, "Public", "go", "healthy")
+	targetDir := filepath.Join(baseDir, "Public", "Go", "healthy")
 	if err := os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750); err != nil {
 		t.Fatal(err)
 	}

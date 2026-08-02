@@ -7,7 +7,7 @@
 <h1 align="center">Corral</h1>
 
 <p align="center">
-  Automatically clone and organise GitHub repositories by visibility and language.
+  Automatically clone and organise GitHub repositories using Finder-friendly collections, ecosystems, and metadata.
 </p>
 
 <p align="center">
@@ -40,7 +40,7 @@
 - [Features](#features) — structured layout, concurrency, and security
 - [Architecture](#architecture) — end-to-end flow from API fetch to per-repo dispatch
 - [Interactive TUI Mode](#interactive-tui-mode) — keybindings, commands, and autocomplete
-- [Layout Customization](#layout-customization) — templated visibility and language organization
+- [Layout Customization](#layout-customization) — Apple-style collections, ecosystems, and custom templates
 - [Smart Syncing](#smart-syncing) — network-optimised incremental updates
 - [Exec Mode](#exec-mode) — concurrent batch execution of Git commands
 - [MCP Server](#mcp-server-for-ai-agents) — expose your local workspace to AI coding agents
@@ -135,16 +135,24 @@ This converges your local directory structure into a structured mirror:
 ```
 ~/Code/
 ├── Public/
-│   ├── go/
+│   ├── Go/
 │   │   └── corral/
-│   ├── rust/
+│   ├── Rust/
 │   │   └── my-crate/
-│   └── other/
-│       └── dotfiles/
-└── Private/
-    └── python/
-        └── internal-tool/
+│   └── Web/
+│       └── project.github.io/
+├── Private/
+│   └── Python/
+│       └── internal-tool/
+├── Forks/
+│   └── Rust/
+│       └── upstream-project/
+└── Work/
 ```
+
+On macOS, Corral also writes native Finder Tags to repository folders while
+preserving tags you added yourself. This keeps the physical hierarchy shallow
+and makes Finder searches and Smart Folders useful across ecosystems.
 
 ---
 
@@ -152,7 +160,8 @@ This converges your local directory structure into a structured mirror:
 
 | Feature | Description |
 | :--- | :--- |
-| **Structured Layout** | Automatically sorts repositories into `Public/` and `Private/` trees, sub-grouped by primary language (e.g. `go`, `rust`, `python`). |
+| **Apple-style Layout** | Sorts source repositories into `Public/`, `Private/`, and `Forks/`, using Finder-friendly ecosystem names such as `Go`, `Rust`, `Python`, and `Web`. |
+| **Finder Tags** | Applies native macOS lifecycle colors and searchable visibility, ecosystem, owner, fork, archive, template, and mirror metadata without replacing personal tags. |
 | **Smart Syncing** | Compares remote `pushed_at` metadata to skip redundant network calls, speeding up syncs by 10x-50x. |
 | **Interactive Selection** | A fully featured Terminal UI (TUI) selector dashboard to search, preview, and select repositories to clone. |
 | **Legacy Migration** | Automatically moves existing flat directory layouts into the new structure and cleans up empty folders. |
@@ -181,7 +190,7 @@ graph TD
     F --> F1{TUI selector?}
     F1 -- "--select" --> F2[Interactive TUI<br/>/sort, /all, /none, search]
     F1 -- No --> G
-    F2 --> G[Layout template render<br/>Visibility/Language/Name]
+    F2 --> G[Layout template render<br/>Collection/Bucket/Name]
     G --> H["Worker pool<br/>(--concurrency)"]
     H --> I{Already cloned?}
     I -- No --> J["git clone (+ blobless/<br/>depth/single-branch)"]
@@ -238,7 +247,7 @@ Press `/` inside the TUI to enter Command Mode. Commands support prefix-based au
 
 ## Layout Customization
 
-By default, Corral uses the layout `{{.Visibility}}/{{.Language}}/{{.Name}}`. You can override this using the `--layout` flag:
+By default, Corral uses the Apple-style layout `{{.Collection}}/{{.Bucket}}/{{.Name}}`. Forks use the `Forks` collection, while `.github.io` repositories use the `Web` bucket regardless of their detected language. You can override this using the `--layout` flag:
 
 ```bash
 ./corralctl --layout "{{.Owner}}/{{.Name}}" my-org
@@ -247,8 +256,26 @@ By default, Corral uses the layout `{{.Visibility}}/{{.Language}}/{{.Name}}`. Yo
 Supported placeholders:
 * `{{.Owner}}` — GitHub owner name.
 * `{{.Name}}` — Repository name.
+* `{{.Collection}}` — Canonical root (`Public`, `Private`, or `Forks`).
+* `{{.Bucket}}` — Finder-facing ecosystem bucket (`Go`, `Rust`, `Web`, etc.).
 * `{{.Language}}` — Primary language normalized to lowercase.
-* `{{.Visibility}}` — Repository visibility (`Public` or `Private`).
+* `{{.Visibility}}` — Repository visibility normalized to lowercase.
+
+### Finder Tags on macOS
+
+Finder tagging is enabled by default on macOS and can be disabled with
+`--finder-tags=false`. Corral manages the following lifecycle taxonomy:
+
+| Color | Tag | Automatic signal |
+| :--- | :--- | :--- |
+| Green | `Active` | Pushed within seven days or checked out on a non-default branch |
+| Yellow | `On Hold` | Archived on GitHub |
+| Red | `Needs Fix` | Corral encountered a sync failure for the matching clone |
+| Purple | `Experiment` | Fork, template, or mirror repository |
+
+Uncolored metadata tags include `Visibility: Public`, `Collection: Forks`,
+`Ecosystem: Rust`, `Owner: example`, `GitHub`, `Fork`, `Archived`, `Template`, and `Mirror`.
+Finder can combine these tags in searches or saved Smart Folders.
 
 ---
 
@@ -394,13 +421,14 @@ corralctl <owner> [base_dir] [limit]
 | `--no-sync` | — | off | Skip pulling latest changes for existing clones |
 | `--force-sync` | — | off | Force git pull regardless of cached state |
 | `--layout` | — | `...` | Templated path layout for repositories |
+| `--finder-tags` | — | on (macOS) | Apply managed native Finder Tags to repository folders |
 | `--interactive` | `-i` | off | Launch the interactive selector TUI dashboard |
 | `--recurse-submodules`| — | off | Initialise submodules on clone and sync |
 | `--output` | — | `text` | Output format: `text`, `json`, or `ndjson` |
 | `--auth` | — | `auto` | Auth mode: `auto`, `token`, or `gh` |
 | `--visibility` | — | `all` | Filter by visibility: `all`, `public`, `private` |
-| `--include-forks` | — | off | Include forked repositories |
-| `--include-archived` | — | off | Include archived repositories |
+| `--include-forks` | — | on | Include forked repositories under `Forks/` |
+| `--include-archived` | — | on | Include archived repositories and tag them `On Hold` |
 | `--languages` | — | — | Comma-separated language filter (e.g. `go,rust`) |
 | `--exclude-languages`| — | — | Comma-separated language exclude list |
 | `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
@@ -467,7 +495,7 @@ To inspect the package layout and programmatically run Corral modules, see the s
 - **Can I run it inside Cron or systemd timers?**  
   Yes. The command runs non-interactively by default. All Git command credential prompts are bypassed to ensure automated jobs never hang.
 - **How are repositories with no primary language stored?**  
-  They default to the `other/` language category (e.g. `Public/other/my-repo`).
+  They default to the `Other/` ecosystem category (e.g. `Public/Other/my-repo`).
 
 ---
 
