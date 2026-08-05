@@ -20,9 +20,13 @@
 FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 # Runtime deps: git is required for clone/pull, ca-certificates for TLS.
+# Pin an explicit numeric uid/gid. hadolint DL3066 flags a non-numeric
+# USER because the host cannot resolve the name, and Kubernetes
+# `runAsNonRoot` needs a numeric id to verify the container is not root.
+# 65532 is the conventional "nonroot" id used by distroless.
 RUN apk add --no-cache git ca-certificates \
-    && addgroup -S corral \
-    && adduser -S -G corral corral
+    && addgroup -S -g 65532 corral \
+    && adduser -S -u 65532 -G corral -h /home/corral corral
 
 COPY corralctl /usr/local/bin/corralctl
 
@@ -37,7 +41,7 @@ LABEL org.opencontainers.image.source="https://github.com/sebastienrousseau/corr
 # the registry rejects publish attempts when they diverge.
 LABEL io.modelcontextprotocol.server.name="io.github.sebastienrousseau/corral"
 
-USER corral
+USER 65532:65532
 WORKDIR /home/corral
 
 # Default entrypoint runs the MCP server on stdio. Override with e.g.
