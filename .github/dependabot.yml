@@ -12,3 +12,7 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore(actions)"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
