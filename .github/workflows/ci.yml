@@ -92,7 +92,17 @@ jobs:
         run: |
           set -euo pipefail
           go version
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          # govulncheck must be *built* with a toolchain at least as new as the
+          # module it analyses. `go install pkg@latest` resolves in its own
+          # module context, so it picks the oldest toolchain satisfying x/vuln's
+          # own go directive — go1.25.13 — and a scanner built with 1.25 cannot
+          # load a module that requires 1.26:
+          #   "package requires newer Go version go1.26 (application built with go1.25)"
+          # Derive the toolchain from go.mod so this stays a single source of
+          # truth and cannot drift the way a hardcoded version would.
+          goversion="$(go list -m -f '{{.GoVersion}}')"
+          echo "building govulncheck with go${goversion}"
+          GOTOOLCHAIN="go${goversion}" go install golang.org/x/vuln/cmd/govulncheck@latest
           "${GOBIN}/govulncheck" -version
           "${GOBIN}/govulncheck" ./...
 
