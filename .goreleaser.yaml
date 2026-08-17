@@ -166,21 +166,32 @@ sboms:
     documents:
       - '{{ .ArtifactName }}.spdx.sbom.json'
 
-# Keyless cosign signature over checksums.txt, attached to the release.
+# Keyless cosign signature over checksums.txt, attached to the release as an
+# asset.
 #
-# Scorecard's Signed-Releases check looks for signature files among the release
-# *assets*. corral already produced SLSA provenance and signed its OCI images,
-# but provenance lives in GitHub's attestation store and the image signatures are
-# not release assets — so the check scored 0 while the workflow comment claimed
-# otherwise. This closes that gap using the same OIDC identity already in use.
+# corral already produced SLSA provenance and signed its OCI images, but
+# provenance lives in GitHub's attestation store and image signatures are not
+# release assets, so a consumer who downloads a tarball had nothing next to it
+# to verify against.
+#
+# Emits a Sigstore bundle rather than the older separate .sig/.pem pair.
+# cosign v3 — which sigstore/cosign-installer installs by default — removed
+# --output-signature and --output-certificate from sign-blob entirely; only
+# --bundle remains, and passing the old flags fails with
+# "must specify --bundle with --new-bundle-format". The .sigstore.json
+# extension is Sigstore's documented bundle name.
+#
+# Verify with:
+#   cosign verify-blob --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp 'https://github.com/sebastienrousseau/corral/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     checksums.txt
 signs:
   - cmd: cosign
-    signature: '${artifact}.sig'
-    certificate: '${artifact}.pem'
+    signature: '${artifact}.sigstore.json'
     args:
       - sign-blob
-      - '--output-signature=${signature}'
-      - '--output-certificate=${certificate}'
+      - '--bundle=${signature}'
       - '${artifact}'
       - '--yes'
     artifacts: checksum

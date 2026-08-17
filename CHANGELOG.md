@@ -93,10 +93,17 @@ several of these were reachable from a single mistyped argument.
 - Machine-readable SPDX SBOMs per release archive. `SBOM.md` was
   hand-maintained and had already drifted, omitting `mcp-go` — a direct
   dependency powering the entire MCP server.
-- Keyless cosign signatures over `checksums.txt`, attached as release assets.
-  OpenSSF Scorecard's Signed-Releases check reads release assets; SLSA
-  provenance lives in GitHub's attestation store and image signatures are not
-  assets, so the check scored 0 while a workflow comment claimed otherwise.
+- A keyless cosign Sigstore bundle over `checksums.txt`
+  (`checksums.txt.sigstore.json`), attached as a release asset, so a consumer
+  who downloads a tarball has something next to it to verify against. Until now
+  SLSA provenance lived only in GitHub's attestation store and the cosign
+  signatures covered only the OCI images — neither is a release asset.
+  Verify with `cosign verify-blob --bundle checksums.txt.sigstore.json ...`
+  (see `.goreleaser.yaml` for the full command). Note this is the modern bundle
+  format rather than a separate `.sig`/`.pem` pair, because cosign v3 removed
+  `--output-signature`/`--output-certificate` from `sign-blob`; whether OpenSSF
+  Scorecard's Signed-Releases check credits a `.sigstore.json` bundle has not
+  been verified.
 - `go test -race -shuffle=on`, fixed shuffle seeds, and `govulncheck` in CI.
 - **Seam-binding tests.** The suite reported 99.8% coverage with seven packages
   at 100%, yet 18 of 33 injected mutants survived — every one a default

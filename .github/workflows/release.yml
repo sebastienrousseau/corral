@@ -61,6 +61,15 @@ jobs:
       # attestations do, so there is no long-lived signing key to leak.
       # goreleaser's docker_signs: block below invokes the installed
       # cosign binary; this step just makes it available on PATH.
+      # syft, for the goreleaser `sboms:` block. goreleaser shells out to the
+      # syft binary and it is not preinstalled on GitHub runners, so without
+      # this the release fails at the SBOM stage with
+      # `exec: "syft": executable file not found in $PATH` — after building
+      # every archive and package, but before publishing anything.
+      # Pinned by commit SHA to match how every other action here is pinned.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
