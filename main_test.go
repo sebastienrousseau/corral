@@ -22,8 +22,8 @@ func TestMainExec(t *testing.T) {
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
 	}()
-	os.Stdout = os.NewFile(0, os.DevNull)
-	os.Stderr = os.NewFile(0, os.DevNull)
+	os.Stdout = mustDevNull(t)
+	os.Stderr = mustDevNull(t)
 
 	main()
 }
@@ -52,4 +52,17 @@ func TestMainDelegatesContext(t *testing.T) {
 	if !called {
 		t.Fatal("ExecuteContext was not called")
 	}
+}
+
+// mustDevNull opens /dev/null for writing and closes it when the test ends.
+// See the note on the cmd package's copy: `os.NewFile(0, os.DevNull)` wraps
+// stdin rather than opening anything, and its finalizer closes fd 0.
+func mustDevNull(t *testing.T) *os.File {
+	t.Helper()
+	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f
 }

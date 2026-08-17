@@ -23,7 +23,7 @@ func newStateRepo(t *testing.T) string {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.Command("git", args...) // #nosec G204 -- args are literals from this test
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
@@ -129,7 +129,7 @@ func TestWriteCloneStateMigratesLegacySidecar(t *testing.T) {
 func TestStatePathResolvesWorktreeGitdir(t *testing.T) {
 	main := newStateRepo(t)
 	wt := filepath.Join(t.TempDir(), "wt")
-	cmd := exec.Command("git", "worktree", "add", "--quiet", wt)
+	cmd := exec.Command("git", "worktree", "add", "--quiet", wt) // #nosec G204 -- wt is a t.TempDir() path
 	cmd.Dir = main
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Skipf("git worktree add unavailable: %v\n%s", err, out)

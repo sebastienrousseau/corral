@@ -1057,6 +1057,13 @@ func evaluateLayout(layoutTpl string, repo github.Repo, owner string) (string, e
 	return executeLayout(tmpl, repo, owner)
 }
 
+// ParseLayoutTemplate validates a --layout template without rendering it, so
+// the CLI can reject a malformed template during flag validation instead of
+// after a full paginated GitHub fetch has already happened.
+func ParseLayoutTemplate(layout string) (*template.Template, error) {
+	return parseLayoutTemplate(layout)
+}
+
 func parseLayoutTemplate(layout string) (*template.Template, error) {
 	if len(layout) > maxLayoutTemplateBytes {
 		return nil, fmt.Errorf("layout template exceeds %d bytes", maxLayoutTemplateBytes)
