@@ -15,19 +15,78 @@ jobs:
       contents: read
     uses: sebastienrousseau/pipelines/.github/workflows/go-ci.yml@d3d082405a06d3ec471e6f6b7a1bbc8f1137d386
     with:
-      go-version: '1.26.1'
+      go-version: '1.26.6'
       run-cross-platform: true
       run-coverage: true
+
+  # The reusable go-ci workflow above does not run the race detector or
+  # randomise test order, and a 100%-coverage suite turned out to be
+  # order-dependent: `go test -shuffle` failed on 3 of 4 seeds because one test
+  # left cobra's help flag set on the package-level rootCmd, so every later test
+  # short-circuited into help output and asserted nothing. Both flags are gates
+  # here so that class of defect cannot come back silently.
+  hardened-tests:
+    name: Race & Shuffled Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+      - name: Test with race detector and randomised order
+        run: go test -race -shuffle=on ./...
+      # Fixed seeds alongside -shuffle=on: a random seed catches ordering bugs
+      # eventually, named seeds catch them reproducibly.
+      - name: Test with fixed shuffle seeds
+        run: |
+          set -euo pipefail
+          for seed in 1 2 3; do
+            echo "::group::shuffle seed ${seed}"
+            go test -count=1 -shuffle="${seed}" ./...
+            echo "::endgroup::"
+          done
+
+  vulncheck:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+      # govulncheck reports only vulnerabilities that are actually reachable
+      # from this module's call graph, including ones in the standard library —
+      # which is what a pinned toolchain quietly accumulates between releases.
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   docs-check:
     name: Documentation Coverage Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.1'
+          go-version: '1.26.6'
       - name: Enforce 100% Doc Coverage
         run: go run scripts/doc_coverage.go
