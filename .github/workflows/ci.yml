@@ -35,15 +35,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.6'
+      # No actions/setup-go: the runner ships a toolchain, and GOTOOLCHAIN=auto
+      # honours the `go` directive in go.mod, so the version is pinned by go.mod
+      # rather than by a workflow input that can drift from it. This also keeps
+      # the job out of the critical path of a codeload rate-limit on the action
+      # tarball, which failed these jobs during "Set up job" — before any step
+      # ran — repeatedly on 2026-08-17.
       - name: Test with race detector and randomised order
-        run: go test -race -shuffle=on ./...
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go version
+          go test -race -shuffle=on ./...
       # Fixed seeds alongside -shuffle=on: a random seed catches ordering bugs
       # eventually, named seeds catch them reproducibly.
       - name: Test with fixed shuffle seeds
+        env:
+          GOTOOLCHAIN: auto
         run: |
           set -euo pipefail
           for seed in 1 2 3; do
@@ -62,15 +71,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.6'
+      # No actions/setup-go: the runner ships a toolchain, and GOTOOLCHAIN=auto
+      # honours the `go` directive in go.mod, so the version is pinned by go.mod
+      # rather than by a workflow input that can drift from it. This also keeps
+      # the job out of the critical path of a codeload rate-limit on the action
+      # tarball, which failed these jobs during "Set up job" — before any step
+      # ran — repeatedly on 2026-08-17.
       # govulncheck reports only vulnerabilities that are actually reachable
       # from this module's call graph, including ones in the standard library —
       # which is what a pinned toolchain quietly accumulates between releases.
       - name: Run govulncheck
+        env:
+          GOTOOLCHAIN: auto
         run: |
+          set -euo pipefail
+          go version
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
