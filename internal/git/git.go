@@ -421,6 +421,14 @@ func RemoteOriginFromConfig(targetDir string) (string, error) {
 	return "", fmt.Errorf("origin url not found in %s", configPath)
 }
 
+// Dir resolves targetDir to its Git metadata directory, transparently
+// following the `gitdir: ...` pointer that worktrees store in a regular .git
+// file. Callers that need to keep a file out of the working tree (and so out
+// of `git status`) should place it here rather than beside .git.
+func Dir(targetDir string) (string, error) {
+	return resolveGitDir(targetDir)
+}
+
 // resolveGitDir resolves targetDir/.git to the actual Git metadata directory.
 // Worktrees store a `gitdir: ...` pointer in a regular .git file.
 func resolveGitDir(targetDir string) (string, error) {

@@ -28,11 +28,59 @@ func makeFakeRepo(t *testing.T, base, vis, lang, name, originURL, sidecar string
 		}
 	}
 	if sidecar != "" {
-		if err := os.WriteFile(filepath.Join(repo, stateFileName), []byte(sidecar), 0o600); err != nil {
+		// Since v0.0.20 the sidecar lives inside the git directory so it
+		// stays out of `git status`.
+		if err := os.WriteFile(filepath.Join(repo, ".git", stateFileName), []byte(sidecar), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return repo
+}
+
+// makeLegacyRepo is makeFakeRepo with the sidecar at the pre-v0.0.20
+// working-tree path, so the migration read path stays covered.
+func makeLegacyRepo(t *testing.T, base, vis, lang, name, originURL, sidecar string) string {
+	t.Helper()
+	repo := makeFakeRepo(t, base, vis, lang, name, originURL, "")
+	if sidecar != "" {
+		if err := os.WriteFile(filepath.Join(repo, legacyStateFileName), []byte(sidecar), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo
+}
+
+// TestReadStateFallsBackToLegacySidecar covers clones written by a pre-v0.0.20
+// corralctl: their smart-sync state must still be reported.
+func TestReadStateFallsBackToLegacySidecar(t *testing.T) {
+	base := t.TempDir()
+	repo := makeLegacyRepo(t, base, "Public", "go", "legacy",
+		"https://github.com/o/legacy.git", `{"last_synced_at":"2026-06-30T00:00:00Z"}`)
+	state, ok := readState(repo)
+	if !ok {
+		t.Fatal("expected legacy sidecar to be read")
+	}
+	if state.LastSyncedAt != "2026-06-30T00:00:00Z" {
+		t.Errorf("last_synced_at = %q", state.LastSyncedAt)
+	}
+}
+
+// TestReadStatePrefersGitDirOverLegacy pins the precedence when both exist.
+func TestReadStatePrefersGitDirOverLegacy(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "both",
+		"https://github.com/o/both.git", `{"last_synced_at":"2026-08-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(repo, legacyStateFileName),
+		[]byte(`{"last_synced_at":"2020-01-01T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, ok := readState(repo)
+	if !ok {
+		t.Fatal("expected state to be read")
+	}
+	if state.LastSyncedAt != "2026-08-01T00:00:00Z" {
+		t.Errorf("expected git-dir sidecar to win, got %q", state.LastSyncedAt)
+	}
 }
 
 func TestScanFindsExpectedLayout(t *testing.T) {
@@ -191,7 +239,10 @@ func TestReadStateLogsOnMalformedJSON(t *testing.T) {
 	// Malformed sidecar: logs with the path so operators can grep.
 	buf.Reset()
 	dirBad := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dirBad, stateFileName), []byte("not-json"), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(dirBad, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirBad, ".git", stateFileName), []byte("not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readState(dirBad); ok {
@@ -238,9 +289,12 @@ func TestSafePathRejectsTraversal(t *testing.T) {
 
 func TestMarkStateSyncedPreservesPushedAt(t *testing.T) {
 	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	wantPushed := "2026-07-01T12:00:00Z"
 	body := `{"last_synced_pushed_at":"` + wantPushed + `","last_synced_at":"2026-07-01T13:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(repo, stateFileName), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".git", stateFileName), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := markStateSynced(repo); err != nil {

@@ -85,7 +85,28 @@ type Index struct {
 // stateFileName mirrors engine.StateFileName without importing the
 // engine package; kept in sync by hand because the value is part of
 // corral's public on-disk contract.
-const stateFileName = ".corral-state.json"
+//
+// Since v0.0.20 the sidecar lives inside the repository's Git directory so it
+// no longer shows up in `git status`. legacyStateFileName is the pre-v0.0.20
+// working-tree location, still read so this server reports accurate state for
+// clones an older corralctl wrote.
+const (
+	stateFileName       = "corral-state.json"
+	legacyStateFileName = ".corral-state.json"
+)
+
+// statePathsFor returns the sidecar paths to try for repoPath, current
+// location first. A repoPath whose Git directory cannot be resolved yields
+// only the legacy path, so a malformed clone degrades to "no state" rather
+// than an error.
+func statePathsFor(repoPath string) []string {
+	legacy := filepath.Join(repoPath, legacyStateFileName)
+	gitDir, err := git.Dir(repoPath)
+	if err != nil {
+		return []string{legacy}
+	}
+	return []string{filepath.Join(gitDir, stateFileName), legacy}
+}
 
 // maxIndexDepth bounds the walk so a misconfigured root (e.g. $HOME)
 // cannot blow up scan time or memory on a deeply nested filesystem.
@@ -229,20 +250,22 @@ func buildEntry(root, repoPath string) RepoEntry {
 // stream) so operators can trace bad sidecars without breaking the
 // tool call itself.
 func readState(repoPath string) (*StateRecord, bool) {
-	path := filepath.Join(repoPath, stateFileName)
-	b, err := readStateFile(path) // #nosec G304 -- repoPath comes from the root-confined index
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("corral-mcp: read state %s: %v", path, err)
+	for _, path := range statePathsFor(repoPath) {
+		b, err := readStateFile(path) // #nosec G304 -- repoPath comes from the root-confined index
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				log.Printf("corral-mcp: read state %s: %v", path, err)
+			}
+			continue
 		}
-		return nil, false
+		var s StateRecord
+		if err := json.Unmarshal(b, &s); err != nil {
+			log.Printf("corral-mcp: parse state %s: %v", path, err)
+			continue
+		}
+		return &s, true
 	}
-	var s StateRecord
-	if err := json.Unmarshal(b, &s); err != nil {
-		log.Printf("corral-mcp: parse state %s: %v", path, err)
-		return nil, false
-	}
-	return &s, true
+	return nil, false
 }
 
 // markStateSynced records a successful MCP-triggered pull while preserving the
@@ -257,7 +280,11 @@ func markStateSynced(repoPath string) error {
 	if err != nil {
 		return fmt.Errorf("marshal sync state: %w", err)
 	}
-	tmp, err := createSyncTemp(repoPath, stateFileName+".*.tmp")
+	gitDir, err := git.Dir(repoPath)
+	if err != nil {
+		return fmt.Errorf("resolve git dir: %w", err)
+	}
+	tmp, err := createSyncTemp(gitDir, stateFileName+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create sync state: %w", err)
 	}
@@ -270,9 +297,12 @@ func markStateSynced(repoPath string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close sync state: %w", err)
 	}
-	if err := renameSyncFile(tmpPath, filepath.Join(repoPath, stateFileName)); err != nil {
+	if err := renameSyncFile(tmpPath, filepath.Join(gitDir, stateFileName)); err != nil {
 		return fmt.Errorf("replace sync state: %w", err)
 	}
+	// Migration: drop the pre-v0.0.20 working-tree sidecar now that the
+	// authoritative copy lives in the Git directory. Best-effort.
+	_ = os.Remove(filepath.Join(repoPath, legacyStateFileName))
 	return nil
 }
 

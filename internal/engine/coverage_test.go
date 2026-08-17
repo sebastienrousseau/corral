@@ -191,7 +191,13 @@ func TestProcessRepoRelocationAndOriginFailures(t *testing.T) {
 
 func TestStateAdditionalFailures(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, StateFileName), 0o750); err != nil {
+	// The sidecar lives inside the git directory, so force the unreadable
+	// case there rather than in the working tree.
+	gitDir := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(gitDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(gitDir, StateFileName), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readCloneState(dir); err == nil {
@@ -371,6 +377,10 @@ func TestWriteCloneStateIOFailures(t *testing.T) {
 	oldCreate, oldRename := createStateTemp, renameStateFile
 	t.Cleanup(func() { createStateTemp, renameStateFile = oldCreate, oldRename })
 	dir := t.TempDir()
+	// statePath resolves the git directory before any temp file is created.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	createStateTemp = func(string, string) (stateTempFile, error) {
 		return &fakeStateTemp{name: filepath.Join(dir, "tmp"), writeErr: errors.New("write failed")}, nil
 	}

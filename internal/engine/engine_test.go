@@ -1606,7 +1606,7 @@ func TestProcessRepoStateMissingFallsThrough(t *testing.T) {
 	if *called != 1 {
 		t.Errorf("gitPull must be called when state missing, was called %d times", *called)
 	}
-	if _, err := os.Stat(filepath.Join(target, StateFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(target, ".git", StateFileName)); err != nil {
 		t.Errorf("expected state file to be written after sync, got %v", err)
 	}
 }
