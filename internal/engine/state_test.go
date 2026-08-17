@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sebastienrousseau/corral/internal/github"
 )
 
 // newStateRepo creates a real git repository with one commit. The sidecar now
@@ -260,5 +262,91 @@ func TestWriteCloneStateMissingDirError(t *testing.T) {
 	err := writeCloneState("/no/such/path/anywhere", cloneState{})
 	if err == nil {
 		t.Fatal("expected error writing to nonexistent dir")
+	}
+}
+
+// TestMigrateLegacyRefusesNonClones is the regression test for the silent
+// relocation bug: migrateLegacy used a name match alone as grounds for
+// os.Rename, so an unrelated directory that happened to share a name with one
+// of the owner's repositories was moved — with no confirmation, and invisible in
+// --dry-run because the preview path requires git.IsRepository.
+func TestMigrateLegacyRefusesNonClones(t *testing.T) {
+	base := t.TempDir()
+	repo := github.Repo{
+		Name: "tools", Owner: "acme", FullName: "acme/tools",
+		Language: "Go", Visibility: "Public",
+	}
+
+	// A plain directory with the colliding name and a file the user cares about.
+	legacy := filepath.Join(base, normalizeLanguage(repo.Language), repo.Name)
+	if err := os.MkdirAll(legacy, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(legacy, "important.txt")
+	if err := os.WriteFile(keep, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacy(base, []github.Repo{repo})
+
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("a non-clone directory was relocated: %v", err)
+	}
+	target := filepath.Join(base, repositoryCollection(repo), repositoryBucket(repo), repo.Name)
+	if _, err := os.Stat(target); err == nil {
+		t.Error("migrateLegacy created the target from a directory that is not a clone")
+	}
+}
+
+// TestMigrateLegacyRefusesForeignClone covers the second piece of evidence: a
+// real git repository whose origin points somewhere else must also be left
+// alone.
+func TestMigrateLegacyRefusesForeignClone(t *testing.T) {
+	base := t.TempDir()
+	repo := github.Repo{
+		Name: "tools", Owner: "acme", FullName: "acme/tools",
+		Language: "Go", Visibility: "Public",
+	}
+	legacy := filepath.Join(base, normalizeLanguage(repo.Language), repo.Name)
+	if err := os.MkdirAll(filepath.Join(legacy, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Same name, entirely different project.
+	cfg := "[remote \"origin\"]\n\turl = https://github.com/someone-else/tools.git\n"
+	if err := os.WriteFile(filepath.Join(legacy, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacy(base, []github.Repo{repo})
+
+	if _, err := os.Stat(filepath.Join(legacy, ".git")); err != nil {
+		t.Errorf("a clone with a foreign origin was relocated: %v", err)
+	}
+}
+
+// And the case migration exists for: a genuine clone of the repository does move.
+func TestMigrateLegacyMovesMatchingClone(t *testing.T) {
+	base := t.TempDir()
+	repo := github.Repo{
+		Name: "tools", Owner: "acme", FullName: "acme/tools",
+		Language: "Go", Visibility: "Public",
+	}
+	legacy := filepath.Join(base, normalizeLanguage(repo.Language), repo.Name)
+	if err := os.MkdirAll(filepath.Join(legacy, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = https://github.com/acme/tools.git\n"
+	if err := os.WriteFile(filepath.Join(legacy, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	migrateLegacy(base, []github.Repo{repo})
+
+	target := filepath.Join(base, repositoryCollection(repo), repositoryBucket(repo), repo.Name)
+	if _, err := os.Stat(filepath.Join(target, ".git")); err != nil {
+		t.Errorf("a genuine clone should have been migrated: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy path should be gone after migration, stat err = %v", err)
 	}
 }

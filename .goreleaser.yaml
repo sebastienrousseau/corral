@@ -154,6 +154,38 @@ aurs:
 checksum:
   name_template: 'checksums.txt'
 
+# A machine-readable SBOM per archive. SBOM.md was a hand-maintained markdown
+# table and had already drifted — it omitted github.com/mark3labs/mcp-go, a
+# direct dependency powering the whole MCP server, and golang.org/x/sys — while
+# SECURITY.md pointed at it as the full bill of materials. Generated beats
+# curated. Also scored: OpenSSF Scorecard awards points for having an SBOM and
+# more for publishing it as a release artifact.
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - '{{ .ArtifactName }}.spdx.sbom.json'
+
+# Keyless cosign signature over checksums.txt, attached to the release.
+#
+# Scorecard's Signed-Releases check looks for signature files among the release
+# *assets*. corral already produced SLSA provenance and signed its OCI images,
+# but provenance lives in GitHub's attestation store and the image signatures are
+# not release assets — so the check scored 0 while the workflow comment claimed
+# otherwise. This closes that gap using the same OIDC identity already in use.
+signs:
+  - cmd: cosign
+    signature: '${artifact}.sig'
+    certificate: '${artifact}.pem'
+    args:
+      - sign-blob
+      - '--output-signature=${signature}'
+      - '--output-certificate=${certificate}'
+      - '${artifact}'
+      - '--yes'
+    artifacts: checksum
+    output: true
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 

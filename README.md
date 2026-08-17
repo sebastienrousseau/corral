@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: Apache-2.0 OR MIT -->
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
 
 <p align="center">
   <img src=".github/logo.svg" alt="Corral logo" width="128" />

@@ -129,6 +129,10 @@ func (s *Server) auditRefusal(rec AuditRecord, message string) error {
 // when the operation cannot be sandboxed to the configured Root.
 func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_sync_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithDescription("Run `git pull --rebase --autostash` against one clone in the Corral workspace. Requires --enable-mutations. Reuses the same non-interactive git environment the classic corralctl uses (no credential prompts, no signing pinentry) and honours smart-sync via the .corral-state.json sidecar. Refuses when the repo isn't in the index or resolves outside the configured sandbox root."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -196,6 +200,10 @@ func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 // escape the sandbox root.
 func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_clone_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithDescription("Clone a repository into the Corral workspace at a caller-provided path relative to the sandbox root. Requires --enable-mutations. Uses the shared non-interactive git environment; supports optional shallow / single-branch / blobless clones. Refuses when the target already exists or when the resolved path escapes the sandbox root."),
 		mcp.WithString("url",
 			mcp.Required(),
@@ -287,6 +295,10 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 //     race between the check and the removal is still logged.
 func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_delete_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("Permanently remove one clone from the Corral workspace. Requires BOTH --enable-mutations and --enable-destructive-mutations. Refuses when uncommitted changes exist, unpushed commits exist, or the target isn't a git repository. Every attempt (successful or refused) is logged to the mutation audit trail."),
 		mcp.WithString("query",
 			mcp.Required(),

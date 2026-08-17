@@ -34,6 +34,10 @@ func (s *Server) registerTools() {
 // result is the structured RepoEntry list serialised as JSON.
 func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_list_repos",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a .corral-state.json sidecar is present. Returns the structured repository index as JSON."),
 		mcp.WithString("visibility",
 			mcp.Description("Filter by visibility directory: 'Public' or 'Private'. Case-insensitive."),
@@ -94,6 +98,10 @@ func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 // query. This is the workhorse for "open repo X" style intents.
 func (s *Server) findRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_find_repo",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("Resolve a fuzzy repository name (bare name, relative path, or path suffix) to a single local clone in the Corral workspace. Returns the matched RepoEntry, or an error result listing all candidate paths when the query is ambiguous."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -126,6 +134,10 @@ func (s *Server) findRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 // find_repo keep their per-call cost predictable.
 func (s *Server) repoMetadataTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_get_repo_metadata",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("Return full metadata for a single local clone: repo entry, current branch, and parsed .corral-state.json. The branch lookup spawns one git subprocess per call; prefer corral_list_repos for bulk queries."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -160,6 +172,10 @@ func (s *Server) repoMetadataTool() (mcp.Tool, func(ctx context.Context, req mcp
 // compute because it only touches the in-memory index, no subprocesses.
 func (s *Server) statusSummaryTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_status_summary",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("High-level workspace summary: total repository count and breakdowns by visibility and language. Cheap to compute; suitable as an agent's opening discovery call."),
 	)
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -199,6 +215,10 @@ func (s *Server) statusSummaryTool() (mcp.Tool, func(ctx context.Context, req mc
 // problem (rounds-trip cost matters more than bytes-on-the-wire here).
 func (s *Server) workspaceIndexTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_workspace_index",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("Return the full structured index of the Corral workspace in one call. Use this when an agent wants to prime its context with the complete repository list rather than make many filtered corral_list_repos calls. Mirrors the corral://workspace/index resource."),
 	)
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

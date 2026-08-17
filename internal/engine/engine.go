@@ -691,6 +691,15 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 		targetDir := filepath.Join(baseDir, repositoryCollection(repo), repositoryBucket(repo), repo.Name)
 
 		if info, err := os.Stat(legacyDir); err == nil && info.IsDir() {
+			// Only relocate something that is demonstrably this repository's
+			// clone. The name match alone is not evidence: a plain directory at
+			// ~/Code/go/tools that merely shares a name with a repo called
+			// "tools" was moved with no prompt and — because the dry-run
+			// preview path requires git.IsRepository — no preview either.
+			if ok, why := migratableClone(legacyDir, repo); !ok {
+				log.Printf("SKIP: not migrating %s: %s", legacyDir, why)
+				continue
+			}
 			if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
 				log.Printf("WARN: failed creating target parent for migration %s: %v", targetDir, err)
 				continue
@@ -700,6 +709,32 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 			}
 		}
 	}
+}
+
+// migratableClone reports whether dir may be relocated as repo's clone, and if
+// not, why. It requires two independent pieces of evidence: dir is a git
+// repository, and its origin remote matches the repository being migrated.
+//
+// The name-only check this replaces made a directory's *name* sufficient
+// grounds for os.Rename, so an unrelated folder that happened to share a name
+// with one of the owner's repositories was silently moved.
+func migratableClone(dir string, repo github.Repo) (bool, string) {
+	if !git.IsRepository(dir) {
+		return false, "not a git repository (name matches " + repo.Name + ", but nothing else does)"
+	}
+	origin, err := gitRemoteOrigin(dir)
+	if err != nil {
+		return false, "cannot read its origin remote: " + err.Error()
+	}
+	want := repoRemoteIdentity(repo)
+	got := git.CanonicalRemote(origin)
+	if want == "" || got == "" {
+		return false, "origin remote could not be compared"
+	}
+	if got != want {
+		return false, "origin is " + got + ", not " + want
+	}
+	return true, ""
 }
 
 // normalizeLayoutDirCase applies Finder-facing capitalization to collection

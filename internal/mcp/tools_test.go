@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -246,5 +247,113 @@ func TestSortedLangCountsOrdering(t *testing.T) {
 	// Sorted by count desc, then alpha. go and rust both have 3 → go first.
 	if out[0]["language"] != "go" || out[1]["language"] != "rust" || out[2]["language"] != "python" {
 		t.Errorf("unexpected ordering: %+v", out)
+	}
+}
+
+// TestToolAnnotationsOnTheWire asserts the annotations clients actually receive
+// from tools/list.
+//
+// This matters more than it looks. mcp-go's zero-value Annotations serialise as
+// readOnlyHint:false, destructiveHint:true — so before this was set, all five
+// read-only tools advertised themselves to clients as destructive, and
+// corral_delete_repo carried the *identical* annotation. Clients use these to
+// decide whether to auto-approve a call, so corral was simultaneously paying a
+// confirmation tax on a directory listing and giving no signal at all on the one
+// tool that removes data.
+func TestToolAnnotationsOnTheWire(t *testing.T) {
+	base := t.TempDir()
+	srv, err := NewServer(ServerOptions{
+		Root: base, Version: "test",
+		EnableMutations: true, EnableDestructiveMutations: true,
+		AuditLogPath: filepath.Join(t.TempDir(), "audit.log"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := srv.mcp.HandleMessage(context.Background(),
+		json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Result struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Annotations struct {
+					ReadOnlyHint    *bool `json:"readOnlyHint"`
+					DestructiveHint *bool `json:"destructiveHint"`
+					IdempotentHint  *bool `json:"idempotentHint"`
+					OpenWorldHint   *bool `json:"openWorldHint"`
+				} `json:"annotations"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("unmarshal tools/list: %v (%s)", err, raw)
+	}
+	if len(envelope.Result.Tools) == 0 {
+		t.Fatalf("no tools returned: %s", raw)
+	}
+
+	want := map[string]struct{ readOnly, destructive bool }{
+		"corral_list_repos":        {true, false},
+		"corral_find_repo":         {true, false},
+		"corral_get_repo_metadata": {true, false},
+		"corral_status_summary":    {true, false},
+		"corral_workspace_index":   {true, false},
+		"corral_sync_repo":         {false, false},
+		"corral_clone_repo":        {false, false},
+		"corral_delete_repo":       {false, true},
+	}
+	seen := map[string]bool{}
+	for _, tool := range envelope.Result.Tools {
+		exp, ok := want[tool.Name]
+		if !ok {
+			t.Errorf("unexpected tool %q — add it to this table with its annotations", tool.Name)
+			continue
+		}
+		seen[tool.Name] = true
+		if tool.Annotations.ReadOnlyHint == nil {
+			t.Errorf("%s: readOnlyHint absent; clients then assume the unsafe default", tool.Name)
+		} else if *tool.Annotations.ReadOnlyHint != exp.readOnly {
+			t.Errorf("%s: readOnlyHint = %t, want %t", tool.Name, *tool.Annotations.ReadOnlyHint, exp.readOnly)
+		}
+		if tool.Annotations.DestructiveHint == nil {
+			t.Errorf("%s: destructiveHint absent; mcp-go's zero value serialises as true, "+
+				"so omitting it marks a read-only tool destructive", tool.Name)
+		} else if *tool.Annotations.DestructiveHint != exp.destructive {
+			t.Errorf("%s: destructiveHint = %t, want %t", tool.Name, *tool.Annotations.DestructiveHint, exp.destructive)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("tool %q was not registered", name)
+		}
+	}
+}
+
+// TestServerInstructionsDescribeLayoutAndMode checks the one-shot text a client
+// shows the model at connection time.
+func TestServerInstructionsDescribeLayoutAndMode(t *testing.T) {
+	ro := serverInstructions(ServerOptions{Root: "/w"})
+	for _, want := range []string{"Visibility", "Language", "corral_status_summary", "read-only"} {
+		if !strings.Contains(ro, want) {
+			t.Errorf("read-only instructions missing %q:\n%s", want, ro)
+		}
+	}
+	if strings.Contains(ro, "corral_delete_repo") {
+		t.Error("read-only instructions must not advertise the delete tool")
+	}
+
+	full := serverInstructions(ServerOptions{
+		Root: "/w", EnableMutations: true, EnableDestructiveMutations: true,
+	})
+	if !strings.Contains(full, "corral_delete_repo") {
+		t.Errorf("destructive-mode instructions should name the delete tool:\n%s", full)
+	}
+	if !strings.Contains(full, "audit") {
+		t.Errorf("destructive-mode instructions should mention the audit log:\n%s", full)
 	}
 }

@@ -128,8 +128,12 @@ func NewServer(opts ServerOptions) (*Server, error) {
 	mcpSrv := server.NewMCPServer(
 		ServerName,
 		opts.Version,
+		server.WithInstructions(serverInstructions(opts)),
 		server.WithToolCapabilities(false),
-		server.WithResourceCapabilities(true, false),
+		// subscribe=false: the server advertised subscribe=true and never sent
+		// a notifications/resources/updated, so a client that subscribed waited
+		// forever. Advertise only what is implemented.
+		server.WithResourceCapabilities(false, false),
 		server.WithPromptCapabilities(false),
 		server.WithRecovery(),
 	)
@@ -235,4 +239,37 @@ func jsonResult(payload any) *mcp.CallToolResult {
 // everywhere else.
 var jsonMarshalIndent = func(v any) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
+}
+
+// serverInstructions is the text an MCP client shows the model once, at
+// connection time, before any tool is called.
+//
+// It is the cheapest place to establish the two things a model otherwise has to
+// infer from tool descriptions one call at a time: what the on-disk layout
+// means, and which tool to reach for first. Naming the local-only guarantee also
+// stops a model reaching for a GitHub tool when it wants the local answer.
+func serverInstructions(opts ServerOptions) string {
+	var b strings.Builder
+	b.WriteString("Corral indexes the git repositories cloned on this machine.\n\n")
+	b.WriteString("Workspace layout: clones live under <Visibility>/<Language>/<Repo>, ")
+	b.WriteString("e.g. Public/Go/corral or Private/Python/internal-tool. ")
+	b.WriteString("Forks sit under a Forks collection.\n\n")
+	b.WriteString("Start with corral_status_summary for the size and shape of the workspace, ")
+	b.WriteString("then corral_list_repos to filter, or corral_find_repo when you already know the name. ")
+	b.WriteString("Prefer corral_list_repos over corral_workspace_index: the index returns every ")
+	b.WriteString("repository and is expensive on a large workspace.\n\n")
+	b.WriteString("All read operations are local and make no network calls; nothing here queries the GitHub API. ")
+	b.WriteString("Git internals and credential files are not readable.\n\n")
+	switch {
+	case opts.EnableDestructiveMutations && opts.EnableMutations:
+		b.WriteString("Write tools are enabled, including corral_delete_repo. " +
+			"Deletion refuses when the clone holds uncommitted, unpushed, stashed, " +
+			"gitignored or submodule work. Every mutation is written to an audit log.")
+	case opts.EnableMutations:
+		b.WriteString("Write tools (corral_sync_repo, corral_clone_repo) are enabled and audited. " +
+			"Deletion is not available.")
+	default:
+		b.WriteString("This server is read-only: no tool here modifies the filesystem.")
+	}
+	return b.String()
 }

@@ -6,6 +6,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20] — 2026-08-17
+
+Safety release. Everything below was found by an audit of the v0.0.19 tree;
+several of these were reachable from a single mistyped argument.
+
+### Fixed
+
+- **The sync sidecar no longer dirties every clone.** `.corral-state.json` was
+  written into each clone's working tree, so `git status` reported every
+  corral-managed repository as modified. Because `corralctl status`,
+  `corralctl prune` and the MCP delete tool all refuse to act on a repository
+  with local changes, `prune` could never prune anything and `status` reported
+  every repo dirty. The sidecar now lives at `<gitdir>/corral-state.json`,
+  which is outside the working tree by construction. The old location is still
+  read, so existing clones keep their smart-sync state, and it is removed on
+  the first write.
+- **A typo'd subcommand no longer starts a live run.** `corralctl statuss` was
+  a valid invocation meaning "owner=statuss" and began fetching from GitHub and
+  cloning into `$HOME/Code`. Arguments within edit distance 2 of a real
+  subcommand are now rejected with a suggestion; `corralctl [flags] -- <owner>`
+  forces the owner reading.
+- **Positional arguments no longer swallow `base_dir`.** Ten ordinary directory
+  names — `forks`, `stars`, `name`, `public`, `private`, `templates` and others
+  — were consumed as filter keywords, and the target directory silently fell
+  back to `$HOME/Code`. Repository type and sort are now `--type` and `--sort`,
+  and the positional grammar is the documented `<owner> [base_dir] [limit]`.
+- **The preflight confirmation is no longer a no-op off-TTY.** It returned true
+  whenever stdin was not a terminal, so it protected nobody in scripts, pipes,
+  cron or CI. Creating a new target directory without a TTY now refuses, with a
+  non-zero exit so callers can tell "did nothing" from "succeeded".
+- **Files in subdirectories are readable over MCP.** The file resource used RFC
+  6570 simple expansion, which does not match `/`, so nothing below a
+  repository's top level resolved at all.
+- **MCP file reads no longer expose credentials.** `.git` was hidden from the
+  tree listing but not the file reader, so `.git/config` — and `.env`, `.npmrc`,
+  private keys — were readable. Now denied, alongside `.ssh`, `.aws` and
+  `.gnupg`.
+- **A workspace root that is itself a repository no longer collapses the
+  index.** The scan matched the root, appended it as the only entry and aborted,
+  and `corral_delete_repo` could then resolve that entry back to the root.
+- **Detached-HEAD commits block deletion.** The guard counted
+  `rev-list --branches`, which covers `refs/heads/**` only, so work committed in
+  detached HEAD was invisible and the delete proceeded. Widened to `--all`.
+- **Gitignored content blocks deletion.** `git status --porcelain` excludes
+  ignored files, so local `.env` files and databases — the least recoverable
+  content in a clone — were destroyed silently.
+- **Submodules with unpushed commits block deletion.**
+- **`corralctl prune` refuses a truncated upstream listing.** It compared
+  against at most `--limit` repositories, so for an owner with more than that,
+  every repository past the cap looked like an orphan and was deleted.
+- **Non-clone directories are no longer relocated.** Legacy migration treated a
+  matching *name* as sufficient grounds for `os.Rename`, so an unrelated folder
+  sharing a name with one of the owner's repositories was moved — unprompted,
+  and invisible in `--dry-run`. Migration now requires a `.git` directory and a
+  matching origin remote.
+- **Errors print once.** Cobra printed them and then `ExecuteContext` printed
+  them again, inside a full usage dump: 52 lines with the message duplicated at
+  both ends, now 3.
+- **A malformed `--layout` fails immediately** rather than after a full
+  paginated GitHub fetch.
+- **`server.json` is published.** Nothing shipped it, so the MCP registry entry
+  sat at 0.0.13 across five releases, advertising a stale image tag. The release
+  workflow now publishes it and fails if the file and the tag disagree.
+
+### Changed
+
+- **MCP tool annotations are set.** mcp-go's zero value serialises as
+  `destructiveHint: true`, so all five read-only tools advertised themselves as
+  destructive — and `corral_delete_repo` carried the identical annotation,
+  making the signal worthless. Clients use these to decide whether to
+  auto-approve, so reads were paying a confirmation tax while deletion gave no
+  warning.
+- **The MCP server sends `instructions`**, describing the on-disk layout, which
+  tool to start with, and whether writes are enabled.
+- Resource subscriptions are no longer advertised. The capability was announced
+  and never implemented, so a subscribing client waited forever.
+- Go toolchain 1.26.1 → 1.26.6 in `go.mod` and all four workflows.
+- `mcp.json` replaced by `examples/mcp-client-config.json`. It was stale at
+  0.0.8, invalid against the schema it declared, and used the filename
+  convention of a *client* config — so copying it into `.cursor/mcp.json`
+  produced a non-functional file.
+
+### Added
+
+- Machine-readable SPDX SBOMs per release archive. `SBOM.md` was
+  hand-maintained and had already drifted, omitting `mcp-go` — a direct
+  dependency powering the entire MCP server.
+- Keyless cosign signatures over `checksums.txt`, attached as release assets.
+  OpenSSF Scorecard's Signed-Releases check reads release assets; SLSA
+  provenance lives in GitHub's attestation store and image signatures are not
+  assets, so the check scored 0 while a workflow comment claimed otherwise.
+- `go test -race -shuffle=on`, fixed shuffle seeds, and `govulncheck` in CI.
+- **Seam-binding tests.** The suite reported 99.8% coverage with seven packages
+  at 100%, yet 18 of 33 injected mutants survived — every one a default
+  indirection binding. Replacing `main`'s `executeContext` with a no-op turned
+  the whole binary into a program that does nothing and the suite stayed green.
+  Four tests now pin 30 seams to their production implementations.
+
+### Security
+
+- The two MCP fixes above are a pair: repairing the `{+path}` routing without
+  the denylist would have converted an unreachable resource into a working
+  credential-exfiltration primitive for any prompt-injected agent. Verified
+  locally — with routing fixed and no denylist, reading `.git/config` returned a
+  token.
+
 ## [0.0.19] — 2026-08-16
 
 ### Changed
