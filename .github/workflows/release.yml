@@ -107,7 +107,11 @@ jobs:
       - name: Install mcp-publisher
         run: |
           set -euo pipefail
-          go install github.com/modelcontextprotocol/registry/cmd/mcp-publisher@latest
+          # Pinned rather than @latest: an unpinned `go install` lets whatever
+          # version resolves at run time publish on this repo's behalf, which is
+          # both a supply-chain risk and inconsistent with pinning every action
+          # by SHA. Scorecard's Pinned-Dependencies check flags it.
+          go install github.com/modelcontextprotocol/registry/cmd/mcp-publisher@v1.8.1
 
       - name: Publish to the MCP registry
         env:

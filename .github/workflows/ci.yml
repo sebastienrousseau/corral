@@ -102,7 +102,13 @@ jobs:
           # truth and cannot drift the way a hardcoded version would.
           goversion="$(go list -m -f '{{.GoVersion}}')"
           echo "building govulncheck with go${goversion}"
-          GOTOOLCHAIN="go${goversion}" go install golang.org/x/vuln/cmd/govulncheck@latest
+          # Pinned, not @latest. Scorecard's Pinned-Dependencies check flags an
+          # unpinned `go install` because whatever @latest resolves to at run
+          # time then executes in CI — and this repo pins every action by SHA, so
+          # leaving one unpinned tool in the chain is inconsistent. Pinning the
+          # scanner does not stale the results: the vulnerability database is
+          # fetched from vuln.go.dev at run time, not baked into the binary.
+          GOTOOLCHAIN="go${goversion}" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "${GOBIN}/govulncheck" -version
           "${GOBIN}/govulncheck" ./...
 
