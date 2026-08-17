@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.19] — 2026-08-16
+
+### Changed
+
+- Dependency refresh: `github.com/mark3labs/mcp-go` 0.57.0 → 0.58.0 and
+  `golang.org/x/sys` 0.46.0 → 0.47.0.
+- Pinned GitHub Actions refreshed, including `github/codeql-action/upload-sarif`
+  to v4.37.7 and `hadolint/hadolint-action` to v3.4.0. Dependabot now groups
+  `github-actions` updates into a single pull request.
+
+### Fixed
+
+- The Dockerfile runtime user is created with an explicit numeric uid/gid
+  (`65532:65532`) so Kubernetes `runAsNonRoot` can verify the container is not
+  root, and hadolint 2.15.0's DL3066 is satisfied.
+- `server.json` now tracks the released version. It had been stale at 0.0.13
+  since that release, so the MCP registry entry advertised an outdated
+  `ghcr.io/sebastienrousseau/corral:0.0.13` image tag.
+
 ## [0.0.18] — 2026-08-02
 
 ### Changed
