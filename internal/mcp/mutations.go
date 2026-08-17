@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -151,7 +150,7 @@ func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 		}
 		// Belt-and-braces sandbox check — Index.Find already returns
 		// only Root-relative repos, but a future refactor might not.
-		safe, err := idx.SafePath(repo.Path)
+		safe, err := idx.SafeMutationPath(repo.Path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -226,7 +225,7 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 		blobless := req.GetBool("blobless", false)
 
 		idx := &Index{Root: s.opts.Root}
-		safeTarget, err := idx.SafePath(target)
+		safeTarget, err := idx.SafeMutationPath(target)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -278,7 +277,7 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 //
 //  1. Requires BOTH EnableMutations and EnableDestructiveMutations
 //     to be registered at all.
-//  2. Resolves the target via SafePath so path traversal cannot
+//  2. Resolves the target via SafeMutationPath so path traversal cannot
 //     escape the sandbox.
 //  3. Refuses if the working tree has uncommitted changes.
 //  4. Refuses if there are unpushed commits on any branch.
@@ -307,7 +306,7 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		safe, err := idx.SafePath(repo.Path)
+		safe, err := idx.SafeMutationPath(repo.Path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -341,6 +340,16 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 			}
 			return mcp.NewToolResultError(rec.Message), nil
 		}
+		// Gitignored content is the least recoverable thing in a clone — local
+		// .env files, databases, caches — and `git status --porcelain` hides it
+		// by design, so "clean" was never sufficient grounds to rm -rf.
+		if ignored, out := hasIgnoredContent(ctx, safe); ignored {
+			rec.Message = fmt.Sprintf("gitignored content present: %s", out)
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s; audit failed: %v", rec.Message, auditErr)), nil
+			}
+			return mcp.NewToolResultError(rec.Message), nil
+		}
 
 		rec, err = s.beginMutation(rec)
 		if err != nil {
@@ -365,17 +374,17 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 	return tool, handler
 }
 
-// hasDirtyWorkingTree reports whether `git status --porcelain` finds
-// any modifications, staged or unstaged, in the working tree of the
-// target repo. Indirected through a package var so tests can stub the
-// dangerous "actually run git" path.
-var hasDirtyWorkingTree = func(ctx context.Context, repoPath string) (bool, string) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain") // #nosec G204 -- fixed executable and root-confined path
-	out, err := cmd.Output()
-	if err != nil {
-		// If we can't even read the status, err on the side of refusal.
-		return true, err.Error()
-	}
-	trimmed := strings.TrimSpace(string(out))
-	return trimmed != "", trimmed
-}
+// hasDirtyWorkingTree reports tracked, staged or untracked modifications in the
+// target repo. Indirected through a package var so tests can stub the dangerous
+// "actually run git" path.
+//
+// This delegates to git.HasLocalChanges rather than shelling out itself. The
+// local copy ran `git status --porcelain` a second time (HasUnpublishedWork
+// already calls HasLocalChanges first) and, more importantly, skipped
+// withGitEnv — so it lacked the non-interactive hardening that stops git
+// prompting for credentials and hanging a stdio MCP session.
+var hasDirtyWorkingTree = git.HasLocalChanges
+
+// hasIgnoredContent reports gitignored files in the target repo. Indirected for
+// the same reason as hasDirtyWorkingTree.
+var hasIgnoredContent = git.HasIgnoredContent

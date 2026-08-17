@@ -311,3 +311,83 @@ func TestMarkStateSyncedPreservesPushedAt(t *testing.T) {
 		t.Errorf("last_synced_at was not refreshed: %+v", state)
 	}
 }
+
+// TestScanExcludesWorkspaceRoot is the regression test for a workspace root
+// that is itself a git repository — dotfiles, a monorepo, or simply
+// `corralctl mcp --root .`.
+//
+// Scan matched the root on its first callback, appended it as an entry and then
+// SkipDir aborted the whole walk, so the workspace collapsed to exactly one
+// "repo" named after the root's basename and every real clone became invisible.
+func TestScanExcludesWorkspaceRoot(t *testing.T) {
+	base := t.TempDir()
+	// The root is a repository too.
+	if err := os.MkdirAll(filepath.Join(base, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+	makeFakeRepo(t, base, "Public", "rust", "beta", "https://github.com/o/beta.git", "")
+
+	idx, err := Scan(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Repos) != 2 {
+		names := make([]string, 0, len(idx.Repos))
+		for _, r := range idx.Repos {
+			names = append(names, r.RelPath)
+		}
+		t.Fatalf("expected the 2 nested clones and not the root, got %d: %v", len(idx.Repos), names)
+	}
+	for _, r := range idx.Repos {
+		if r.RelPath == "." || r.Path == base {
+			t.Errorf("workspace root leaked into the index as %q", r.RelPath)
+		}
+	}
+}
+
+// TestSafeMutationPathRefusesRoot is the second half of that fix: even if the
+// root did resolve as a target, a mutation must never accept it, because
+// corral_delete_repo would then rm -rf the entire workspace.
+func TestSafeMutationPathRefusesRoot(t *testing.T) {
+	base := t.TempDir()
+	idx := &Index{Root: base}
+
+	// Reads of the root are fine.
+	if _, err := idx.SafePath(base); err != nil {
+		t.Errorf("SafePath must still allow the root: %v", err)
+	}
+	// Mutations of the root are not.
+	for _, target := range []string{base, base + string(filepath.Separator), "."} {
+		if _, err := idx.SafeMutationPath(target); err == nil {
+			t.Errorf("SafeMutationPath(%q) must refuse the workspace root", target)
+		}
+	}
+	// A real child is still a valid mutation target.
+	child := filepath.Join(base, "Public", "go", "alpha")
+	if err := os.MkdirAll(child, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := idx.SafeMutationPath(child); err != nil {
+		t.Errorf("a child path must remain mutable: %v", err)
+	}
+}
+
+// TestSafePathAllowsDotDotPrefixedNames pins the segment-wise boundary check: a
+// repository legitimately named "..foo" is inside the root, and the old raw
+// strings.HasPrefix(rel, "..") rejected it.
+func TestSafePathAllowsDotDotPrefixedNames(t *testing.T) {
+	base := t.TempDir()
+	odd := filepath.Join(base, "..foo")
+	if err := os.MkdirAll(odd, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	idx := &Index{Root: base}
+	if _, err := idx.SafePath(odd); err != nil {
+		t.Errorf("a repo named '..foo' is inside the root: %v", err)
+	}
+	// Real traversal is still refused.
+	if _, err := idx.SafePath(filepath.Join(base, "..", "outside")); err == nil {
+		t.Error("genuine ../ traversal must still be refused")
+	}
+}

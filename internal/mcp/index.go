@@ -194,6 +194,16 @@ func Scan(root string) (*Index, error) {
 		if depth > maxIndexDepth {
 			return fs.SkipDir
 		}
+		// The workspace root is a container, never a repository entry, even
+		// when it happens to be under version control itself. Without this the
+		// first callback matched the root, appended it as the sole entry and
+		// SkipDir aborted the entire walk — so `corralctl mcp --root ~/Code`
+		// with dotfiles or a monorepo at that path reported exactly one repo
+		// and `corral_delete_repo` could resolve the workspace root itself.
+		// findLocalRepos and the engine's discovery walk already do this.
+		if path == absRoot {
+			return nil
+		}
 		// Accept both regular clones and linked worktrees (.git is a file).
 		if git.IsRepository(path) {
 			idx.Repos = append(idx.Repos, buildEntry(absRoot, path))
@@ -377,10 +387,39 @@ func (i *Index) SafePath(path string) (string, error) {
 	absCanon := canonicalizeExistingPrefix(rawAbs)
 
 	rel, err := relSafePath(rootCanon, absCanon)
-	if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+	// Compare path segments, not a raw string prefix: a repository legitimately
+	// named "..foo" is inside the root and must not be rejected.
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes root %q", path, i.Root)
 	}
 	return absCanon, nil
+}
+
+// SafeMutationPath is SafePath with one extra restriction: the workspace root
+// itself is never a valid target.
+//
+// SafePath accepts rel == "." because reading and listing the root is
+// legitimate. A mutation is different — resolving to the root means
+// corral_delete_repo would rm -rf the entire workspace, which is what happened
+// when the root was itself a git repository and Scan collapsed to a single
+// entry named after the root's basename.
+func (i *Index) SafeMutationPath(path string) (string, error) {
+	safe, err := i.SafePath(path)
+	if err != nil {
+		return "", err
+	}
+	rootCanon := i.Root
+	if r, err := evalSafePath(i.Root); err == nil {
+		rootCanon = r
+	}
+	rel, err := relSafePath(rootCanon, safe)
+	if err != nil {
+		return "", fmt.Errorf("resolving path: %w", err)
+	}
+	if rel == "." {
+		return "", fmt.Errorf("refusing to mutate the workspace root %q itself", i.Root)
+	}
+	return safe, nil
 }
 
 // canonicalizeExistingPrefix returns abs with its longest existing
