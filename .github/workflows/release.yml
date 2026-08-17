@@ -113,14 +113,32 @@ jobs:
       # 0.0.13 from 2026-07-01 while the repo moved through five releases, so the
       # published entry advertised a stale OCI image tag. Bumping the file was
       # never sufficient — nothing shipped it.
+      # mcp-publisher is distributed as prebuilt release binaries, not as an
+      # installable Go package: `go install .../cmd/mcp-publisher@v1.8.1` fails
+      # with "module found, but does not contain package". Download the pinned
+      # release asset instead, and verify its Sigstore bundle before running it —
+      # this binary publishes on the repository's behalf, so it is exactly the
+      # kind of tool that should not be executed unverified. Upstream publishes a
+      # .sigstore.json per artifact, so verification costs one command.
       - name: Install mcp-publisher
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_PUBLISHER_VERSION: v1.8.1
         run: |
           set -euo pipefail
-          # Pinned rather than @latest: an unpinned `go install` lets whatever
-          # version resolves at run time publish on this repo's behalf, which is
-          # both a supply-chain risk and inconsistent with pinning every action
-          # by SHA. Scorecard's Pinned-Dependencies check flags it.
-          go install github.com/modelcontextprotocol/registry/cmd/mcp-publisher@v1.8.1
+          asset="mcp-publisher_linux_amd64.tar.gz"
+          gh release download "${MCP_PUBLISHER_VERSION}" \
+            --repo modelcontextprotocol/registry \
+            --pattern "${asset}" --pattern "${asset}.sigstore.json" \
+            --dir "${RUNNER_TEMP}"
+          cosign verify-blob \
+            --bundle "${RUNNER_TEMP}/${asset}.sigstore.json" \
+            --certificate-identity-regexp 'https://github.com/modelcontextprotocol/registry/.*' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${RUNNER_TEMP}/${asset}"
+          mkdir -p "${RUNNER_TEMP}/mcp-publisher-bin"
+          tar -xzf "${RUNNER_TEMP}/${asset}" -C "${RUNNER_TEMP}/mcp-publisher-bin"
+          echo "${RUNNER_TEMP}/mcp-publisher-bin" >> "${GITHUB_PATH}"
 
       - name: Publish to the MCP registry
         env:
