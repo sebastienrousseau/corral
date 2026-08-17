@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,5 +381,182 @@ func TestResolveURIRepoWithOwner(t *testing.T) {
 	}
 	if repo.Name != "beta" {
 		t.Errorf("expected beta, got %s", repo.Name)
+	}
+}
+
+// readResourceViaRouter issues a real resources/read JSON-RPC request through
+// mcp-go's router, so URI-template matching is exercised.
+//
+// Every other resource test in this package calls the handler function
+// directly with a hand-built ReadResourceRequest, which bypasses template
+// matching entirely — that is precisely why the {path} routing bug below
+// survived: the handler was always correct, the route never matched.
+func readResourceViaRouter(t *testing.T, srv *Server, uri string) (string, error) {
+	t.Helper()
+	req := fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":%q}}`, uri)
+	resp := srv.mcp.HandleMessage(context.Background(), json.RawMessage(req))
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+		Result *struct {
+			Contents []struct {
+				Text string `json:"text"`
+			} `json:"contents"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("unmarshal response: %v (%s)", err, raw)
+	}
+	if envelope.Error != nil {
+		return "", fmt.Errorf("%s", envelope.Error.Message)
+	}
+	if envelope.Result == nil || len(envelope.Result.Contents) == 0 {
+		return "", fmt.Errorf("empty result: %s", raw)
+	}
+	return envelope.Result.Contents[0].Text, nil
+}
+
+// TestRepoFileResourceReadsNestedPaths is the regression test for the routing
+// bug: the template used RFC 6570 simple expansion ({path}), which does not
+// match "/", so no file below a repository's top level was reachable at all.
+func TestRepoFileResourceReadsNestedPaths(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("top level\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "src", "deep"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "src", "deep", "x.txt"), []byte("deeper\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := newTestServer(t, base)
+
+	for _, tc := range []struct{ path, want string }{
+		{"README.md", "top level"},
+		{"src/main.go", "package main"},
+		{"src/deep/x.txt", "deeper"},
+	} {
+		got, err := readResourceViaRouter(t, srv, "corral://repo/Public/alpha/file/"+tc.path)
+		if err != nil {
+			t.Errorf("%s: %v", tc.path, err)
+			continue
+		}
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: got %q, want it to contain %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestRepoFileResourceRefusesCredentialFiles is the other half of the same
+// change. Fixing the routing above without this would have converted an
+// unreachable resource into a credential leak: .git/config is inside the
+// repository, so the path sandbox permits it by design, and it contains the
+// token of anyone who cloned over HTTPS with credentials in the URL.
+func TestRepoFileResourceRefusesCredentialFiles(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+
+	// A realistic leaked-token config, plus the other usual suspects.
+	if err := os.WriteFile(filepath.Join(repo, ".git", "config"),
+		[]byte("[remote \"origin\"]\n\turl = https://ghp_SECRETTOKEN@github.com/o/alpha.git\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]string{
+		".env":                            "AWS_SECRET_ACCESS_KEY=hunter2",
+		".npmrc":                          "//registry.npmjs.org/:_authToken=npm_secret",
+		"deploy.pem":                      "-----BEGIN PRIVATE KEY-----",
+		"id_ed25519":                      "-----BEGIN OPENSSH PRIVATE KEY-----",
+		".env.production":                 "STRIPE_KEY=sk_live_x",
+		filepath.Join("k", "secrets.yml"): "password: p",
+	}
+	for rel, body := range seed {
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv := newTestServer(t, base)
+
+	blocked := []string{
+		".git/config",
+		".git/../.git/config",
+		".env",
+		".env.production",
+		".npmrc",
+		"deploy.pem",
+		"id_ed25519",
+		"k/secrets.yml",
+	}
+	for _, rel := range blocked {
+		got, err := readResourceViaRouter(t, srv, "corral://repo/Public/alpha/file/"+rel)
+		if err == nil {
+			t.Errorf("%s: expected refusal, got %d bytes: %q", rel, len(got), got)
+			continue
+		}
+		// The refusal must not itself echo the secret.
+		if strings.Contains(err.Error(), "ghp_SECRETTOKEN") ||
+			strings.Contains(err.Error(), "hunter2") {
+			t.Errorf("%s: refusal leaked the secret: %v", rel, err)
+		}
+	}
+
+	// An ordinary file in the same repository still reads, so the denylist is
+	// not just blocking everything.
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readResourceViaRouter(t, srv, "corral://repo/Public/alpha/file/main.go"); err != nil {
+		t.Errorf("ordinary file must remain readable: %v", err)
+	} else if !strings.Contains(got, "package main") {
+		t.Errorf("unexpected content: %q", got)
+	}
+}
+
+func TestBlockedRepoFile(t *testing.T) {
+	blocked := []string{
+		".git/config", ".git/HEAD", "sub/.git/config", ".GIT/config",
+		".env", ".env.local", ".ENV", ".envrc", ".netrc", "_netrc",
+		".npmrc", ".pypirc", ".git-credentials", "credentials",
+		"id_rsa", "id_ed25519", ".dockercfg", "terraform.tfstate",
+		"secrets.yml", "secrets.yaml", "service-account.json",
+		"a/b/tls.pem", "server.key", "store.p12", "store.jks", "vault.kdbx",
+		".ssh/known_hosts", ".aws/credentials", ".gnupg/secring.gpg",
+		"", ".",
+	}
+	for _, rel := range blocked {
+		if reason, ok := blockedRepoFile(rel); !ok {
+			t.Errorf("%q should be blocked", rel)
+		} else if reason == "" {
+			t.Errorf("%q blocked without a reason", rel)
+		}
+	}
+
+	allowed := []string{
+		"README.md", "main.go", "src/deep/x.txt", "Makefile",
+		"docs/environment.md", // contains "environment" but is not .env
+		"keyboard.go",         // ends in neither .key nor a blocked name
+		"pemberton.txt",
+		".github/workflows/ci.yml",
+		"credentials.md", // documentation about credentials, not a store
+	}
+	for _, rel := range allowed {
+		if _, ok := blockedRepoFile(rel); ok {
+			t.Errorf("%q should be allowed", rel)
+		}
 	}
 }

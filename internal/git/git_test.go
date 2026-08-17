@@ -607,17 +607,19 @@ func TestHasUnpublishedWorkVerificationFailures(t *testing.T) {
 		want string
 	}{
 		{"branches", func(ctx context.Context, dir string, args ...string) (string, error) {
-			if args[0] == "status" {
+			// The stash probe now runs before the commit count, so let it
+			// report "no stash" (exit 1) and fail on rev-list.
+			switch args[0] {
+			case "status":
 				return "", nil
+			case "rev-parse":
+				return "", exitOne
 			}
 			return "", errors.New("branch check")
 		}, "unable to verify local branches"},
 		{"stash", func(ctx context.Context, dir string, args ...string) (string, error) {
-			switch args[0] {
-			case "status":
+			if args[0] == "status" {
 				return "", nil
-			case "rev-list":
-				return "0", nil
 			}
 			return "", errors.New("stash check")
 		}, "unable to verify stash"},
@@ -791,6 +793,28 @@ func TestHasUnpublishedWork(t *testing.T) {
 		return upstream, workDir, target
 	}
 
+	// TestHasUnpublishedWork/detached_HEAD is the regression test for the
+	// widened rev-list. The old check used --branches, which covers
+	// refs/heads/** only: a commit made in detached HEAD is reachable from HEAD
+	// and from no branch, so the count came back 0, the guard said "safe", and
+	// the delete destroyed work that existed nowhere else.
+	t.Run("detached HEAD commit", func(t *testing.T) {
+		_, _, target := newClone(t)
+		run(t, "git", "-C", target, "switch", "--detach", "HEAD")
+		if err := os.WriteFile(filepath.Join(target, "detached.txt"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run(t, "git", "-C", target, "add", "detached.txt")
+		run(t, "git", "-C", target, "commit", "-m", "detached work")
+		unpublished, detail := HasUnpublishedWork(context.Background(), target)
+		if !unpublished {
+			t.Fatal("a commit reachable only from a detached HEAD must block deletion")
+		}
+		if detail == "" {
+			t.Error("refusal must explain itself")
+		}
+	})
+
 	t.Run("clean clone", func(t *testing.T) {
 		_, _, target := newClone(t)
 		if unpublished, detail := HasUnpublishedWork(context.Background(), target); unpublished {
@@ -807,7 +831,7 @@ func TestHasUnpublishedWork(t *testing.T) {
 		run(t, "git", "-C", target, "add", "local.txt")
 		run(t, "git", "-C", target, "commit", "-m", "local")
 		run(t, "git", "-C", target, "switch", "main")
-		if unpublished, detail := HasUnpublishedWork(context.Background(), target); !unpublished || !strings.Contains(detail, "local branches") {
+		if unpublished, detail := HasUnpublishedWork(context.Background(), target); !unpublished || !strings.Contains(detail, "local refs or HEAD") {
 			t.Fatalf("expected unpublished branch commit, got %t %q", unpublished, detail)
 		}
 	})
@@ -840,4 +864,48 @@ func TestHasUnpublishedWork(t *testing.T) {
 			t.Fatalf("published tag reported unpublished: %s", detail)
 		}
 	})
+}
+
+// TestHasIgnoredContent covers the third delete-guard hole: `git status
+// --porcelain` excludes ignored files by design, so a clone holding a local
+// .env or a SQLite database reported clean — and those are exactly the files no
+// remote has a copy of.
+func TestHasIgnoredContent(t *testing.T) {
+	upstream, workDir := setupTestRepo(t)
+	t.Cleanup(func() { cleanup(t, upstream) })
+	t.Cleanup(func() { cleanup(t, workDir) })
+	target := filepath.Join(t.TempDir(), "clone")
+	if err := Clone(context.Background(), upstream, target, CloneOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "git", "-C", target, "config", "user.name", "Test")
+	run(t, "git", "-C", target, "config", "user.email", "test@test.com")
+
+	// A clean clone has nothing ignored.
+	if ignored, detail := HasIgnoredContent(context.Background(), target); ignored {
+		t.Fatalf("clean clone reported ignored content: %s", detail)
+	}
+
+	// Commit a .gitignore, then create the ignored file.
+	if err := os.WriteFile(filepath.Join(target, ".gitignore"), []byte(".env\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "git", "-C", target, "add", ".gitignore")
+	run(t, "git", "-C", target, "commit", "-m", "ignore env")
+	if err := os.WriteFile(filepath.Join(target, ".env"), []byte("SECRET=1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// git status --porcelain still says clean — that is the trap.
+	if dirty, _ := HasLocalChanges(context.Background(), target); dirty {
+		t.Fatal("fixture invalid: porcelain should not see an ignored file")
+	}
+	// HasIgnoredContent must see it.
+	ignored, detail := HasIgnoredContent(context.Background(), target)
+	if !ignored {
+		t.Fatal("an ignored .env must block deletion")
+	}
+	if !strings.Contains(detail, ".env") {
+		t.Errorf("detail should name the path, got %q", detail)
+	}
 }

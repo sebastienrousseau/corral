@@ -15,19 +15,130 @@ jobs:
       contents: read
     uses: sebastienrousseau/pipelines/.github/workflows/go-ci.yml@d3d082405a06d3ec471e6f6b7a1bbc8f1137d386
     with:
-      go-version: '1.26.1'
+      go-version: '1.26.6'
       run-cross-platform: true
       run-coverage: true
+
+  # The reusable go-ci workflow above does not run the race detector or
+  # randomise test order, and a 100%-coverage suite turned out to be
+  # order-dependent: `go test -shuffle` failed on 3 of 4 seeds because one test
+  # left cobra's help flag set on the package-level rootCmd, so every later test
+  # short-circuited into help output and asserted nothing. Both flags are gates
+  # here so that class of defect cannot come back silently.
+  hardened-tests:
+    name: Race & Shuffled Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No actions/setup-go: the runner ships a toolchain, and GOTOOLCHAIN=auto
+      # honours the `go` directive in go.mod, so the version is pinned by go.mod
+      # rather than by a workflow input that can drift from it. This also keeps
+      # the job out of the critical path of a codeload rate-limit on the action
+      # tarball, which failed these jobs during "Set up job" — before any step
+      # ran — repeatedly on 2026-08-17.
+      - name: Test with race detector and randomised order
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go version
+          go test -race -shuffle=on ./...
+      # Fixed seeds alongside -shuffle=on: a random seed catches ordering bugs
+      # eventually, named seeds catch them reproducibly.
+      - name: Test with fixed shuffle seeds
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          for seed in 1 2 3; do
+            echo "::group::shuffle seed ${seed}"
+            go test -count=1 -shuffle="${seed}" ./...
+            echo "::endgroup::"
+          done
+
+  vulncheck:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No actions/setup-go: the runner ships a toolchain, and GOTOOLCHAIN=auto
+      # honours the `go` directive in go.mod, so the version is pinned by go.mod
+      # rather than by a workflow input that can drift from it. This also keeps
+      # the job out of the critical path of a codeload rate-limit on the action
+      # tarball, which failed these jobs during "Set up job" — before any step
+      # ran — repeatedly on 2026-08-17.
+      # govulncheck reports only vulnerabilities that are actually reachable
+      # from this module's call graph, including ones in the standard library —
+      # which is what a pinned toolchain quietly accumulates between releases.
+      - name: Run govulncheck
+        env:
+          GOTOOLCHAIN: auto
+          # Pin the install location rather than inferring it. actions/setup-go
+          # used to put the Go bin dir on PATH; without it `govulncheck` was
+          # installed but not found and the step failed with exit 127 instead of
+          # reporting vulnerabilities. Inferring $(go env GOPATH)/bin is not
+          # reliable either, because `go install` honours GOBIN when it is set.
+          GOBIN: ${{ github.workspace }}/.gobin
+        run: |
+          set -euo pipefail
+          go version
+          # govulncheck must be *built* with a toolchain at least as new as the
+          # module it analyses. `go install pkg@latest` resolves in its own
+          # module context, so it picks the oldest toolchain satisfying x/vuln's
+          # own go directive — go1.25.13 — and a scanner built with 1.25 cannot
+          # load a module that requires 1.26:
+          #   "package requires newer Go version go1.26 (application built with go1.25)"
+          # Derive the toolchain from go.mod so this stays a single source of
+          # truth and cannot drift the way a hardcoded version would.
+          goversion="$(go list -m -f '{{.GoVersion}}')"
+          echo "building govulncheck with go${goversion}"
+          # Pinned, not @latest. Scorecard's Pinned-Dependencies check flags an
+          # unpinned `go install` because whatever @latest resolves to at run
+          # time then executes in CI — and this repo pins every action by SHA, so
+          # leaving one unpinned tool in the chain is inconsistent. Pinning the
+          # scanner does not stale the results: the vulnerability database is
+          # fetched from vuln.go.dev at run time, not baked into the binary.
+          GOTOOLCHAIN="go${goversion}" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          "${GOBIN}/govulncheck" -version
+          "${GOBIN}/govulncheck" ./...
 
   docs-check:
     name: Documentation Coverage Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.1'
+          persist-credentials: false
+      # Deliberately no actions/setup-go here.
+      #
+      # This job needs nothing from setup-go but a toolchain, and the runner
+      # already ships one. Depending on the action meant the job could fail
+      # during "Set up job" — before any step ran — whenever codeload
+      # rate-limited the tarball download, which is exactly what happened
+      # repeatedly on 2026-08-17 (429, then 503, then 429 across three
+      # attempts and two manual re-runs).
+      #
+      # GOTOOLCHAIN=auto is Go's default and honours the `go` directive in
+      # go.mod, so the version used here is pinned by go.mod rather than by a
+      # workflow input that can silently drift away from it. That is stricter
+      # than what this job had before, not looser.
       - name: Enforce 100% Doc Coverage
-        run: go run scripts/doc_coverage.go
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go version
+          go run scripts/doc_coverage.go

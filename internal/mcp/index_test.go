@@ -28,11 +28,59 @@ func makeFakeRepo(t *testing.T, base, vis, lang, name, originURL, sidecar string
 		}
 	}
 	if sidecar != "" {
-		if err := os.WriteFile(filepath.Join(repo, stateFileName), []byte(sidecar), 0o600); err != nil {
+		// Since v0.0.20 the sidecar lives inside the git directory so it
+		// stays out of `git status`.
+		if err := os.WriteFile(filepath.Join(repo, ".git", stateFileName), []byte(sidecar), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return repo
+}
+
+// makeLegacyRepo is makeFakeRepo with the sidecar at the pre-v0.0.20
+// working-tree path, so the migration read path stays covered.
+func makeLegacyRepo(t *testing.T, base, vis, lang, name, originURL, sidecar string) string {
+	t.Helper()
+	repo := makeFakeRepo(t, base, vis, lang, name, originURL, "")
+	if sidecar != "" {
+		if err := os.WriteFile(filepath.Join(repo, legacyStateFileName), []byte(sidecar), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo
+}
+
+// TestReadStateFallsBackToLegacySidecar covers clones written by a pre-v0.0.20
+// corralctl: their smart-sync state must still be reported.
+func TestReadStateFallsBackToLegacySidecar(t *testing.T) {
+	base := t.TempDir()
+	repo := makeLegacyRepo(t, base, "Public", "go", "legacy",
+		"https://github.com/o/legacy.git", `{"last_synced_at":"2026-06-30T00:00:00Z"}`)
+	state, ok := readState(repo)
+	if !ok {
+		t.Fatal("expected legacy sidecar to be read")
+	}
+	if state.LastSyncedAt != "2026-06-30T00:00:00Z" {
+		t.Errorf("last_synced_at = %q", state.LastSyncedAt)
+	}
+}
+
+// TestReadStatePrefersGitDirOverLegacy pins the precedence when both exist.
+func TestReadStatePrefersGitDirOverLegacy(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "both",
+		"https://github.com/o/both.git", `{"last_synced_at":"2026-08-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(repo, legacyStateFileName),
+		[]byte(`{"last_synced_at":"2020-01-01T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, ok := readState(repo)
+	if !ok {
+		t.Fatal("expected state to be read")
+	}
+	if state.LastSyncedAt != "2026-08-01T00:00:00Z" {
+		t.Errorf("expected git-dir sidecar to win, got %q", state.LastSyncedAt)
+	}
 }
 
 func TestScanFindsExpectedLayout(t *testing.T) {
@@ -191,7 +239,10 @@ func TestReadStateLogsOnMalformedJSON(t *testing.T) {
 	// Malformed sidecar: logs with the path so operators can grep.
 	buf.Reset()
 	dirBad := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dirBad, stateFileName), []byte("not-json"), 0o600); err != nil {
+	if err := os.MkdirAll(filepath.Join(dirBad, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirBad, ".git", stateFileName), []byte("not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := readState(dirBad); ok {
@@ -238,9 +289,12 @@ func TestSafePathRejectsTraversal(t *testing.T) {
 
 func TestMarkStateSyncedPreservesPushedAt(t *testing.T) {
 	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	wantPushed := "2026-07-01T12:00:00Z"
 	body := `{"last_synced_pushed_at":"` + wantPushed + `","last_synced_at":"2026-07-01T13:00:00Z"}`
-	if err := os.WriteFile(filepath.Join(repo, stateFileName), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".git", stateFileName), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := markStateSynced(repo); err != nil {
@@ -255,5 +309,85 @@ func TestMarkStateSyncedPreservesPushedAt(t *testing.T) {
 	}
 	if state.LastSyncedAt == "" || state.LastSyncedAt == "2026-07-01T13:00:00Z" {
 		t.Errorf("last_synced_at was not refreshed: %+v", state)
+	}
+}
+
+// TestScanExcludesWorkspaceRoot is the regression test for a workspace root
+// that is itself a git repository — dotfiles, a monorepo, or simply
+// `corralctl mcp --root .`.
+//
+// Scan matched the root on its first callback, appended it as an entry and then
+// SkipDir aborted the whole walk, so the workspace collapsed to exactly one
+// "repo" named after the root's basename and every real clone became invisible.
+func TestScanExcludesWorkspaceRoot(t *testing.T) {
+	base := t.TempDir()
+	// The root is a repository too.
+	if err := os.MkdirAll(filepath.Join(base, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+	makeFakeRepo(t, base, "Public", "rust", "beta", "https://github.com/o/beta.git", "")
+
+	idx, err := Scan(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Repos) != 2 {
+		names := make([]string, 0, len(idx.Repos))
+		for _, r := range idx.Repos {
+			names = append(names, r.RelPath)
+		}
+		t.Fatalf("expected the 2 nested clones and not the root, got %d: %v", len(idx.Repos), names)
+	}
+	for _, r := range idx.Repos {
+		if r.RelPath == "." || r.Path == base {
+			t.Errorf("workspace root leaked into the index as %q", r.RelPath)
+		}
+	}
+}
+
+// TestSafeMutationPathRefusesRoot is the second half of that fix: even if the
+// root did resolve as a target, a mutation must never accept it, because
+// corral_delete_repo would then rm -rf the entire workspace.
+func TestSafeMutationPathRefusesRoot(t *testing.T) {
+	base := t.TempDir()
+	idx := &Index{Root: base}
+
+	// Reads of the root are fine.
+	if _, err := idx.SafePath(base); err != nil {
+		t.Errorf("SafePath must still allow the root: %v", err)
+	}
+	// Mutations of the root are not.
+	for _, target := range []string{base, base + string(filepath.Separator), "."} {
+		if _, err := idx.SafeMutationPath(target); err == nil {
+			t.Errorf("SafeMutationPath(%q) must refuse the workspace root", target)
+		}
+	}
+	// A real child is still a valid mutation target.
+	child := filepath.Join(base, "Public", "go", "alpha")
+	if err := os.MkdirAll(child, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := idx.SafeMutationPath(child); err != nil {
+		t.Errorf("a child path must remain mutable: %v", err)
+	}
+}
+
+// TestSafePathAllowsDotDotPrefixedNames pins the segment-wise boundary check: a
+// repository legitimately named "..foo" is inside the root, and the old raw
+// strings.HasPrefix(rel, "..") rejected it.
+func TestSafePathAllowsDotDotPrefixedNames(t *testing.T) {
+	base := t.TempDir()
+	odd := filepath.Join(base, "..foo")
+	if err := os.MkdirAll(odd, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	idx := &Index{Root: base}
+	if _, err := idx.SafePath(odd); err != nil {
+		t.Errorf("a repo named '..foo' is inside the root: %v", err)
+	}
+	// Real traversal is still refused.
+	if _, err := idx.SafePath(filepath.Join(base, "..", "outside")); err == nil {
+		t.Error("genuine ../ traversal must still be refused")
 	}
 }

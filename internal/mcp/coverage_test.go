@@ -248,6 +248,10 @@ func TestStateInjectedIOFailures(t *testing.T) {
 	}
 	readStateFile = oldRead
 	dir := t.TempDir()
+	// markStateSynced resolves the git directory before creating a temp file.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	createSyncTemp = func(string, string) (syncTempFile, error) { return nil, errors.New("create failed") }
 	if err := markStateSynced(dir); err == nil || !strings.Contains(err.Error(), "create sync") {
 		t.Fatalf("create error = %v", err)
@@ -596,7 +600,7 @@ func TestSyncMutationFailureMatrix(t *testing.T) {
 	if res := run(2, nil, nil); !res.IsError {
 		t.Fatal("success completion audit must fail")
 	}
-	if _, err := os.Stat(filepath.Join(repo, stateFileName)); err == nil {
+	if _, err := os.Stat(filepath.Join(repo, ".git", stateFileName)); err == nil {
 		t.Fatal("state stub unexpectedly wrote sidecar")
 	}
 }

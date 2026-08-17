@@ -186,7 +186,7 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 	if !isSearch {
 		u, _, err := client.Users.Get(ctx, owner)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get user/org '%s': %w", owner, err)
+			return nil, describeOwnerLookupError(ctx, client, owner, err)
 		}
 		isOrg = u.GetType() == "Organization"
 
@@ -746,4 +746,77 @@ func mapRepository(r *gh.Repository) Repo {
 		IsMirror:       r.GetMirrorURL() != "",
 		CanBeSponsored: false,
 	}
+}
+
+// describeOwnerLookupError turns a failed owner lookup into a message a person
+// can act on.
+//
+// The raw error from go-github reads:
+//
+//	failed to get user/org 'sebastienrouseau': GET https://api.github.com/users/sebastienrouseau: 404 Not Found []
+//
+// which leaks the transport, ends in an empty bracket pair, and says nothing
+// about what to do — while the overwhelmingly likely cause is a one-character
+// typo in a username. clig.dev: "catch errors and rewrite them for humans".
+//
+// On a 404 this reports that the owner does not exist and, when the mistyped
+// name is close to the authenticated user's own login, names the correction.
+// Other failures (rate limits, network, auth) keep their original text, which is
+// already the actionable part.
+func describeOwnerLookupError(ctx context.Context, client *gh.Client, owner string, err error) error {
+	var apiErr *gh.ErrorResponse
+	if !errors.As(err, &apiErr) || apiErr.Response == nil ||
+		apiErr.Response.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("cannot look up %q on GitHub: %w", owner, err)
+	}
+
+	msg := fmt.Sprintf("no GitHub user or organisation named %q", owner)
+
+	// A 404 for an owner that does exist means it is private and the current
+	// credentials cannot see it, so mention auth as well as spelling.
+	if login := authenticatedLogin(ctx, client); login != "" {
+		if login != owner && levenshtein(strings.ToLower(owner), strings.ToLower(login)) <= 2 {
+			return fmt.Errorf("%s\n\nDid you mean your own account?\n\tcorralctl %s", msg, login)
+		}
+	}
+	return fmt.Errorf("%s\n\nCheck the spelling. If it is a private organisation, "+
+		"confirm your credentials can see it with `gh auth status`", msg)
+}
+
+// authenticatedLogin returns the login of the credentialed user, or "" when
+// unauthenticated or the call fails. Never an error: this is only used to
+// improve a message that is already being returned.
+func authenticatedLogin(ctx context.Context, client *gh.Client) string {
+	u, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		return ""
+	}
+	return u.GetLogin()
+}
+
+// levenshtein is the standard edit distance, used only to decide whether a
+// mistyped owner is close enough to the authenticated user's login to suggest.
+//
+// Deliberately duplicated rather than shared: internal/github has no internal
+// imports, and keeping that leaf property is worth more than de-duplicating
+// twenty lines of arithmetic.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, min(cur[j-1]+1, prev[j-1]+cost))
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
 }

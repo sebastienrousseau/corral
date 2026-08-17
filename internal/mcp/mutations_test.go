@@ -40,6 +40,13 @@ func stubDirty(t *testing.T, fn func(ctx context.Context, repoPath string) (bool
 	t.Cleanup(func() { hasDirtyWorkingTree = old })
 }
 
+func stubIgnored(t *testing.T, fn func(ctx context.Context, repoPath string) (bool, string)) {
+	t.Helper()
+	old := hasIgnoredContent
+	hasIgnoredContent = fn
+	t.Cleanup(func() { hasIgnoredContent = old })
+}
+
 func stubUnpushed(t *testing.T, fn func(ctx context.Context, repoPath string) (bool, string)) {
 	t.Helper()
 	old := hasUnpushedCommits
@@ -312,6 +319,7 @@ func TestDeleteRepoToolSuccess(t *testing.T) {
 	// Both git checks report clean.
 	stubDirty(t, func(ctx context.Context, dir string) (bool, string) { return false, "" })
 	stubUnpushed(t, func(ctx context.Context, dir string) (bool, string) { return false, "0" })
+	stubIgnored(t, func(ctx context.Context, dir string) (bool, string) { return false, "" })
 
 	srv := newMutationServer(t, base, true)
 	_, handler := srv.deleteRepoTool()

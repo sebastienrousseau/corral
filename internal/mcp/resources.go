@@ -190,10 +190,14 @@ func (s *Server) repoTreeResource() (mcp.ResourceTemplate, func(ctx context.Cont
 // resolved path is still under the configured Root via Index.SafePath
 // before opening the file, and bounds the read at maxFileBytes.
 func (s *Server) repoFileResource() (mcp.ResourceTemplate, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)) {
+	// {+path} uses RFC 6570 reserved expansion so the segment matches "/".
+	// With plain {path} (simple expansion) no file below the repository's top
+	// level was reachable at all: corral://repo/o/n/file/src/main.go returned
+	// "resource not found" while file/README.md worked.
 	r := mcp.NewResourceTemplate(
-		"corral://repo/{owner}/{name}/file/{path}",
+		"corral://repo/{owner}/{name}/file/{+path}",
 		"Repository file contents",
-		mcp.WithTemplateDescription("Read a single file from a clone, bounded at 1 MiB. The {path} segment is relative to the repository root and is validated against the configured server root to prevent directory traversal."),
+		mcp.WithTemplateDescription("Read a single file from a clone, bounded at 1 MiB. The {path} segment is relative to the repository root, may contain subdirectories, and is validated against the configured server root to prevent directory traversal. Git internals and common credential files are not readable."),
 		mcp.WithTemplateMIMEType(mimePlain),
 	)
 	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
@@ -205,6 +209,16 @@ func (s *Server) repoFileResource() (mcp.ResourceTemplate, func(ctx context.Cont
 		if err != nil {
 			return nil, err
 		}
+		// Content policy runs before path resolution: the sandbox stops an
+		// agent leaving the repository, but .git/config is *inside* it and
+		// contains the credentials of anyone who has cloned over HTTPS with a
+		// token in the URL. The tree listing already hides .git; the file
+		// reader did not, so fixing the {+path} routing above without this
+		// would have turned an unreachable resource into a token leak.
+		if reason, blocked := blockedRepoFile(path); blocked {
+			return nil, fmt.Errorf("refusing to read %s: %s", path, reason)
+		}
+
 		// Scope validation to the selected repository, not merely the wider
 		// workspace. Otherwise ../ traversal could read a sibling clone.
 		idx := &Index{Root: repo.Path}
@@ -243,6 +257,83 @@ func (s *Server) repoFileResource() (mcp.ResourceTemplate, func(ctx context.Cont
 		}, nil
 	}
 	return r, handler
+}
+
+// blockedRepoFileNames are basenames never served by the file resource. Each
+// is a well-known credential or key store that routinely sits inside a working
+// tree, so a prompt-injected agent reading one clone could otherwise exfiltrate
+// secrets belonging to every other clone in the workspace.
+// #nosec G101 -- these are filenames to refuse, not credentials
+var blockedRepoFileNames = map[string]string{
+	".env":                 "environment files commonly hold credentials",
+	".envrc":               "environment files commonly hold credentials",
+	".netrc":               "netrc holds host credentials",
+	"_netrc":               "netrc holds host credentials",
+	".npmrc":               "npmrc may hold registry tokens",
+	".pypirc":              "pypirc may hold registry tokens",
+	".git-credentials":     "git credential store",
+	"credentials":          "credential store",
+	"id_rsa":               "private key",
+	"id_dsa":               "private key",
+	"id_ecdsa":             "private key",
+	"id_ed25519":           "private key",
+	".dockercfg":           "docker registry credentials",
+	"terraform.tfstate":    "terraform state may hold secrets",
+	"secrets.yml":          "named secrets file",
+	"secrets.yaml":         "named secrets file",
+	"service-account.json": "service-account key",
+}
+
+// blockedRepoFileSuffixes are extensions never served, matched case-insensitively.
+var blockedRepoFileSuffixes = map[string]string{
+	".pem":      "private key or certificate",
+	".key":      "private key",
+	".p12":      "keystore",
+	".pfx":      "keystore",
+	".jks":      "keystore",
+	".keystore": "keystore",
+	".kdbx":     "password database",
+}
+
+// blockedRepoFile reports whether the file resource must refuse rel, and why.
+//
+// rel is repository-relative and already lexically cleaned by the caller's
+// filepath.Join. The check is deliberately conservative and name-based rather
+// than content-based: refusing a handful of well-known names costs an agent
+// almost nothing, while a single leaked token is unrecoverable.
+func blockedRepoFile(rel string) (string, bool) {
+	clean := filepath.ToSlash(filepath.Clean("/" + rel))
+	clean = strings.TrimPrefix(clean, "/")
+	if clean == "" || clean == "." {
+		return "not a file", true
+	}
+
+	// Anything inside the git directory: config carries the remote URL and any
+	// token embedded in it, and the object store is not useful to an agent.
+	for _, seg := range strings.Split(clean, "/") {
+		if strings.EqualFold(seg, ".git") {
+			return "git internals are not readable", true
+		}
+		if strings.EqualFold(seg, ".ssh") || strings.EqualFold(seg, ".aws") ||
+			strings.EqualFold(seg, ".gnupg") {
+			return "credential directory", true
+		}
+	}
+
+	base := strings.ToLower(filepath.Base(clean))
+	if reason, ok := blockedRepoFileNames[base]; ok {
+		return reason, true
+	}
+	// .env.local, .env.production and friends.
+	if strings.HasPrefix(base, ".env.") {
+		return "environment files commonly hold credentials", true
+	}
+	for suffix, reason := range blockedRepoFileSuffixes {
+		if strings.HasSuffix(base, suffix) {
+			return reason, true
+		}
+	}
+	return "", false
 }
 
 // resolveURIRepo parses owner+name out of a corral:// URI and returns

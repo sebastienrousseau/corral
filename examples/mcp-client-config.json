@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Example MCP client configuration for corral. Copy the mcpServers entry into",
+    "your client's config file — .cursor/mcp.json, Claude Desktop's",
+    "claude_desktop_config.json, VS Code's mcp.json, and so on. The exact path",
+    "differs per client; the shape below does not.",
+    "",
+    "This file is an example, not a manifest. The registry manifest is",
+    "server.json at the repository root."
+  ],
+  "mcpServers": {
+    "corral": {
+      "command": "corralctl",
+      "args": ["mcp"]
+    },
+    "corral-with-writes": {
+      "_comment": "Write tools are opt-in, and deletion needs a second opt-in. Every mutation is appended to an audit log.",
+      "command": "corralctl",
+      "args": ["mcp", "--enable-mutations"]
+    },
+    "corral-docker": {
+      "_comment": "The mount is required — without it the server scans an empty container filesystem and reports zero repositories.",
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--user", "1000:1000",
+        "-v", "${HOME}/Code:/workspace:ro",
+        "ghcr.io/sebastienrousseau/corral:latest",
+        "mcp", "--root", "/workspace"
+      ]
+    }
+  }
+}

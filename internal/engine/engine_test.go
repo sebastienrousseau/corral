@@ -558,9 +558,20 @@ func TestMigrateLegacy(t *testing.T) {
 	defer func() { _ = os.RemoveAll(baseDir) }()
 
 	legacyDir := filepath.Join(baseDir, "go", "myrepo")
-	_ = os.MkdirAll(legacyDir, 0o750)
+	// Migration now requires evidence that the directory really is this
+	// repository's clone: a .git directory and a matching origin remote. A bare
+	// directory sharing the repo's name is no longer sufficient, because that
+	// let unrelated user folders be relocated silently.
+	_ = os.MkdirAll(filepath.Join(legacyDir, ".git"), 0o750)
+	cfg := "[remote \"origin\"]\n\turl = https://github.com/acme/myrepo.git\n"
+	if err := os.WriteFile(filepath.Join(legacyDir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	repos := []github.Repo{{Name: "myrepo", Language: "Go", Visibility: "Public"}}
+	repos := []github.Repo{{
+		Name: "myrepo", Owner: "acme", FullName: "acme/myrepo",
+		Language: "Go", Visibility: "Public",
+	}}
 	migrateLegacy(baseDir, repos)
 
 	targetDir := filepath.Join(baseDir, "Public", "Go", "myrepo")
@@ -1606,7 +1617,7 @@ func TestProcessRepoStateMissingFallsThrough(t *testing.T) {
 	if *called != 1 {
 		t.Errorf("gitPull must be called when state missing, was called %d times", *called)
 	}
-	if _, err := os.Stat(filepath.Join(target, StateFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(target, ".git", StateFileName)); err != nil {
 		t.Errorf("expected state file to be written after sync, got %v", err)
 	}
 }

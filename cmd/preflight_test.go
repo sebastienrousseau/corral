@@ -37,7 +37,10 @@ func TestPreflightSummaryShowsOwnerAndAbsolutePath(t *testing.T) {
 
 func TestPreflightConfirmSkipsPromptWithYesFlag(t *testing.T) {
 	var w bytes.Buffer
-	ok := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", "/tmp/nowhere-real", true, false)
+	ok, err := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", "/tmp/nowhere-real", true, false)
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
 	if !ok {
 		t.Error("--yes must always proceed")
 	}
@@ -48,7 +51,10 @@ func TestPreflightConfirmSkipsPromptWithYesFlag(t *testing.T) {
 
 func TestPreflightConfirmSkipsPromptWithDryRun(t *testing.T) {
 	var w bytes.Buffer
-	ok := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", "/tmp/nowhere-real", false, true)
+	ok, err := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", "/tmp/nowhere-real", false, true)
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
 	if !ok {
 		t.Error("--dry-run implies no destructive action, must skip prompt")
 	}
@@ -57,21 +63,51 @@ func TestPreflightConfirmSkipsPromptWithDryRun(t *testing.T) {
 	}
 }
 
-func TestPreflightConfirmSkipsPromptOnNonTTY(t *testing.T) {
+// TestPreflightConfirmRefusesNewTargetOnNonTTY is the regression test for the
+// gap docs/security-model.md claimed was covered. The preflight banner was
+// documented as the mitigation for a mistyped CLI argument, but on a non-TTY it
+// returned true unconditionally — so in scripts, pipes, cron and CI it printed
+// the wrong target and carried on regardless. A brand-new target directory with
+// nobody available to confirm it must now be refused, and refused with an error
+// so the exit status is non-zero.
+func TestPreflightConfirmRefusesNewTargetOnNonTTY(t *testing.T) {
 	var w bytes.Buffer
-	ok := preflightConfirm(&w, strings.NewReader(""), false, "sebastienrousseau", "/tmp/nowhere-real", false, false)
-	if !ok {
-		t.Error("non-TTY (scripted) invocations must proceed without prompting")
+	fresh := filepath.Join(t.TempDir(), "does-not-exist-yet")
+	ok, err := preflightConfirm(&w, strings.NewReader(""), false, "sebastienrousseau", fresh, false, false)
+	if ok {
+		t.Error("non-TTY invocation must not create a brand-new target unprompted")
+	}
+	if err == nil {
+		t.Fatal("refusal must surface as an error so the exit status is non-zero")
+	}
+	if !strings.Contains(err.Error(), "--yes") || !strings.Contains(err.Error(), "--dry-run") {
+		t.Errorf("refusal must name the way forward, got: %v", err)
 	}
 	if strings.Contains(w.String(), "Continue?") {
 		t.Error("prompt must not appear on non-TTY")
 	}
 }
 
+// An existing target on a non-TTY still proceeds — that is the cron case and
+// must stay frictionless.
+func TestPreflightConfirmProceedsOnNonTTYWhenTargetExists(t *testing.T) {
+	var w bytes.Buffer
+	ok, err := preflightConfirm(&w, strings.NewReader(""), false, "sebastienrousseau", t.TempDir(), false, false)
+	if err != nil {
+		t.Fatalf("existing target must not be refused: %v", err)
+	}
+	if !ok {
+		t.Error("existing target on non-TTY must proceed")
+	}
+}
+
 func TestPreflightConfirmSkipsPromptWhenTargetExists(t *testing.T) {
 	dir := t.TempDir()
 	var w bytes.Buffer
-	ok := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", dir, false, false)
+	ok, err := preflightConfirm(&w, strings.NewReader(""), true, "sebastienrousseau", dir, false, false)
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
 	if !ok {
 		t.Error("existing target must proceed without prompting")
 	}
@@ -101,7 +137,10 @@ func TestPreflightConfirmPromptsOnFreshTarget(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var w bytes.Buffer
-			got := preflightConfirm(&w, strings.NewReader(tc.input), true, "i", baseDir, false, false)
+			got, err := preflightConfirm(&w, strings.NewReader(tc.input), true, "i", baseDir, false, false)
+			if err != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
 			if got != tc.wantOK {
 				t.Errorf("input=%q: got %v, want %v", tc.input, got, tc.wantOK)
 			}
@@ -117,7 +156,10 @@ func TestPreflightConfirmPromptsOnFreshTarget(t *testing.T) {
 // that always fails.
 func TestPreflightConfirmToleratesBrokenWriter(t *testing.T) {
 	baseDir := filepath.Join(t.TempDir(), "still-fresh")
-	ok := preflightConfirm(errorWriter{}, strings.NewReader("y\n"), true, "i", baseDir, false, false)
+	ok, err := preflightConfirm(errorWriter{}, strings.NewReader("y\n"), true, "i", baseDir, false, false)
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
 	if !ok {
 		t.Error("broken stdout should not block confirmation")
 	}
@@ -148,9 +190,12 @@ func TestRunPreflightWrapper(t *testing.T) {
 	os.Stderr = w
 	defer func() { os.Stderr = oldStderr }()
 
-	got := runPreflight("sebastienrousseau", t.TempDir())
+	got, perr := runPreflight("sebastienrousseau", t.TempDir())
 	_ = w.Close()
 	_, _ = io.ReadAll(r)
+	if perr != nil {
+		t.Errorf("runPreflight with --yes should not refuse: %v", perr)
+	}
 	if !got {
 		t.Error("runPreflight with --yes should proceed")
 	}

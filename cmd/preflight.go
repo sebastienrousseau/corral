@@ -32,8 +32,12 @@ func preflightSummary(owner, baseDir string) string {
 
 // preflightConfirm prints the summary banner and, when the target
 // directory does not yet exist and stdout is a TTY and neither --yes
-// nor --dry-run is set, prompts for confirmation. Returns true when
-// the caller may proceed and false when the user declined.
+// nor --dry-run is set, prompts for confirmation.
+//
+// It returns (true, nil) to proceed, (false, nil) when the user declined at
+// the prompt, and (false, err) when corral refused because it could not ask.
+// The distinction drives the exit status: declining is a choice and exits 0,
+// while a refusal is a failure and exits non-zero so scripts notice.
 //
 // The prompt fires only for a genuinely-new target so re-running
 // corral against an existing workspace stays frictionless. That's the
@@ -42,17 +46,33 @@ func preflightSummary(owner, baseDir string) string {
 //
 // isTerminal / stdin are indirected so tests can drive the prompt
 // without a real TTY.
-func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir string, yes, dryRun bool) bool {
+func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir string, yes, dryRun bool) (bool, error) {
 	_, _ = fmt.Fprintln(w, preflightSummary(owner, baseDir))
 
 	if yes || dryRun {
-		return true
-	}
-	if !isTTY {
-		return true
+		return true, nil
 	}
 	if _, err := os.Stat(baseDir); err == nil {
-		return true // target already exists; nothing surprising to confirm
+		return true, nil // target already exists; nothing surprising to confirm
+	}
+
+	// Creating a new base directory is the one irreversible-feeling step in a
+	// run, and it is also what a mistyped positional argument produces. When
+	// there is no TTY there is nobody to ask, so refuse rather than proceed:
+	// previously this branch returned true, which meant the banner printed the
+	// wrong target and the run continued anyway in scripts, pipes, cron and CI
+	// — exactly the contexts where nobody is watching.
+	//
+	// This is reported as refused rather than declined so the exit status is
+	// non-zero: a script must be able to tell "I stopped and did nothing"
+	// from "I finished".
+	if !isTTY {
+		return false, fmt.Errorf(
+			"refusing to create a new target directory without confirmation\n"+
+				"  Target: %s\n"+
+				"Stdin is not a terminal, so corral cannot ask. Pass --yes to create it,\n"+
+				"or --dry-run to preview without touching disk",
+			baseDir)
 	}
 
 	_, _ = fmt.Fprintf(w, "The target directory does not exist yet — corral will create it.\n"+
@@ -60,10 +80,10 @@ func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir stri
 
 	scanner := bufio.NewScanner(in)
 	if !scanner.Scan() {
-		return false
+		return false, nil
 	}
 	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	return answer == "y" || answer == "yes"
+	return answer == "y" || answer == "yes", nil
 }
 
 // runPreflight is the default entry point cmd/root.go uses. It wraps
@@ -72,7 +92,7 @@ func preflightConfirm(w io.Writer, in io.Reader, isTTY bool, owner, baseDir stri
 //
 // Split out so the cmd-layer call site is a one-liner and the exit
 // path when the user declines is uniform.
-var runPreflight = func(owner, baseDir string) bool {
+var runPreflight = func(owner, baseDir string) (bool, error) {
 	return preflightConfirm(
 		os.Stderr,
 		os.Stdin,

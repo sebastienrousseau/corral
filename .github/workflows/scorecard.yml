@@ -18,6 +18,17 @@ jobs:
     name: Scorecard Analysis
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Non-blocking on pull requests.
+    #
+    # Scorecard is a third-party analysis service, and this job cannot run at
+    # all if codeload rate-limits the action download during "Set up job" —
+    # which it did repeatedly on 2026-08-17, reddening pull requests for a
+    # reason unrelated to their contents and unfixable from here.
+    #
+    # The authoritative runs are push-to-main and the weekly schedule, as this
+    # file's own header says; on a pull request the SARIF upload is skipped
+    # anyway. So a PR run is advisory, and advisory checks should not block.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     permissions:
       security-events: write
       id-token: write

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ var (
 	interactive         bool
 	finderTags          bool
 	assumeYes           bool
+	repoType            string
+	repoSort            string
 	retryMax            int
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
@@ -63,7 +66,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "corralctl <owner|topic:<topic>|language:<language>> [base_dir] [limit]",
 	Short: "Automatically clone and organise GitHub repositories by owner, topic, or language.",
-	Args:  cobra.MinimumNArgs(1),
+	Args:  validateRootArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		protocol = strings.ToLower(strings.TrimSpace(protocol))
 		output = strings.ToLower(strings.TrimSpace(output))
@@ -106,46 +109,41 @@ var rootCmd = &cobra.Command{
 		if visibility != "all" && visibility != "public" && visibility != "private" {
 			return fmt.Errorf("--visibility must be one of: all, public, private")
 		}
+		repoType = strings.ToLower(strings.TrimSpace(repoType))
+		repoSort = strings.ToLower(strings.TrimSpace(repoSort))
+		if repoType != "" && !slices.Contains(repoTypeValues, repoType) {
+			return fmt.Errorf("--type must be one of: %s", strings.Join(repoTypeValues, ", "))
+		}
+		if repoSort != "" && !slices.Contains(repoSortValues, repoSort) {
+			return fmt.Errorf("--sort must be one of: %s", strings.Join(repoSortValues, ", "))
+		}
+		// Validate the layout template before any network work so a typo
+		// fails immediately instead of after a full paginated fetch.
+		if layout != "" {
+			if _, err := engine.ParseLayoutTemplate(layout); err != nil {
+				return fmt.Errorf("--layout is not a valid template: %w", err)
+			}
+		}
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		owner := args[0]
-		var filterType string
-		var filterSort string
+		filterType := strings.ToLower(strings.TrimSpace(repoType))
+		filterSort := strings.ToLower(strings.TrimSpace(repoSort))
 		bDir := baseDir
 		lim := limit
 
+		// The positional grammar is exactly what `Use` and the README
+		// document: <owner> [base_dir] [limit]. Repository type and sort are
+		// --type and --sort flags.
+		//
+		// Until v0.0.20 this parser also silently consumed args[1] as a
+		// <type> and args[2] as a <sort> when they matched a keyword list,
+		// which meant ten ordinary directory names — forks, stars, name,
+		// public, private, templates and friends — were quietly swallowed and
+		// the run fell back to $HOME/Code instead of the directory the user
+		// named. validateRootArgs now rejects those instead of guessing.
 		argIdx := 1
-
-		// 1. Check if args[argIdx] is a known <type>
-		if len(args) > argIdx {
-			val := strings.ToLower(args[argIdx])
-			isType := false
-			switch val {
-			case "all", "public", "private", "sources", "forks", "archived", "can be sponsored", "sponsored", "mirrors", "templates":
-				isType = true
-			}
-			if isType {
-				filterType = val
-				argIdx++
-			}
-		}
-
-		// 2. Check if args[argIdx] is a known <sort>
-		if len(args) > argIdx {
-			val := strings.ToLower(args[argIdx])
-			isSort := false
-			switch val {
-			case "last updated", "updated", "name", "stars":
-				isSort = true
-			}
-			if isSort {
-				filterSort = val
-				argIdx++
-			}
-		}
-
-		// 3. Parse remaining optional positional arguments (base_dir, limit)
 		if len(args) > argIdx {
 			bDir = args[argIdx]
 			argIdx++
@@ -170,10 +168,21 @@ var rootCmd = &cobra.Command{
 		// confirmation; --yes bypasses it, --dry-run implies bypass.
 		// Interactive TUI mode has its own confirmation via /exit and
 		// doesn't need the extra prompt.
-		if !interactive && !preflightRunner(owner, bDir) {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			osExit(0)
-			return
+		if !interactive {
+			proceed, err := preflightRunner(owner, bDir)
+			if err != nil {
+				// Refused (e.g. no TTY to confirm a brand-new target
+				// directory). This is a failure, not a choice, so exit
+				// non-zero: a script must be able to tell it did nothing.
+				fmt.Fprintf(os.Stderr, "corralctl: %v\n", err)
+				osExit(1)
+				return
+			}
+			if !proceed {
+				fmt.Fprintln(os.Stderr, "Aborted.")
+				osExit(0)
+				return
+			}
 		}
 
 		engineRun(cmdContext(cmd), engine.RunOptions{
@@ -256,8 +265,16 @@ func ExecuteContext(ctx context.Context) {
 		ctx = context.Background()
 	}
 	rootCmd.SetContext(ctx)
+	// Cobra prints the error and then the full usage block; this function then
+	// printed the error a second time, so every mistake produced a ~52-line
+	// wall with the message duplicated at both ends. Silence both and render
+	// once here, with the actionable line last — clig.dev puts the most
+	// important information at the end of the output.
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "corralctl: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nRun 'corralctl --help' for usage.\n")
 		osExit(1)
 	}
 }
@@ -308,4 +325,133 @@ func init() {
 	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	rootCmd.Flags().DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
 	rootCmd.Flags().DurationVar(&apiTimeout, "api-timeout", 30*time.Second, "GitHub API request deadline")
+	rootCmd.Flags().StringVar(&repoType, "type", "", "repository type filter: "+strings.Join(repoTypeValues, ", "))
+	rootCmd.Flags().StringVar(&repoSort, "sort", "", "repository sort order: "+strings.Join(repoSortValues, ", "))
+
+	// Offer "did you mean" for near-miss subcommands. Cobra only reaches its
+	// own suggestion path when the root is not runnable with arguments, which
+	// corralctl is, so validateRootArgs does the work; this keeps the distance
+	// consistent for the paths cobra does handle.
+	rootCmd.SuggestionsMinimumDistance = 2
+}
+
+// repoTypeValues and repoSortValues are the accepted --type and --sort values.
+// Both were previously matched positionally, which is what made ordinary
+// directory names dangerous to pass as base_dir.
+var (
+	repoTypeValues = []string{
+		"all", "public", "private", "sources", "forks", "archived",
+		"can be sponsored", "sponsored", "mirrors", "templates",
+	}
+	repoSortValues = []string{"last updated", "updated", "name", "stars"}
+)
+
+// validateRootArgs replaces cobra.MinimumNArgs(1) on the root command.
+//
+// The root takes a bare <owner>, which means any typo'd subcommand is a
+// syntactically valid invocation: `corralctl statuss` used to be read as
+// "owner=statuss" and started a live GitHub fetch that cloned into
+// $HOME/Code. This rejects an argument that is within edit distance 2 of a
+// real subcommand and tells the user how to force it, which is clig.dev's
+// "don't have a catch-all subcommand" applied to the one shape corralctl
+// cannot avoid having.
+func validateRootArgs(cmd *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("requires at least 1 arg (the GitHub owner, topic:<topic>, or language:<language>)")
+	}
+	if len(args) > 3 {
+		return fmt.Errorf("accepts at most 3 args (<owner> [base_dir] [limit]), received %d", len(args))
+	}
+
+	// `corralctl -- statuss` forces the owner reading.
+	forced := cmd.ArgsLenAtDash() == 0
+	if !forced {
+		if suggestion := nearestSubcommand(cmd, args[0]); suggestion != "" {
+			return fmt.Errorf("unknown command %q for %q\n\nDid you mean this?\n\t%s\n\n"+
+				"If %q really is a GitHub owner, put any flags first and force it with:\n"+
+				"\tcorralctl [flags] -- %s",
+				args[0], cmd.Name(), suggestion, args[0], args[0])
+		}
+	}
+
+	// A second positional is base_dir. Reject the old type/sort keywords
+	// outright rather than guessing: before v0.0.20 they were swallowed as
+	// filters and base_dir silently fell back to $HOME/Code.
+	if len(args) > 1 {
+		if kind, ok := legacyPositionalKeyword(args[1]); ok {
+			return fmt.Errorf("%q is a --%s value, not a directory\n\n"+
+				"Repository type and sort are now flags, so base_dir is never guessed:\n"+
+				"\tcorralctl %s --%s %q\n\n"+
+				"To use a directory of that name, qualify it:\n\tcorralctl %s ./%s",
+				args[1], kind, args[0], kind, args[1], args[0], args[1])
+		}
+	}
+	return nil
+}
+
+// nearestSubcommand returns the name of the subcommand closest to arg when arg
+// looks like a misspelling of one, and "" otherwise. An exact match is not a
+// typo — cobra dispatches those before Args ever runs.
+func nearestSubcommand(cmd *cobra.Command, arg string) string {
+	const maxDistance = 2
+	arg = strings.ToLower(arg)
+	best, bestDist := "", maxDistance+1
+	for _, sub := range cmd.Commands() {
+		if sub.Hidden {
+			continue
+		}
+		for _, name := range append([]string{sub.Name()}, sub.Aliases...) {
+			name = strings.ToLower(name)
+			if name == arg {
+				return "" // exact match; cobra would have dispatched it
+			}
+			if d := levenshtein(arg, name); d < bestDist {
+				best, bestDist = name, d
+			}
+		}
+	}
+	if bestDist <= maxDistance {
+		return best
+	}
+	return ""
+}
+
+// legacyPositionalKeyword reports whether s is one of the repository type or
+// sort keywords the pre-v0.0.20 positional parser consumed.
+func legacyPositionalKeyword(s string) (string, bool) {
+	v := strings.ToLower(strings.TrimSpace(s))
+	for _, t := range repoTypeValues {
+		if v == t {
+			return "type", true
+		}
+	}
+	for _, t := range repoSortValues {
+		if v == t {
+			return "sort", true
+		}
+	}
+	return "", false
+}
+
+// levenshtein is the standard edit distance, used only for "did you mean"
+// suggestions over a handful of short subcommand names.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, min(cur[j-1]+1, prev[j-1]+cost))
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
 }

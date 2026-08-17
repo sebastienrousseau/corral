@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -130,6 +129,10 @@ func (s *Server) auditRefusal(rec AuditRecord, message string) error {
 // when the operation cannot be sandboxed to the configured Root.
 func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_sync_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithDescription("Run `git pull --rebase --autostash` against one clone in the Corral workspace. Requires --enable-mutations. Reuses the same non-interactive git environment the classic corralctl uses (no credential prompts, no signing pinentry) and honours smart-sync via the .corral-state.json sidecar. Refuses when the repo isn't in the index or resolves outside the configured sandbox root."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -151,7 +154,7 @@ func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 		}
 		// Belt-and-braces sandbox check — Index.Find already returns
 		// only Root-relative repos, but a future refactor might not.
-		safe, err := idx.SafePath(repo.Path)
+		safe, err := idx.SafeMutationPath(repo.Path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -197,6 +200,10 @@ func (s *Server) syncRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Cal
 // escape the sandbox root.
 func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_clone_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(true),
 		mcp.WithDescription("Clone a repository into the Corral workspace at a caller-provided path relative to the sandbox root. Requires --enable-mutations. Uses the shared non-interactive git environment; supports optional shallow / single-branch / blobless clones. Refuses when the target already exists or when the resolved path escapes the sandbox root."),
 		mcp.WithString("url",
 			mcp.Required(),
@@ -226,7 +233,7 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 		blobless := req.GetBool("blobless", false)
 
 		idx := &Index{Root: s.opts.Root}
-		safeTarget, err := idx.SafePath(target)
+		safeTarget, err := idx.SafeMutationPath(target)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -278,7 +285,7 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 //
 //  1. Requires BOTH EnableMutations and EnableDestructiveMutations
 //     to be registered at all.
-//  2. Resolves the target via SafePath so path traversal cannot
+//  2. Resolves the target via SafeMutationPath so path traversal cannot
 //     escape the sandbox.
 //  3. Refuses if the working tree has uncommitted changes.
 //  4. Refuses if there are unpushed commits on any branch.
@@ -288,6 +295,10 @@ func (s *Server) cloneRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 //     race between the check and the removal is still logged.
 func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_delete_repo",
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithDescription("Permanently remove one clone from the Corral workspace. Requires BOTH --enable-mutations and --enable-destructive-mutations. Refuses when uncommitted changes exist, unpushed commits exist, or the target isn't a git repository. Every attempt (successful or refused) is logged to the mutation audit trail."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -307,7 +318,7 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		safe, err := idx.SafePath(repo.Path)
+		safe, err := idx.SafeMutationPath(repo.Path)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -341,6 +352,16 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 			}
 			return mcp.NewToolResultError(rec.Message), nil
 		}
+		// Gitignored content is the least recoverable thing in a clone — local
+		// .env files, databases, caches — and `git status --porcelain` hides it
+		// by design, so "clean" was never sufficient grounds to rm -rf.
+		if ignored, out := hasIgnoredContent(ctx, safe); ignored {
+			rec.Message = fmt.Sprintf("gitignored content present: %s", out)
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("%s; audit failed: %v", rec.Message, auditErr)), nil
+			}
+			return mcp.NewToolResultError(rec.Message), nil
+		}
 
 		rec, err = s.beginMutation(rec)
 		if err != nil {
@@ -365,17 +386,17 @@ func (s *Server) deleteRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.C
 	return tool, handler
 }
 
-// hasDirtyWorkingTree reports whether `git status --porcelain` finds
-// any modifications, staged or unstaged, in the working tree of the
-// target repo. Indirected through a package var so tests can stub the
-// dangerous "actually run git" path.
-var hasDirtyWorkingTree = func(ctx context.Context, repoPath string) (bool, string) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "status", "--porcelain") // #nosec G204 -- fixed executable and root-confined path
-	out, err := cmd.Output()
-	if err != nil {
-		// If we can't even read the status, err on the side of refusal.
-		return true, err.Error()
-	}
-	trimmed := strings.TrimSpace(string(out))
-	return trimmed != "", trimmed
-}
+// hasDirtyWorkingTree reports tracked, staged or untracked modifications in the
+// target repo. Indirected through a package var so tests can stub the dangerous
+// "actually run git" path.
+//
+// This delegates to git.HasLocalChanges rather than shelling out itself. The
+// local copy ran `git status --porcelain` a second time (HasUnpublishedWork
+// already calls HasLocalChanges first) and, more importantly, skipped
+// withGitEnv — so it lacked the non-interactive hardening that stops git
+// prompting for credentials and hanging a stdio MCP session.
+var hasDirtyWorkingTree = git.HasLocalChanges
+
+// hasIgnoredContent reports gitignored files in the target repo. Indirected for
+// the same reason as hasDirtyWorkingTree.
+var hasIgnoredContent = git.HasIgnoredContent

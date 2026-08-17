@@ -134,6 +134,18 @@ var pruneCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// A truncated upstream listing makes every repository past the cap look
+		// like an orphan, and prune's answer to an orphan is rm -rf. The engine
+		// warns about exactly this truncation on the sync path; prune had no
+		// equivalent guard, so `corralctl prune acme --yes` against an owner
+		// with more than --limit repositories deleted live clones.
+		if limit > 0 && len(repos) >= limit {
+			return fmt.Errorf(
+				"refusing to prune: the upstream listing hit --limit (%d repositories)\n"+
+					"Anything beyond the limit is missing from the comparison and would look\n"+
+					"like an orphan. Re-run with --limit 0 to fetch every repository",
+				limit)
+		}
 		upstream := make(map[string]struct{}, len(repos))
 		for _, repo := range repos {
 			identity := repo.FullName
