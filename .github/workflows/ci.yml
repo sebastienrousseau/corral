@@ -84,9 +84,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.6'
+      # Deliberately no actions/setup-go here.
+      #
+      # This job needs nothing from setup-go but a toolchain, and the runner
+      # already ships one. Depending on the action meant the job could fail
+      # during "Set up job" — before any step ran — whenever codeload
+      # rate-limited the tarball download, which is exactly what happened
+      # repeatedly on 2026-08-17 (429, then 503, then 429 across three
+      # attempts and two manual re-runs).
+      #
+      # GOTOOLCHAIN=auto is Go's default and honours the `go` directive in
+      # go.mod, so the version used here is pinned by go.mod rather than by a
+      # workflow input that can silently drift away from it. That is stricter
+      # than what this job had before, not looser.
       - name: Enforce 100% Doc Coverage
-        run: go run scripts/doc_coverage.go
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go version
+          go run scripts/doc_coverage.go
