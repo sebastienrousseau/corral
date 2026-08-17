@@ -121,8 +121,11 @@ func TestFetchReposWithClientOptions(t *testing.T) {
 
 	client := newTestClient(rt)
 
+	// A 404 on the owner lookup is now reported in human terms rather than as
+	// the raw go-github "failed to get user/org ...: 404 Not Found []".
+	// TestDescribeOwnerLookupErrorRewrites404 covers the wording in detail.
 	_, err := FetchReposWithClientOptions(context.Background(), client, "unknown", FetchOptions{Limit: 10})
-	if err == nil || !strings.Contains(err.Error(), "failed to get user/org") {
+	if err == nil || !strings.Contains(err.Error(), `no GitHub user or organisation named "unknown"`) {
 		t.Fatalf("expected owner lookup error, got: %v", err)
 	}
 
@@ -1138,5 +1141,111 @@ func TestToken(t *testing.T) {
 	mustUnsetenv(t, "GH_TOKEN")
 	if got := Token(context.Background(), AuthModeToken); got != "" {
 		t.Errorf("Token() with no credentials = %q, want empty", got)
+	}
+}
+
+// TestDescribeOwnerLookupErrorRewrites404 covers the message a user sees after
+// mistyping an owner — the single most likely way this command fails.
+//
+// The raw go-github text was:
+//
+//	failed to get user/org 'sebastienrouseau': GET https://api.github.com/users/sebastienrouseau: 404 Not Found []
+//
+// which leaks the transport, ends in an empty bracket pair, and offers no
+// remedy for what is almost always a one-character typo.
+func TestDescribeOwnerLookupErrorRewrites404(t *testing.T) {
+	// A transport that 404s the mistyped owner and returns a login for the
+	// authenticated-user lookup, mirroring the real API.
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/users/sebastienrouseau":
+			return jsonResp(req, http.StatusNotFound, `{"message":"Not Found"}`, nil), nil
+		case "/user", "/users/":
+			return jsonResp(req, http.StatusOK, `{"login":"sebastienrousseau","type":"User"}`, nil), nil
+		}
+		return jsonResp(req, http.StatusNotFound, `{"message":"Not Found"}`, nil), nil
+	})
+	client := newTestClient(rt)
+
+	_, err := FetchReposWithClientOptions(context.Background(), client, "sebastienrouseau", FetchOptions{})
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent owner")
+	}
+	got := err.Error()
+
+	if !strings.Contains(got, `no GitHub user or organisation named "sebastienrouseau"`) {
+		t.Errorf("error should say plainly that the owner does not exist, got:\n%s", got)
+	}
+	if !strings.Contains(got, "sebastienrousseau") {
+		t.Errorf("error should suggest the near-miss login, got:\n%s", got)
+	}
+	// The noise the old message carried must be gone.
+	for _, noise := range []string{"api.github.com", "404 Not Found", "[]", "failed to get user/org"} {
+		if strings.Contains(got, noise) {
+			t.Errorf("error still leaks %q:\n%s", noise, got)
+		}
+	}
+}
+
+// A 404 with no close match falls back to spelling plus an auth hint, because a
+// private organisation the credentials cannot see also 404s.
+func TestDescribeOwnerLookupError404NoSuggestion(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/user" || req.URL.Path == "/users/" {
+			return jsonResp(req, http.StatusOK, `{"login":"someone-entirely-different","type":"User"}`, nil), nil
+		}
+		return jsonResp(req, http.StatusNotFound, `{"message":"Not Found"}`, nil), nil
+	})
+	client := newTestClient(rt)
+
+	_, err := FetchReposWithClientOptions(context.Background(), client, "acme-private", FetchOptions{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "Check the spelling") || !strings.Contains(got, "gh auth status") {
+		t.Errorf("expected spelling + auth guidance, got:\n%s", got)
+	}
+	if strings.Contains(got, "Did you mean") {
+		t.Errorf("must not suggest an unrelated login:\n%s", got)
+	}
+}
+
+// Non-404 failures keep their original text: a rate limit or a network error is
+// already the actionable part and must not be reworded into a spelling hint.
+func TestDescribeOwnerLookupErrorPreservesNon404(t *testing.T) {
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResp(req, http.StatusInternalServerError, `{"message":"upstream exploded"}`, nil), nil
+	})
+	client := newTestClient(rt)
+
+	_, err := FetchReposWithClientOptions(context.Background(), client, "acme", FetchOptions{})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	got := err.Error()
+	if strings.Contains(got, "Check the spelling") {
+		t.Errorf("a 500 must not be reported as a typo:\n%s", got)
+	}
+	if !strings.Contains(got, "cannot look up") {
+		t.Errorf("expected the lookup wrapper, got:\n%s", got)
+	}
+}
+
+func TestLevenshtein(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"a", "", 1},
+		{"sebastienrouseau", "sebastienrousseau", 1},
+		{"kitten", "sitting", 3},
+		{"café", "cafe", 1}, // multi-byte: distance is in runes, not bytes
+	}
+	for _, tc := range cases {
+		if got := levenshtein(tc.a, tc.b); got != tc.want {
+			t.Errorf("levenshtein(%q,%q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
 	}
 }
