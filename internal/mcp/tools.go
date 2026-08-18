@@ -38,7 +38,7 @@ func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a .corral-state.json sidecar is present. Returns the structured repository index as JSON."),
+		mcp.WithDescription("List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a sync sidecar is present. Results are paginated: the response carries total_matched, returned and next_offset; pass next_offset back as 'offset' to continue. Use response_format 'concise' (the default) unless you specifically need origin URLs and sync timestamps — 'detailed' is roughly ten times larger per repository."),
 		mcp.WithString("visibility",
 			mcp.Description("Filter by visibility directory: 'Public' or 'Private'. Case-insensitive."),
 		),
@@ -49,7 +49,16 @@ func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 			mcp.Description("Substring match against the repository name. Case-insensitive."),
 		),
 		mcp.WithBoolean("synced_only",
-			mcp.Description("When true, return only repositories with a populated .corral-state.json sidecar (i.e. previously synced by corral). Default false."),
+			mcp.Description("When true, return only repositories with a populated sync sidecar (i.e. previously synced by corral). Default false."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum repositories to return. Default 50, maximum 200."),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Index to start from, for paging. Pass the previous response's next_offset."),
+		),
+		mcp.WithString("response_format",
+			mcp.Description("'concise' (default) returns path, name, visibility and language only. 'detailed' adds origin URL and sync state."),
 		),
 	)
 
@@ -82,11 +91,21 @@ func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.Ca
 			}
 			out = append(out, r)
 		}
-		return jsonResult(map[string]any{
-			"root":  idx.Root,
-			"count": len(out),
-			"repos": out,
-		}), nil
+		page, meta := paginate(out, req.GetInt("limit", defaultPageSize), req.GetInt("offset", 0))
+		body := map[string]any{
+			"root":          idx.Root,
+			"total_matched": meta.Total,
+			"returned":      meta.Returned,
+			"repos":         projectRepos(page, req.GetString("response_format", formatConcise)),
+		}
+		if meta.NextOffset > 0 {
+			body["next_offset"] = meta.NextOffset
+			body["note"] = "More results are available. Pass next_offset as 'offset', or narrow the filters."
+		}
+		if idx.Truncated {
+			body["workspace_truncated"] = true
+		}
+		return jsonResult(body), nil
 	}
 	return tool, handler
 }
@@ -208,25 +227,56 @@ func (s *Server) statusSummaryTool() (mcp.Tool, func(ctx context.Context, req mc
 	return tool, handler
 }
 
-// workspaceIndexTool returns corral_workspace_index: the raw index dump
-// for clients that prefer one round-trip to many. Useful for an agent
-// priming its context at session start, then querying the in-memory
-// copy without further tool calls. Capped result size is the agent's
-// problem (rounds-trip cost matters more than bytes-on-the-wire here).
+// workspaceIndexTool returns corral_workspace_index: a whole-workspace dump for
+// clients that prefer one round-trip to many.
+//
+// "Capped result size is the agent's problem" was the original rationale and it
+// was wrong: at ~526 bytes per repository the full index reached ~66,000 tokens
+// for 500 repositories, against a 25,000-token client budget — so the tool's
+// own description invited the single most expensive call it could make, and the
+// response was over budget from roughly 190 repositories. It is now bounded and
+// concise by default, and its description points at corral_list_repos for
+// filtered work.
 func (s *Server) workspaceIndexTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
 	tool := mcp.NewTool("corral_workspace_index",
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("Return the full structured index of the Corral workspace in one call. Use this when an agent wants to prime its context with the complete repository list rather than make many filtered corral_list_repos calls. Mirrors the corral://workspace/index resource."),
+		mcp.WithDescription("Return a whole-workspace summary plus a bounded page of repositories. Prefer corral_list_repos when you can filter — this returns everything and is the most expensive read here. Paginated: pass next_offset back as 'offset'. Defaults to the concise projection; 'detailed' adds origin URLs and sync state."),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum repositories to return. Default 50, maximum 200."),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Index to start from, for paging."),
+		),
+		mcp.WithString("response_format",
+			mcp.Description("'concise' (default) or 'detailed'."),
+		),
 	)
 	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		idx, err := s.scan()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
 		}
-		return jsonResult(idx), nil
+		page, meta := paginate(idx.Repos, req.GetInt("limit", defaultPageSize), req.GetInt("offset", 0))
+		body := map[string]any{
+			"root":          idx.Root,
+			"total_matched": meta.Total,
+			"returned":      meta.Returned,
+			"repos":         projectRepos(page, req.GetString("response_format", formatConcise)),
+		}
+		if meta.NextOffset > 0 {
+			body["next_offset"] = meta.NextOffset
+			body["note"] = "More results are available. Pass next_offset as 'offset', or use corral_list_repos with filters."
+		}
+		if idx.Truncated {
+			// Previously set on the Index and never surfaced in any payload, so
+			// a workspace over the scan cap looked complete to the caller.
+			body["workspace_truncated"] = true
+			body["workspace_truncated_note"] = "The workspace exceeded the scan cap; some repositories are missing from this index."
+		}
+		return jsonResult(body), nil
 	}
 	return tool, handler
 }

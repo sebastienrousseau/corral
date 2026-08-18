@@ -174,17 +174,24 @@ func TestConfigAndProfile(t *testing.T) {
 }
 
 func TestConfigValidationAndDefaults(t *testing.T) {
+	// validateProfile owns the profile's own structure. Per-setting validity is
+	// enforced by the flag parsers and validateCommonFlags(), so a bad protocol
+	// or a negative concurrency is now rejected by exactly the same checks that
+	// apply to a value typed on the command line — see
+	// TestProfileSettingsAreValidatedLikeFlags below.
 	for name, configured := range map[string]profile{
-		"empty":    {},
-		"owner":    {Owners: []string{""}},
-		"protocol": {Owners: []string{"a"}, Protocol: "ftp"},
-		"negative": {Owners: []string{"a"}, Concurrency: -1},
+		"empty":         {},
+		"owner":         {Owners: []string{""}},
+		"blank-setting": {Owners: []string{"a"}, Settings: map[string]any{" ": 1}},
 	} {
 		if err := validateProfile(name, configured); err == nil {
 			t.Fatalf("expected %s profile to fail", name)
 		}
 	}
-	if err := validateProfile("ok", profile{Owners: []string{"a"}, Protocol: "https"}); err != nil {
+	if err := validateProfile("ok", profile{
+		Owners:   []string{"a"},
+		Settings: map[string]any{"protocol": "https"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	xdgDir := filepath.Join(string(filepath.Separator), "tmp", "xdg")

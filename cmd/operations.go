@@ -18,18 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type configFile struct {
-	Profiles map[string]profile `json:"profiles"`
-}
-
-type profile struct {
-	Owners      []string `json:"owners"`
-	BaseDir     string   `json:"base_dir,omitempty"`
-	Layout      string   `json:"layout,omitempty"`
-	Protocol    string   `json:"protocol,omitempty"`
-	Concurrency int      `json:"concurrency,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
-}
+// configFile and profile now live in cmd/config.go.
 
 type localStatus struct {
 	Name        string `json:"name"`
@@ -49,6 +38,8 @@ type pruneResult struct {
 
 var (
 	configPath      string
+	configInit      bool
+	configExplain   bool
 	statusOutput    string
 	planOutput      string
 	pruneOutput     string
@@ -104,7 +95,7 @@ var planCmd = &cobra.Command{
 		if !validOperationalOutput(planOutput) {
 			return errors.New("--output must be text, json, or ndjson")
 		}
-		return nil
+		return validateCommonFlags()
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		engineRun(cmdContext(cmd), operationalRunOptions(args[0], true, engine.OutputFormat(planOutput)))
@@ -119,7 +110,7 @@ var pruneCmd = &cobra.Command{
 		if pruneOutput != "text" && pruneOutput != "json" {
 			return errors.New("--output must be text or json")
 		}
-		return nil
+		return validateCommonFlags()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !dryRun && !assumeYes {
@@ -217,7 +208,7 @@ var profileCmd = &cobra.Command{
 		if !validOperationalOutput(output) {
 			return errors.New("--output must be text, json, or ndjson")
 		}
-		return nil
+		return validateCommonFlags()
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadConfig(configPath)
@@ -231,24 +222,16 @@ var profileCmd = &cobra.Command{
 		if err := validateProfile(args[0], selected); err != nil {
 			return err
 		}
+		// Apply the profile's settings onto this command's flags before
+		// building RunOptions, so a profile can set anything a flag can rather
+		// than the five fields the previous hand-written mapping covered. An
+		// explicitly-passed flag still wins.
+		if _, err := applySettings(cmd, selected.effectiveSettings(),
+			fmt.Sprintf("profile %q", args[0])); err != nil {
+			return err
+		}
 		for _, owner := range selected.Owners {
-			opts := operationalRunOptions(owner, dryRun, engine.OutputFormat(output))
-			if selected.BaseDir != "" {
-				opts.BaseDir = selected.BaseDir
-			}
-			if selected.Layout != "" {
-				opts.Layout = selected.Layout
-			}
-			if selected.Protocol != "" {
-				opts.Protocol = selected.Protocol
-			}
-			if selected.Concurrency > 0 {
-				opts.Concurrency = selected.Concurrency
-			}
-			if selected.Limit > 0 {
-				opts.Fetch.Limit = selected.Limit
-			}
-			engineRun(cmdContext(cmd), opts)
+			engineRun(cmdContext(cmd), operationalRunOptions(owner, dryRun, engine.OutputFormat(output)))
 		}
 		return nil
 	},
@@ -256,9 +239,18 @@ var profileCmd = &cobra.Command{
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "Validate and print the active profile configuration",
-	Args:  cobra.NoArgs,
+	Short: "Validate, print, or create the configuration",
+	Long: `Validate, print, or create the corral configuration.
+
+Settings are named after flags, so "concurrency": 8 in the file is the same as
+passing --concurrency 8. Precedence, highest first: an explicitly-passed flag,
+then the selected profile, then the defaults block, then the flag's own default.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if configInit {
+			return writeConfigTemplate(configPath, defaultConfigTemplate(rootCmd))
+		}
+
 		cfg, err := loadConfig(configPath)
 		if err != nil {
 			return err
@@ -268,6 +260,25 @@ var configCmd = &cobra.Command{
 				return err
 			}
 		}
+
+		if configExplain {
+			// Show where each effective value comes from. A layered config is
+			// only debuggable if you can ask it why a value is what it is.
+			path := configPath
+			if path == "" {
+				path = defaultConfigPath()
+			}
+			applied, err := applySettings(rootCmd, cfg.Defaults, "config defaults")
+			if err != nil {
+				return err
+			}
+			report := map[string]any{"config_path": path, "applied": applied}
+			if len(applied) == 0 {
+				report["note"] = "no defaults block, or every setting was overridden by an explicit flag"
+			}
+			return writeJSON(os.Stdout, report)
+		}
+
 		return writeJSON(os.Stdout, cfg)
 	},
 }
@@ -340,11 +351,15 @@ func validateProfile(name string, configured profile) error {
 			return fmt.Errorf("profile %q contains an empty owner", name)
 		}
 	}
-	if configured.Protocol != "" && configured.Protocol != "https" && configured.Protocol != "ssh" {
-		return fmt.Errorf("profile %q has invalid protocol %q", name, configured.Protocol)
-	}
-	if configured.Concurrency < 0 || configured.Limit < 0 {
-		return fmt.Errorf("profile %q has negative concurrency or limit", name)
+	// Per-setting validity is enforced where it belongs: applySettings pushes
+	// each value through the flag's own parser, and the commands' PreRunE
+	// checks the semantic ranges. Duplicating a protocol allow-list here meant
+	// only the five hand-mapped fields were ever checked, and it drifted from
+	// the flag definitions.
+	for key := range configured.effectiveSettings() {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("profile %q contains an empty setting name", name)
+		}
 	}
 	return nil
 }
@@ -367,5 +382,20 @@ func init() {
 	pruneCmd.Flags().StringVar(&pruneOutput, "output", "text", "output format: text or json")
 	pruneCmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "confirm removal of safe orphaned clones")
 	profileCmd.Flags().StringVar(&output, "output", "text", "output format: text, json, or ndjson")
+	// The operational commands read the same package-level flag variables via
+	// operationalRunOptions(), so give them the flags that feed it. Before
+	// v0.0.21 they consumed those values while rejecting every attempt to set
+	// them ("unknown flag: --limit").
+	//
+	// prune deliberately gets only the fetch group: it removes clones and never
+	// creates one, so clone-depth and friends would be inert noise on its help.
+	for _, c := range []*cobra.Command{planCmd, profileCmd} {
+		c.Flags().AddFlagSet(fetchFlags())
+		c.Flags().AddFlagSet(cloneFlags())
+	}
+	pruneCmd.Flags().AddFlagSet(fetchFlags())
+	configCmd.Flags().BoolVar(&configInit, "init", false, "write a commented starter config and exit")
+	configCmd.Flags().BoolVar(&configExplain, "explain", false, "show each effective setting and where it came from")
+
 	rootCmd.AddCommand(statusCmd, planCmd, pruneCmd, profileCmd, configCmd)
 }

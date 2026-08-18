@@ -67,15 +67,17 @@ func TestListReposToolFiltersByLanguage(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", textOf(t, res))
 	}
+	// "count" became "total_matched" when paging landed: with a page window,
+	// a bare count is ambiguous between matched and returned.
 	var payload struct {
-		Count int         `json:"count"`
+		Total int         `json:"total_matched"`
 		Repos []RepoEntry `json:"repos"`
 	}
 	if err := json.Unmarshal([]byte(textOf(t, res)), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Count != 2 {
-		t.Errorf("expected 2 Go repos, got %d (%+v)", payload.Count, payload.Repos)
+	if payload.Total != 2 {
+		t.Errorf("expected 2 Go repos, got %d (%+v)", payload.Total, payload.Repos)
 	}
 }
 
@@ -88,13 +90,13 @@ func TestListReposToolFiltersByVisibility(t *testing.T) {
 	_, handler := srv.listReposTool()
 	res := callTool(t, handler, map[string]any{"visibility": "private"})
 	var payload struct {
-		Count int `json:"count"`
+		Total int `json:"total_matched"`
 	}
 	if err := json.Unmarshal([]byte(textOf(t, res)), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Count != 1 {
-		t.Errorf("expected 1 private repo, got %d", payload.Count)
+	if payload.Total != 1 {
+		t.Errorf("expected 1 private repo, got %d", payload.Total)
 	}
 }
 

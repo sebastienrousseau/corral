@@ -16,7 +16,7 @@ LDFLAGS = -s -w \
 all: format vet test test-race build
 
 build:
-	go build -ldflags '$(LDFLAGS)' -o $(BINARY_NAME) main.go
+	go build -ldflags '$(LDFLAGS)' -o $(BINARY_NAME) ./cmd/corralctl
 
 install: build
 	install -d $(DESTDIR)$(PREFIX)/bin
