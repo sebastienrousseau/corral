@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22] — 2026-08-18
+
+### Fixed
+
+- **The MCP registry publish reported success while publishing nothing.** The
+  step was gated on an `MCP_REGISTRY_TOKEN` secret, but it authenticates with
+  `mcp-publisher login github-oidc`, which uses the GitHub Actions OIDC token
+  the job already holds via `id-token: write` and needs no secret at all. With
+  the secret unset the step took its skip branch and exited 0, so the registry
+  entry stayed at 0.0.13 through v0.0.21 — including the release where the
+  publisher itself was finally working. Gate removed.
+
+
 ## [0.0.21] — 2026-08-18
 
 Usability release. The v0.0.20 work made corral safe; this makes it
