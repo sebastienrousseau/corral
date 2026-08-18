@@ -5,11 +5,11 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	gh "github.com/google/go-github/v74/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -28,9 +28,16 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func newTestClient(rt http.RoundTripper) *gh.Client {
-	client := gh.NewClient(&http.Client{Transport: rt})
-	u, _ := url.Parse("https://api.test/")
-	client.BaseURL = u
+	// v90 made BaseURL a read-only accessor; the base URL is now set through
+	// the WithURLs option at construction time.
+	base := "https://api.test/"
+	client, err := gh.NewClient(
+		gh.WithHTTPClient(&http.Client{Transport: rt}),
+		gh.WithURLs(&base, nil),
+	)
+	if err != nil {
+		panic(err) // a client built from a stub transport cannot fail
+	}
 	return client
 }
 
@@ -1247,5 +1254,102 @@ func TestLevenshtein(t *testing.T) {
 		if got := levenshtein(tc.a, tc.b); got != tc.want {
 			t.Errorf("levenshtein(%q,%q) = %d, want %d", tc.a, tc.b, got, tc.want)
 		}
+	}
+}
+
+// TestMapRepositoryFieldsSurviveMajorUpgrades pins every field corral reads out
+// of go-github, decoded from a realistic API payload through go-github's own
+// struct tags.
+//
+// This exists because of the v74 -> v90 jump: sixteen majors of a generated API
+// client is exactly where a renamed JSON tag or a retyped field silently starts
+// yielding zero values. Most such regressions would not fail a build — corral
+// would simply start reporting every repository as language "Other", visibility
+// "Public", or with a zero PushedAt, which disables smart-sync by making every
+// repo look never-synced. A full sync of every repository looks like working
+// software, which is why this needs an explicit assertion rather than an
+// end-to-end smoke test.
+func TestMapRepositoryFieldsSurviveMajorUpgrades(t *testing.T) {
+	const payload = `{
+		"id": 1296269,
+		"name": "corral",
+		"full_name": "sebastienrousseau/corral",
+		"owner": {"login": "sebastienrousseau"},
+		"language": "Go",
+		"visibility": "private",
+		"default_branch": "trunk",
+		"clone_url": "https://github.com/sebastienrousseau/corral.git",
+		"ssh_url": "git@github.com:sebastienrousseau/corral.git",
+		"fork": true,
+		"archived": true,
+		"is_template": true,
+		"mirror_url": "https://example.com/mirror",
+		"stargazers_count": 42,
+		"pushed_at": "2026-08-18T10:11:12Z"
+	}`
+
+	var raw gh.Repository
+	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
+		t.Fatalf("go-github failed to decode a standard repository payload: %v", err)
+	}
+	got := mapRepository(&raw)
+
+	wantPushed := time.Date(2026, 8, 18, 10, 11, 12, 0, time.UTC)
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"ID", got.ID, int64(1296269)},
+		{"Name", got.Name, "corral"},
+		{"FullName", got.FullName, "sebastienrousseau/corral"},
+		{"Owner", got.Owner, "sebastienrousseau"},
+		{"Language", got.Language, "Go"},
+		{"Visibility", got.Visibility, "Private"},
+		{"DefaultBranch", got.DefaultBranch, "trunk"},
+		{"CloneURL", got.CloneURL, "https://github.com/sebastienrousseau/corral.git"},
+		{"SSHURL", got.SSHURL, "git@github.com:sebastienrousseau/corral.git"},
+		{"Fork", got.Fork, true},
+		{"Archived", got.Archived, true},
+		{"IsTemplate", got.IsTemplate, true},
+		{"Stars", got.Stars, 42},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v", c.field, c.got, c.want)
+		}
+	}
+	if !got.PushedAt.Equal(wantPushed) {
+		// Called out separately: a zero PushedAt does not fail anything
+		// visibly, it just silently disables smart-sync.
+		t.Errorf("PushedAt = %v, want %v — a zero value here disables smart-sync", got.PushedAt, wantPushed)
+	}
+	if !got.IsMirror {
+		t.Error("IsMirror = false, want true (mirror_url was set)")
+	}
+}
+
+// The defaults matter as much as the mappings: an absent language must become
+// "Other" and an absent visibility must not silently mark a repo Private.
+func TestMapRepositoryDefaultsForAbsentFields(t *testing.T) {
+	var raw gh.Repository
+	if err := json.Unmarshal([]byte(`{"name":"minimal","owner":{"login":"o"}}`), &raw); err != nil {
+		t.Fatal(err)
+	}
+	got := mapRepository(&raw)
+	if got.Language != "Other" {
+		t.Errorf("Language = %q, want %q", got.Language, "Other")
+	}
+	if got.Visibility != "Public" {
+		t.Errorf("Visibility = %q, want %q", got.Visibility, "Public")
+	}
+	if got.DefaultBranch != "main" {
+		t.Errorf("DefaultBranch = %q, want %q", got.DefaultBranch, "main")
+	}
+	if got.FullName != "o/minimal" {
+		t.Errorf("FullName = %q, want it synthesised as %q", got.FullName, "o/minimal")
+	}
+	if !got.PushedAt.IsZero() {
+		t.Errorf("PushedAt = %v, want zero when absent", got.PushedAt)
 	}
 }
