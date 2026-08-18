@@ -141,8 +141,6 @@ jobs:
           echo "${RUNNER_TEMP}/mcp-publisher-bin" >> "${GITHUB_PATH}"
 
       - name: Publish to the MCP registry
-        env:
-          MCP_REGISTRY_TOKEN: ${{ secrets.MCP_REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
@@ -153,9 +151,11 @@ jobs:
             echo "::error::server.json declares ${declared} but the tag is ${version}" >&2
             exit 1
           fi
-          if [[ -z "${MCP_REGISTRY_TOKEN:-}" ]]; then
-            echo "::warning::MCP_REGISTRY_TOKEN is unset; skipping registry publish" >&2
-            exit 0
-          fi
+          # No token gate. `mcp-publisher login github-oidc` authenticates with
+          # the GitHub Actions OIDC token, which this job already has via
+          # `id-token: write` — it needs no MCP_REGISTRY_TOKEN secret. Gating on
+          # that secret meant the step reported success while publishing
+          # nothing, which is why the registry sat at 0.0.13 through v0.0.21
+          # even after the publisher itself was fixed.
           mcp-publisher login github-oidc
           mcp-publisher publish
