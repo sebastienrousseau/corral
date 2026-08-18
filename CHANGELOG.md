@@ -6,6 +6,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] — 2026-08-18
+
+Usability release. The v0.0.20 work made corral safe; this makes it
+configurable.
+
+### Fixed
+
+- **28 of 31 flags were unreachable from the commands that consumed them.**
+  `plan`, `prune` and `profile` all build their options from the same variables
+  as the root command, but the flags were registered on the root command only:
+
+      $ corralctl plan acme --limit 5
+      unknown flag: --limit
+
+  So `corralctl plan` always ran at limit=1000, concurrency=1, visibility=all —
+  unconfigurable and unstated. The fetch/filter and clone/sync groups are now
+  shared flag sets registered on each command that acts on them. `prune`
+  deliberately gets only the fetch group, since it removes clones and never
+  creates one.
+- **The config file covered 5 settings of 31, and only `corralctl profile` read
+  it.** Settings are now keyed by flag name — `"concurrency": 8` is exactly
+  `--concurrency 8` — so the file covers the whole surface and picks up new
+  flags automatically, and it applies to every command. Precedence, highest
+  first: an explicit flag, the selected profile, the defaults block, the flag's
+  own default. Configs written before this release keep working: the old
+  snake_case profile fields are still parsed.
+- **A mistyped setting used to be ignored silently.** An unknown key is now an
+  error naming the key, because a setting the user believes took effect and did
+  not is worse than one that fails. A key naming a flag owned by a *different*
+  command is not an error — one file serves the whole CLI.
+- **Config values were validated differently from typed ones.** A profile's
+  settings went through a hand-written allow-list covering five fields. Every
+  value now goes through the flag's own parser and the shared
+  `validateCommonFlags()`, so `"protocol": "carrier-pigeon"` is rejected with
+  the same message as `--protocol carrier-pigeon`. `plan`, `prune` and
+  `profile` run that validation too; previously a bad value reached the engine,
+  which printed an error and terminated the process.
+- **`--concurrency` defaulted to 1**, so the documented concurrency feature was
+  off unless asked for and the README's "10x-50x faster" claim rested entirely
+  on `pushed_at` caching. It now sizes from the host, bounded to 4–8.
+- **`go install` produced a binary named `corral`, not `corralctl`**, because
+  the module basename is `corral`. `main.go` moved to `cmd/corralctl/`. This is
+  the same repo-vs-binary mismatch that makes mise's `ubi:` backend install an
+  unusable `corral` binary; `github:` is the backend that works.
+- **The README advertised "Homebrew (macOS / Linux)"** while shipping a cask,
+  which is a macOS-only mechanism — `brew install` on Linux refuses it. The
+  README now says macOS and points Linux users at the .deb/.rpm packages and
+  tarballs from the same release. (The cask stays: goreleaser has deprecated
+  `brews:`.)
+
+### Changed
+
+- **MCP tool responses are bounded.** `corral_list_repos` and
+  `corral_workspace_index` returned every match, indented, at ~526 bytes per
+  repository: ~55,000 tokens for 500 repositories against a 25,000-token client
+  budget, i.e. over budget from roughly 190 repositories. Both now page
+  (`limit`, `offset`, `next_offset`; default 50, max 200) and default to a
+  concise projection, with `response_format: "detailed"` for the full entry.
+  Measured on a synthetic 500-repository workspace: **~55,000 tokens → ~1,957**.
+- `corral_workspace_index`'s description no longer invites the most expensive
+  call it can make; it points at `corral_list_repos` for filtered work.
+- `Index.Truncated` is finally surfaced in tool payloads. It was set when a
+  workspace exceeded the scan cap and never reported, so an over-cap workspace
+  looked complete to the caller.
+- `corral_list_repos` renames `count` to `total_matched`. With a page window a
+  bare count is ambiguous between matched and returned.
+
+### Added
+
+- `corralctl config --init` writes a commented starter config documenting the
+  real flag surface, and refuses to overwrite an existing file.
+- `corralctl config --explain` reports each effective setting and where it came
+  from. A layered config is only debuggable if you can ask it why a value is
+  what it is.
+
+
 ## [0.0.20] — 2026-08-17
 
 Safety release. Everything below was found by an audit of the v0.0.19 tree;

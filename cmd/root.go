@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -68,63 +67,7 @@ var rootCmd = &cobra.Command{
 	Short: "Automatically clone and organise GitHub repositories by owner, topic, or language.",
 	Args:  validateRootArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		protocol = strings.ToLower(strings.TrimSpace(protocol))
-		output = strings.ToLower(strings.TrimSpace(output))
-		authMode = strings.ToLower(strings.TrimSpace(authMode))
-		visibility = strings.ToLower(strings.TrimSpace(visibility))
-
-		if concurrency < 1 {
-			return fmt.Errorf("--concurrency must be >= 1")
-		}
-		if limit < 0 {
-			return fmt.Errorf("--limit must be >= 0")
-		}
-		if cloneDepth < 0 {
-			return fmt.Errorf("--clone-depth must be >= 0")
-		}
-		if retryMax < 0 {
-			return fmt.Errorf("--retry-max must be >= 0")
-		}
-		if retryMinBackoff <= 0 {
-			return fmt.Errorf("--retry-min-backoff must be > 0")
-		}
-		if retryMaxBackoff <= 0 {
-			return fmt.Errorf("--retry-max-backoff must be > 0")
-		}
-		if retryMaxBackoff < retryMinBackoff {
-			return fmt.Errorf("--retry-max-backoff must be >= --retry-min-backoff")
-		}
-		if apiTimeout <= 0 {
-			return fmt.Errorf("--api-timeout must be > 0")
-		}
-		if protocol != "https" && protocol != "ssh" {
-			return fmt.Errorf("--protocol must be either ssh or https")
-		}
-		if output != string(engine.OutputText) && output != string(engine.OutputJSON) && output != string(engine.OutputNDJSON) {
-			return fmt.Errorf("--output must be one of: text, json, ndjson")
-		}
-		if authMode != string(github.AuthModeAuto) && authMode != string(github.AuthModeToken) && authMode != string(github.AuthModeGH) {
-			return fmt.Errorf("--auth must be one of: auto, token, gh")
-		}
-		if visibility != "all" && visibility != "public" && visibility != "private" {
-			return fmt.Errorf("--visibility must be one of: all, public, private")
-		}
-		repoType = strings.ToLower(strings.TrimSpace(repoType))
-		repoSort = strings.ToLower(strings.TrimSpace(repoSort))
-		if repoType != "" && !slices.Contains(repoTypeValues, repoType) {
-			return fmt.Errorf("--type must be one of: %s", strings.Join(repoTypeValues, ", "))
-		}
-		if repoSort != "" && !slices.Contains(repoSortValues, repoSort) {
-			return fmt.Errorf("--sort must be one of: %s", strings.Join(repoSortValues, ", "))
-		}
-		// Validate the layout template before any network work so a typo
-		// fails immediately instead of after a full paginated fetch.
-		if layout != "" {
-			if _, err := engine.ParseLayoutTemplate(layout); err != nil {
-				return fmt.Errorf("--layout is not a valid template: %w", err)
-			}
-		}
-		return nil
+		return validateCommonFlags()
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		owner := args[0]
@@ -298,35 +241,34 @@ func init() {
 	rootCmd.Version = Version
 
 	rootCmd.PersistentFlags().StringVar(&baseDir, "base-dir", defaultBaseDir(), "root directory for cloned repos")
-	rootCmd.Flags().IntVarP(&limit, "limit", "l", 1000, "max repos to list")
-	rootCmd.Flags().IntVarP(&concurrency, "concurrency", "c", 1, "number of concurrent operations")
 	rootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "preview actions without making changes")
+
+	// Shared groups, also registered on plan/prune/profile so those commands
+	// can set what they already consume. See cmd/flags.go.
+	// Assigned here rather than in the rootCmd literal: the hook reaches
+	// knownFlagNames(), which walks rootCmd, and Go rejects that as an
+	// initialization cycle when it appears in the composite literal.
+	//
+	// Config defaults are applied before each command's own PreRunE, so a value
+	// from the file is validated by exactly the same checks as one typed on the
+	// command line. PersistentPreRunE runs for every subcommand, which is what
+	// makes the config apply to plan/prune/profile/status rather than only to
+	// `profile` as it did before v0.0.21.
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		// `config --init` writes the file this hook would read.
+		if configInit {
+			return nil
+		}
+		_, err := configuredDefaults(cmd)
+		return err
+	}
+
+	rootCmd.Flags().AddFlagSet(fetchFlags())
+	rootCmd.Flags().AddFlagSet(cloneFlags())
 	rootCmd.Flags().BoolVarP(&orphans, "orphans", "o", false, "detect and list local repositories not on GitHub")
-	rootCmd.Flags().StringVarP(&protocol, "protocol", "p", "https", "clone protocol (ssh or https)")
-	rootCmd.Flags().BoolVar(&noSync, "no-sync", false, "skip pulling latest changes for existing repos")
-	rootCmd.Flags().BoolVar(&recurseSubmodules, "recurse-submodules", false, "initialize submodules on clone and sync")
 	rootCmd.Flags().StringVar(&output, "output", string(engine.OutputText), "output format: text, json, ndjson")
-	rootCmd.Flags().StringVar(&authMode, "auth", string(github.AuthModeAuto), "authentication mode: auto, token, gh")
-	rootCmd.Flags().StringVar(&visibility, "visibility", "all", "repository visibility filter: all, public, private")
-	rootCmd.Flags().BoolVar(&includeForks, "include-forks", true, "include forked repositories under the Forks collection")
-	rootCmd.Flags().BoolVar(&includeArchived, "include-archived", true, "include archived repositories and tag them On Hold")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "display an interactive selector dashboard to pick repositories to clone/sync")
-	rootCmd.Flags().BoolVar(&finderTags, "finder-tags", runtime.GOOS == "darwin", "apply managed macOS Finder Tags to repository folders")
 	rootCmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the preflight confirmation prompt when a new base directory would be created")
-	rootCmd.Flags().StringVar(&includeLanguagesCSV, "languages", "", "comma-separated language allow list")
-	rootCmd.Flags().StringVar(&excludeLanguagesCSV, "exclude-languages", "", "comma-separated language deny list")
-	rootCmd.Flags().BoolVar(&cloneBlobless, "clone-blobless", false, "use partial clone filter=blob:none")
-	rootCmd.Flags().BoolVar(&cloneSingleBranch, "clone-single-branch", false, "clone only the default branch")
-	rootCmd.Flags().IntVar(&cloneDepth, "clone-depth", 0, "perform shallow clone with the given depth (0 disables)")
-	rootCmd.Flags().BoolVar(&forceSync, "force-sync", false, "always run git pull, ignoring the cached pushed_at state")
-	rootCmd.Flags().BoolVar(&ignoreSubmoduleErrs, "ignore-submodule-failures", false, "with --recurse-submodules, swallow submodule update failures so the parent repo still syncs")
-	rootCmd.Flags().StringVar(&layout, "layout", "", "templated path structure for repositories (e.g. {{.Visibility}}/{{.Language}}/{{.Name}})")
-	rootCmd.Flags().IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
-	rootCmd.Flags().DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
-	rootCmd.Flags().DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
-	rootCmd.Flags().DurationVar(&apiTimeout, "api-timeout", 30*time.Second, "GitHub API request deadline")
-	rootCmd.Flags().StringVar(&repoType, "type", "", "repository type filter: "+strings.Join(repoTypeValues, ", "))
-	rootCmd.Flags().StringVar(&repoSort, "sort", "", "repository sort order: "+strings.Join(repoSortValues, ", "))
 
 	// Offer "did you mean" for near-miss subcommands. Cobra only reaches its
 	// own suggestion path when the root is not runnable with arguments, which
@@ -454,4 +396,71 @@ func levenshtein(a, b string) int {
 		prev, cur = cur, prev
 	}
 	return prev[len(br)]
+}
+
+// validateCommonFlags checks the shared fetch/clone flag values.
+//
+// Extracted from the root command's PreRunE so plan, prune and profile run the
+// same checks. Those commands consume the same variables, but validated none of
+// them: a profile setting concurrency to -1 reached engine.Run, which printed
+// an error and terminated the process rather than failing the command cleanly.
+func validateCommonFlags() error {
+
+	protocol = strings.ToLower(strings.TrimSpace(protocol))
+	output = strings.ToLower(strings.TrimSpace(output))
+	authMode = strings.ToLower(strings.TrimSpace(authMode))
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+
+	if concurrency < 1 {
+		return fmt.Errorf("--concurrency must be >= 1")
+	}
+	if limit < 0 {
+		return fmt.Errorf("--limit must be >= 0")
+	}
+	if cloneDepth < 0 {
+		return fmt.Errorf("--clone-depth must be >= 0")
+	}
+	if retryMax < 0 {
+		return fmt.Errorf("--retry-max must be >= 0")
+	}
+	if retryMinBackoff <= 0 {
+		return fmt.Errorf("--retry-min-backoff must be > 0")
+	}
+	if retryMaxBackoff <= 0 {
+		return fmt.Errorf("--retry-max-backoff must be > 0")
+	}
+	if retryMaxBackoff < retryMinBackoff {
+		return fmt.Errorf("--retry-max-backoff must be >= --retry-min-backoff")
+	}
+	if apiTimeout <= 0 {
+		return fmt.Errorf("--api-timeout must be > 0")
+	}
+	if protocol != "https" && protocol != "ssh" {
+		return fmt.Errorf("--protocol must be either ssh or https")
+	}
+	if output != string(engine.OutputText) && output != string(engine.OutputJSON) && output != string(engine.OutputNDJSON) {
+		return fmt.Errorf("--output must be one of: text, json, ndjson")
+	}
+	if authMode != string(github.AuthModeAuto) && authMode != string(github.AuthModeToken) && authMode != string(github.AuthModeGH) {
+		return fmt.Errorf("--auth must be one of: auto, token, gh")
+	}
+	if visibility != "all" && visibility != "public" && visibility != "private" {
+		return fmt.Errorf("--visibility must be one of: all, public, private")
+	}
+	repoType = strings.ToLower(strings.TrimSpace(repoType))
+	repoSort = strings.ToLower(strings.TrimSpace(repoSort))
+	if repoType != "" && !slices.Contains(repoTypeValues, repoType) {
+		return fmt.Errorf("--type must be one of: %s", strings.Join(repoTypeValues, ", "))
+	}
+	if repoSort != "" && !slices.Contains(repoSortValues, repoSort) {
+		return fmt.Errorf("--sort must be one of: %s", strings.Join(repoSortValues, ", "))
+	}
+	// Validate the layout template before any network work so a typo
+	// fails immediately instead of after a full paginated fetch.
+	if layout != "" {
+		if _, err := engine.ParseLayoutTemplate(layout); err != nil {
+			return fmt.Errorf("--layout is not a valid template: %w", err)
+		}
+	}
+	return nil
 }

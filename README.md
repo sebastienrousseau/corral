@@ -66,11 +66,16 @@ mise use -g github:sebastienrousseau/corral
 This installs the latest released `corralctl` binary and keeps it managed with
 the rest of your mise tools.
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS)
 
 ```bash
 brew install sebastienrousseau/tap/corralctl
 ```
+
+Homebrew here is a cask, which is a macOS-only mechanism — `brew install` on
+Linux will refuse it. On Linux use the `.deb`/`.rpm` packages or the tarballs
+attached to each [release](https://github.com/sebastienrousseau/corral/releases/latest),
+or `mise`/`go install` above.
 
 ### Arch Linux (AUR)
 

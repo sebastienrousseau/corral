@@ -16,7 +16,7 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: ./main.go
+    main: ./cmd/corralctl
     binary: corralctl
     ldflags:
       - -s -w
@@ -119,6 +119,11 @@ nfpms:
     bindir: /usr/bin
 
 # 2. macOS & Linux Homebrew Tap
+# Homebrew cask. goreleaser deprecated `brews:` in favour of casks, so a cask
+# is the supported path — but a cask is a macOS-only mechanism, and `brew
+# install` on Linux will refuse it. The README used to advertise
+# "Homebrew (macOS / Linux)"; it now says macOS, and Linux users are pointed at
+# the .deb/.rpm packages and tarballs this same release publishes.
 homebrew_casks:
   - name: corralctl
     repository:
