@@ -6,6 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.23] — 2026-08-18
+
+### Changed
+
+- **`google/go-github` upgraded v74 → v90**, sixteen major versions in one step.
+  The surface corral uses is small — twelve symbols in a single non-test file —
+  so a staged walk through each major would have been ceremony rather than
+  safety. Two breaking changes had to be adapted:
+  - `gh.NewClient` is now a variadic options constructor returning an error,
+    and `WithAuthToken` moved from a chained client method to a
+    `ClientOptionsFunc`.
+  - `Client.BaseURL` is a read-only accessor; the base URL is set at
+    construction through the `WithURLs` option. This only affected the test
+    client.
+
+### Added
+
+- **Field-mapping tests covering every value corral reads from go-github**,
+  decoded from a realistic API payload through go-github's own struct tags.
+  Sixteen majors of a generated API client is exactly where a renamed JSON tag
+  starts silently yielding zero values, and most such regressions would not
+  fail a build: corral would simply report every repository as language
+  "Other", visibility "Public", or with a zero `pushed_at` — which disables
+  smart-sync by making every repository look never-synced. A full sync of
+  everything looks like working software, so this needed an explicit
+  assertion rather than an end-to-end smoke test. Confirmed to fail against a
+  simulated mapping regression.
+
+
 ## [0.0.22] — 2026-08-18
 
 ### Fixed

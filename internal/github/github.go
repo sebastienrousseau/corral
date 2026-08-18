@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	gh "github.com/google/go-github/v74/github"
+	gh "github.com/google/go-github/v90/github"
 )
 
 // Repo represents a simplified repository structure returned by the GitHub API.
@@ -158,7 +158,13 @@ func FetchReposWithOptions(ctx context.Context, owner string, opts FetchOptions)
 		},
 	}
 
-	client := gh.NewClient(httpClient).WithAuthToken(token)
+	// go-github v57+ replaced NewClient(*http.Client) with a variadic
+	// options constructor that also returns an error, and WithAuthToken moved
+	// from a chained client method to a ClientOptionsFunc.
+	client, err := gh.NewClient(gh.WithHTTPClient(httpClient), gh.WithAuthToken(token))
+	if err != nil {
+		return nil, fmt.Errorf("construct GitHub client: %w", err)
+	}
 	return FetchReposWithClientOptions(ctx, client, owner, opts)
 }
 
