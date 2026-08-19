@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -391,5 +392,58 @@ func TestLoadConfigDefaultPath(t *testing.T) {
 	}
 	if _, err := loadConfig(""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Text mode used to print per-result lines and nothing else, so a run with
+// nothing to prune produced zero bytes — indistinguishable from a command that
+// did no work at all. On a subcommand whose job is deleting directories, that
+// is the one answer a user cannot safely interpret.
+func TestPruneReportsWhenThereIsNothingToPrune(t *testing.T) {
+	root := t.TempDir()
+	// A local clone that still exists upstream: nothing to prune.
+	makeLocalRepo(t, root, "Public/go/kept", "https://github.com/acme/kept.git")
+
+	oldBase, oldDry, oldYes, oldOutput := baseDir, dryRun, assumeYes, pruneOutput
+	oldFetch, oldCheck, oldRemove := opsFetchRepos, localStateCheck, removeAll
+	t.Cleanup(func() {
+		baseDir, dryRun, assumeYes, pruneOutput = oldBase, oldDry, oldYes, oldOutput
+		opsFetchRepos, localStateCheck, removeAll = oldFetch, oldCheck, oldRemove
+	})
+	baseDir, dryRun, assumeYes, pruneOutput = root, true, false, "text"
+	opsFetchRepos = func(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "kept", Owner: "acme", FullName: "acme/kept"}}, nil
+	}
+	localStateCheck = func(ctx context.Context, path string) (bool, string) { return false, "" }
+	removeAll = func(path string) error {
+		t.Errorf("nothing should be removed, but %s was", path)
+		return nil
+	}
+
+	out := captureStdout(t, func() {
+		if err := pruneCmd.RunE(pruneCmd, []string{"acme"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("prune said nothing at all; an empty result must be stated, not implied")
+	}
+	if !strings.Contains(out, "No prunable repositories found for acme") {
+		t.Errorf("output %q should name the owner and say there was nothing to prune", out)
+	}
+
+	// JSON mode was already unambiguous and must stay that way.
+	pruneOutput = "json"
+	out = captureStdout(t, func() {
+		if err := pruneCmd.RunE(pruneCmd, []string{"acme"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var decoded []pruneResult
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("json mode must stay valid JSON: %v (%q)", err, out)
+	}
+	if len(decoded) != 0 {
+		t.Errorf("expected an empty array, got %+v", decoded)
 	}
 }

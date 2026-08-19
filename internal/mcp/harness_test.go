@@ -1,0 +1,167 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// Test harness: a real client and server connected over the SDK's in-memory
+// transport.
+//
+// Every test in this package used to call handler functions directly with a
+// hand-built request. That skips the router, and it is precisely why a broken
+// resource template survived: the handler was always correct, the route never
+// matched, and no test could tell. Driving a real ClientSession exercises URI
+// template matching, argument decoding against the generated schema, annotation
+// serialisation and error shape — all the parts that live between "the handler
+// is right" and "the tool works".
+type harness struct {
+	t       *testing.T
+	server  *Server
+	session *mcp.ClientSession
+}
+
+// newHarness starts a server over the given root and connects a client to it.
+func newHarness(t *testing.T, opts ServerOptions) *harness {
+	t.Helper()
+	if opts.Version == "" {
+		opts.Version = "test"
+	}
+	srv, err := NewServer(opts)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- srv.mcp.Run(ctx, serverTransport) }()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "harness", Version: "test"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		<-serverDone
+	})
+	return &harness{t: t, server: srv, session: session}
+}
+
+// callTool invokes a tool and returns its first text content. It fails the test
+// on a protocol error, and returns isErr for a tool-execution error so callers
+// can assert refusals.
+func (h *harness) callTool(name string, args map[string]any) (text string, isErr bool) {
+	h.t.Helper()
+	res, err := h.session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		h.t.Fatalf("call %s: %v", name, err)
+	}
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String(), res.IsError
+}
+
+// callToolJSON invokes a tool and decodes its text content as JSON.
+func (h *harness) callToolJSON(name string, args map[string]any, into any) {
+	h.t.Helper()
+	text, isErr := h.callTool(name, args)
+	if isErr {
+		h.t.Fatalf("call %s returned an error result: %s", name, text)
+	}
+	if err := json.Unmarshal([]byte(text), into); err != nil {
+		h.t.Fatalf("decode %s result: %v\n%s", name, err, text)
+	}
+}
+
+// readResource reads a resource URI through the router, so URI template
+// matching is exercised.
+func (h *harness) readResource(uri string) (text string, err error) {
+	h.t.Helper()
+	res, rerr := h.session.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
+	if rerr != nil {
+		return "", rerr
+	}
+	var b strings.Builder
+	for _, c := range res.Contents {
+		b.WriteString(c.Text)
+	}
+	return b.String(), nil
+}
+
+// tools lists the registered tools as the client sees them, including
+// annotations as serialised on the wire.
+func (h *harness) tools() map[string]*mcp.Tool {
+	h.t.Helper()
+	res, err := h.session.ListTools(context.Background(), nil)
+	if err != nil {
+		h.t.Fatalf("tools/list: %v", err)
+	}
+	out := map[string]*mcp.Tool{}
+	for _, tool := range res.Tools {
+		out[tool.Name] = tool
+	}
+	return out
+}
+
+// prompt fetches a prompt through the router.
+func (h *harness) prompt(name string, args map[string]string) *mcp.GetPromptResult {
+	h.t.Helper()
+	res, err := h.session.GetPrompt(context.Background(), &mcp.GetPromptParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		h.t.Fatalf("prompts/get %s: %v", name, err)
+	}
+	return res
+}
+
+// newTestServer builds a Server without a client session, for tests that poke
+// internals (scan caching, option validation) rather than protocol behaviour.
+func newTestServer(t *testing.T, base string) *Server {
+	t.Helper()
+	srv, err := NewServer(ServerOptions{Root: base, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv
+}
+
+// marshalToMap round-trips a value through JSON into a map, for asserting on
+// generated schemas without depending on the SDK's internal representation.
+func marshalToMap(v any) (map[string]any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// promptText extracts the text of a prompt message.
+func promptText(m *mcp.PromptMessage) string {
+	if tc, ok := m.Content.(*mcp.TextContent); ok {
+		return tc.Text
+	}
+	return ""
+}

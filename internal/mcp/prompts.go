@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // registerPrompts attaches Corral's MCP prompt templates to the
@@ -26,8 +26,16 @@ import (
 // NewServer time; the prompts themselves are free to register whether
 // or not mutations are enabled.
 func (s *Server) registerPrompts() {
-	s.mcp.AddPrompt(s.explainWorkspacePrompt())
-	s.mcp.AddPrompt(s.identifyStaleReposPrompt())
+	s.mcp.AddPrompt(&mcp.Prompt{
+		Name:        "explain_workspace",
+		Title:       "Explain this workspace",
+		Description: "Ask the agent to survey the local Corral-organised workspace and produce a human-readable summary: total repository count, breakdown by visibility and language, freshly-synced vs long-stale clones. Uses only read-only tools.",
+	}, s.handleExplainWorkspace)
+	s.mcp.AddPrompt(&mcp.Prompt{
+		Name:        "identify_stale_repos",
+		Title:       "Find stale clones",
+		Description: "Ask the agent to find clones that have not been synced recently, using the workspace index's sync state. Uses only read-only tools.",
+	}, s.handleIdentifyStaleRepos)
 }
 
 // explainWorkspacePrompt returns explain_workspace. Instructs the
@@ -35,33 +43,26 @@ func (s *Server) registerPrompts() {
 // corral_workspace_index tools and summarise the layout for the user
 // — how many repos, what languages, which orgs, which are freshly
 // synced vs stale.
-func (s *Server) explainWorkspacePrompt() (mcp.Prompt, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error)) {
-	prompt := mcp.NewPrompt("explain_workspace",
-		mcp.WithPromptDescription("Ask the agent to survey the local Corral-organised workspace and produce a human-readable summary: total repository count, breakdown by visibility and language, freshly-synced vs long-stale clones. Uses only read-only tools."),
-	)
-	handler := func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		return &mcp.GetPromptResult{
-			Description: "Survey the Corral workspace",
-			Messages: []mcp.PromptMessage{
-				{
-					Role: mcp.RoleUser,
-					Content: mcp.NewTextContent(
-						"Please survey my Corral-organised local workspace and explain what's there.\n\n" +
-							"Concretely:\n" +
-							"1. Call `corral_status_summary` to get high-level counts by visibility and language.\n" +
-							"2. Call `corral_workspace_index` if you need repository-level detail (path, remote URL, last sync).\n" +
-							"3. Summarise for me:\n" +
-							"   - Total repository count.\n" +
-							"   - Breakdown by visibility (Public/Private) and top languages.\n" +
-							"   - Any repos whose sync state (`last_synced_at`) looks stale.\n" +
-							"   - Any repos with no origin URL — those might be local-only work.\n\n" +
-							"Keep the summary short and structured; skip repos that are unremarkable.",
-					),
+func (s *Server) handleExplainWorkspace(ctx context.Context, _ *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	return &mcp.GetPromptResult{
+		Description: "Survey the Corral workspace",
+		Messages: []*mcp.PromptMessage{
+			{
+				Role: "user",
+				Content: &mcp.TextContent{Text: "Please survey my Corral-organised local workspace and explain what's there.\n\n" +
+					"Concretely:\n" +
+					"1. Call `corral_status_summary` to get high-level counts by visibility and language.\n" +
+					"2. Call `corral_workspace_index` if you need repository-level detail (path, remote URL, last sync).\n" +
+					"3. Summarise for me:\n" +
+					"   - Total repository count.\n" +
+					"   - Breakdown by visibility (Public/Private) and top languages.\n" +
+					"   - Any repos whose sync state (`last_synced_at`) looks stale.\n" +
+					"   - Any repos with no origin URL — those might be local-only work.\n\n" +
+					"Keep the summary short and structured; skip repos that are unremarkable.",
 				},
 			},
-		}, nil
-	}
-	return prompt, handler
+		},
+	}, nil
 }
 
 // identifyStaleReposPrompt returns identify_stale_repos. Directs the
@@ -69,38 +70,29 @@ func (s *Server) explainWorkspacePrompt() (mcp.Prompt, func(ctx context.Context,
 // and flag clones whose upstream has moved but whose local state has
 // not. Intended as the "which of my forks/mirrors need attention"
 // question every developer periodically wants answered.
-func (s *Server) identifyStaleReposPrompt() (mcp.Prompt, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error)) {
-	prompt := mcp.NewPrompt("identify_stale_repos",
-		mcp.WithPromptDescription("Ask the agent to find local clones whose Corral state sidecar says they haven't been synced recently. Useful for spotting drift on rarely-touched repos. Uses only read-only tools."),
-		mcp.WithArgument("threshold_days",
-			mcp.ArgumentDescription("How many days of inactivity qualifies as stale. Default is 30."),
-		),
-	)
-	handler := func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		threshold := "30"
-		if req.Params.Arguments != nil {
-			if t := req.Params.Arguments["threshold_days"]; t != "" {
-				threshold = t
-			}
+func (s *Server) handleIdentifyStaleRepos(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	threshold := "30"
+	if req != nil && req.Params != nil && req.Params.Arguments != nil {
+		if t := req.Params.Arguments["threshold_days"]; t != "" {
+			threshold = t
 		}
-		return &mcp.GetPromptResult{
-			Description: "Find stale clones in the Corral workspace",
-			Messages: []mcp.PromptMessage{
-				{
-					Role: mcp.RoleUser,
-					Content: mcp.NewTextContent(fmt.Sprintf(
-						"Please identify Corral-managed clones that have gone stale (haven't been synced in more than %s days).\n\n"+
-							"Concretely:\n"+
-							"1. Call `corral_list_repos` with `synced_only=true` to get only clones with a state sidecar.\n"+
-							"2. For each entry, look at `state.last_synced_at`. If that timestamp is older than %s days from today, it counts as stale.\n"+
-							"3. Present a short table: repository, language, days since last sync. Sort oldest-first.\n"+
-							"4. If nothing is stale, say so and stop — don't pad the answer.\n\n"+
-							"Do NOT try to sync anything yet — this prompt is diagnostic only.",
-						threshold, threshold,
-					)),
-				},
-			},
-		}, nil
 	}
-	return prompt, handler
+	return &mcp.GetPromptResult{
+		Description: "Find stale clones in the Corral workspace",
+		Messages: []*mcp.PromptMessage{
+			{
+				Role: "user",
+				Content: &mcp.TextContent{Text: fmt.Sprintf(
+					"Please identify Corral-managed clones that have gone stale (haven't been synced in more than %s days).\n\n"+
+						"Concretely:\n"+
+						"1. Call `corral_list_repos` with `synced_only=true` to get only clones with a state sidecar.\n"+
+						"2. For each entry, look at `state.last_synced_at`. If that timestamp is older than %s days from today, it counts as stale.\n"+
+						"3. Present a short table: repository, language, days since last sync. Sort oldest-first.\n"+
+						"4. If nothing is stale, say so and stop — don't pad the answer.\n\n"+
+						"Do NOT try to sync anything yet — this prompt is diagnostic only.",
+					threshold, threshold,
+				)},
+			},
+		},
+	}, nil
 }

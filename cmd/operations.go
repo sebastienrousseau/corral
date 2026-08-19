@@ -181,6 +181,13 @@ var pruneCmd = &cobra.Command{
 			if err := writeJSON(os.Stdout, results); err != nil {
 				return err
 			}
+		} else if len(results) == 0 {
+			// Text mode printed per-result lines and nothing else, so "nothing
+			// to prune" was indistinguishable from "the command did no work" —
+			// on a subcommand whose job is deleting directories, silence is the
+			// one answer a user cannot safely interpret. JSON mode was already
+			// unambiguous (it emits []).
+			fmt.Printf("No prunable repositories found for %s.\n", owner)
 		} else {
 			for _, result := range results {
 				fmt.Printf("%-8s %s", result.Action, result.Path)

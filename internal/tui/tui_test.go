@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -554,13 +553,7 @@ func TestRemainingSelectorStates(t *testing.T) {
 		t.Fatalf("compact progress header missing: %q", view)
 	}
 
-	if runtime.GOOS != "windows" {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		if _, err := runSelectorProgram(ctx, NewSelectorModel(func() ([]github.Repo, error) { return nil, nil })); err == nil {
-			t.Fatal("cancelled default selector runner must return an error")
-		}
-	}
+	assertCancelledRunnerErrors(t)
 
 	repos := []github.Repo{
 		{Name: "alpha", Language: "Go", Visibility: "Private"},

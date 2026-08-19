@@ -11,280 +11,237 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// registerTools attaches the v0 read-only tool set to the underlying
-// MCP server. Tool names follow the snake_case `corral_<verb>_<noun>`
-// convention recommended by the 2025-11-25 spec and shipped by
-// github/github-mcp-server, so an agent that has loaded both servers
-// can rank tools by prefix without confusion.
-func (s *Server) registerTools() {
-	s.mcp.AddTool(s.listReposTool())
-	s.mcp.AddTool(s.findRepoTool())
-	s.mcp.AddTool(s.repoMetadataTool())
-	s.mcp.AddTool(s.statusSummaryTool())
-	s.mcp.AddTool(s.workspaceIndexTool())
-}
-
-// listReposTool returns the tool definition + handler for
-// corral_list_repos. The tool answers the most common opening question
-// an agent asks ("what's in this workspace?") without requiring a full
-// index dump up front. All filters are optional and intersected; the
-// result is the structured RepoEntry list serialised as JSON.
-func (s *Server) listReposTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("corral_list_repos",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a sync sidecar is present. Results are paginated: the response carries total_matched, returned and next_offset; pass next_offset back as 'offset' to continue. Use response_format 'concise' (the default) unless you specifically need origin URLs and sync timestamps — 'detailed' is roughly ten times larger per repository."),
-		mcp.WithString("visibility",
-			mcp.Description("Filter by visibility directory: 'Public' or 'Private'. Case-insensitive."),
-		),
-		mcp.WithString("language",
-			mcp.Description("Filter by language directory (e.g. 'go', 'rust'). Case-insensitive."),
-		),
-		mcp.WithString("name_contains",
-			mcp.Description("Substring match against the repository name. Case-insensitive."),
-		),
-		mcp.WithBoolean("synced_only",
-			mcp.Description("When true, return only repositories with a populated sync sidecar (i.e. previously synced by corral). Default false."),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum repositories to return. Default 50, maximum 200."),
-		),
-		mcp.WithNumber("offset",
-			mcp.Description("Index to start from, for paging. Pass the previous response's next_offset."),
-		),
-		mcp.WithString("response_format",
-			mcp.Description("'concise' (default) returns path, name, visibility and language only. 'detailed' adds origin URL and sync state."),
-		),
-	)
-
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := s.scan()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
-		}
-		// Optional filters; missing arguments are zero values that
-		// match-anything by design (no separate "filter is present"
-		// flag needed).
-		visibility := strings.ToLower(req.GetString("visibility", ""))
-		language := strings.ToLower(req.GetString("language", ""))
-		nameSubstr := strings.ToLower(req.GetString("name_contains", ""))
-		syncedOnly := req.GetBool("synced_only", false)
-
-		var out []RepoEntry
-		for _, r := range idx.Repos {
-			if visibility != "" && strings.ToLower(r.Visibility) != visibility {
-				continue
-			}
-			if language != "" && strings.ToLower(r.Language) != language {
-				continue
-			}
-			if nameSubstr != "" && !strings.Contains(strings.ToLower(r.Name), nameSubstr) {
-				continue
-			}
-			if syncedOnly && (r.State == nil || r.State.LastSyncedAt == "") {
-				continue
-			}
-			out = append(out, r)
-		}
-		page, meta := paginate(out, req.GetInt("limit", defaultPageSize), req.GetInt("offset", 0))
-		body := map[string]any{
-			"root":          idx.Root,
-			"total_matched": meta.Total,
-			"returned":      meta.Returned,
-			"repos":         projectRepos(page, req.GetString("response_format", formatConcise)),
-		}
-		if meta.NextOffset > 0 {
-			body["next_offset"] = meta.NextOffset
-			body["note"] = "More results are available. Pass next_offset as 'offset', or narrow the filters."
-		}
-		if idx.Truncated {
-			body["workspace_truncated"] = true
-		}
-		return jsonResult(body), nil
-	}
-	return tool, handler
-}
-
-// findRepoTool returns corral_find_repo: a single-string lookup that
-// resolves a fuzzy name to a unique RepoEntry. Returns a structured
-// error result (IsError=true) on no-match or ambiguous match, listing
-// the candidate paths so the agent can re-call with a more specific
-// query. This is the workhorse for "open repo X" style intents.
-func (s *Server) findRepoTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("corral_find_repo",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("Resolve a fuzzy repository name (bare name, relative path, or path suffix) to a single local clone in the Corral workspace. Returns the matched RepoEntry, or an error result listing all candidate paths when the query is ambiguous."),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Repository identifier: bare name ('corral'), relative path ('Public/go/corral'), or any path suffix that uniquely identifies a repo."),
-		),
-	)
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		idx, err := s.scan()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
-		}
-		match, err := idx.Find(query)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return jsonResult(match), nil
-	}
-	return tool, handler
-}
-
-// repoMetadataTool returns corral_get_repo_metadata: deep info about
-// one repo, including current branch (resolved via git rev-parse),
-// remote origin URL, and parsed sidecar state. Separate from
-// corral_find_repo because the metadata fetch involves a subprocess
-// call per request (CurrentBranch) and isn't free; list_repos and
-// find_repo keep their per-call cost predictable.
-func (s *Server) repoMetadataTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("corral_get_repo_metadata",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("Return full metadata for a single local clone: repo entry, current branch, and parsed .corral-state.json. The branch lookup spawns one git subprocess per call; prefer corral_list_repos for bulk queries."),
-		mcp.WithString("query",
-			mcp.Required(),
-			mcp.Description("Repository identifier: bare name, relative path, or any path suffix that uniquely identifies a repo."),
-		),
-	)
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		idx, err := s.scan()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
-		}
-		match, err := idx.Find(query)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		branch := currentBranch(ctx, match.Path)
-		return jsonResult(map[string]any{
-			"repo":           match,
-			"current_branch": branch,
-		}), nil
-	}
-	return tool, handler
-}
-
-// statusSummaryTool returns corral_status_summary: a workspace-wide
-// summary intended as the agent's opening read on a large workspace —
-// "how many repos, broken down how, and how many are stale?". Cheap to
-// compute because it only touches the in-memory index, no subprocesses.
-func (s *Server) statusSummaryTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("corral_status_summary",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("High-level workspace summary: total repository count and breakdowns by visibility and language. Cheap to compute; suitable as an agent's opening discovery call."),
-	)
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := s.scan()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
-		}
-		byVis := map[string]int{}
-		byLang := map[string]int{}
-		synced := 0
-		for _, r := range idx.Repos {
-			if r.Visibility != "" {
-				byVis[r.Visibility]++
-			}
-			if r.Language != "" {
-				byLang[r.Language]++
-			}
-			if r.State != nil && r.State.LastSyncedAt != "" {
-				synced++
-			}
-		}
-		return jsonResult(map[string]any{
-			"root":          idx.Root,
-			"total":         len(idx.Repos),
-			"synced":        synced,
-			"by_visibility": byVis,
-			"by_language":   sortedLangCounts(byLang),
-		}), nil
-	}
-	return tool, handler
-}
-
-// workspaceIndexTool returns corral_workspace_index: a whole-workspace dump for
-// clients that prefer one round-trip to many.
+// Read-only tool set.
 //
-// "Capped result size is the agent's problem" was the original rationale and it
-// was wrong: at ~526 bytes per repository the full index reached ~66,000 tokens
-// for 500 repositories, against a 25,000-token client budget — so the tool's
-// own description invited the single most expensive call it could make, and the
-// response was over budget from roughly 190 repositories. It is now bounded and
-// concise by default, and its description points at corral_list_repos for
-// filtered work.
-func (s *Server) workspaceIndexTool() (mcp.Tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("corral_workspace_index",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithDescription("Return a whole-workspace summary plus a bounded page of repositories. Prefer corral_list_repos when you can filter — this returns everything and is the most expensive read here. Paginated: pass next_offset back as 'offset'. Defaults to the concise projection; 'detailed' adds origin URLs and sync state."),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum repositories to return. Default 50, maximum 200."),
-		),
-		mcp.WithNumber("offset",
-			mcp.Description("Index to start from, for paging."),
-		),
-		mcp.WithString("response_format",
-			mcp.Description("'concise' (default) or 'detailed'."),
-		),
-	)
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idx, err := s.scan()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("scan workspace: %v", err)), nil
-		}
-		page, meta := paginate(idx.Repos, req.GetInt("limit", defaultPageSize), req.GetInt("offset", 0))
-		body := map[string]any{
-			"root":          idx.Root,
-			"total_matched": meta.Total,
-			"returned":      meta.Returned,
-			"repos":         projectRepos(page, req.GetString("response_format", formatConcise)),
-		}
-		if meta.NextOffset > 0 {
-			body["next_offset"] = meta.NextOffset
-			body["note"] = "More results are available. Pass next_offset as 'offset', or use corral_list_repos with filters."
-		}
-		if idx.Truncated {
-			// Previously set on the Index and never surfaced in any payload, so
-			// a workspace over the scan cap looked complete to the caller.
-			body["workspace_truncated"] = true
-			body["workspace_truncated_note"] = "The workspace exceeded the scan cap; some repositories are missing from this index."
-		}
-		return jsonResult(body), nil
-	}
-	return tool, handler
+// Input schemas are derived from the Go structs below by the SDK, rather than
+// declared with chained builders and then re-read with GetString/GetBool at the
+// top of every handler. That removes the two places those could disagree: a
+// parameter present in the schema but never read, and a parameter read but
+// never declared. The `jsonschema` tags carry the descriptions the model sees.
+//
+// Annotations are set explicitly on every tool. They are not optional in
+// practice: an omitted destructiveHint serialises as true, so leaving them off
+// marked every read tool destructive and made corral_delete_repo's annotation
+// indistinguishable from a directory listing's.
+
+// listReposInput is the argument set for corral_list_repos.
+type listReposInput struct {
+	Visibility     string `json:"visibility,omitempty" jsonschema:"Filter by visibility directory: 'Public' or 'Private'. Case-insensitive."`
+	Language       string `json:"language,omitempty" jsonschema:"Filter by language directory (e.g. 'go', 'rust'). Case-insensitive."`
+	NameContains   string `json:"name_contains,omitempty" jsonschema:"Substring match against the repository name. Case-insensitive."`
+	SyncedOnly     bool   `json:"synced_only,omitempty" jsonschema:"When true return only repositories corral has previously synced."`
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum repositories to return. Default 50, maximum 200."`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Index to start from. Pass the previous response's next_offset."`
+	ResponseFormat string `json:"response_format,omitempty" jsonschema:"'concise' (default) returns path name visibility and language only. 'detailed' adds origin URL and sync state."`
 }
 
-// sortedLangCounts converts a language-count map into a stable
-// descending-by-count, then alphabetical-by-name list so the JSON
-// output is deterministic across calls. Agents that diff successive
-// snapshots benefit from the stability.
+// queryInput is the single-field argument set shared by the lookup tools.
+type queryInput struct {
+	Query string `json:"query" jsonschema:"Repository identifier: bare name ('corral'), relative path ('Public/go/corral'), or any path suffix that uniquely identifies a repo."`
+}
+
+// pageInput is the argument set for corral_workspace_index.
+type pageInput struct {
+	Limit          int    `json:"limit,omitempty" jsonschema:"Maximum repositories to return. Default 50, maximum 200."`
+	Offset         int    `json:"offset,omitempty" jsonschema:"Index to start from, for paging."`
+	ResponseFormat string `json:"response_format,omitempty" jsonschema:"'concise' (default) or 'detailed'."`
+}
+
+// noInput is for tools that take no arguments.
+type noInput struct{}
+
+// readOnlyAnnotations is the annotation set every read tool carries.
+func readOnlyAnnotations() *mcp.ToolAnnotations {
+	t := true
+	f := false
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    t,
+		DestructiveHint: &f,
+		IdempotentHint:  t,
+		OpenWorldHint:   &f,
+	}
+}
+
+// registerTools attaches the read-only tool set.
+func (s *Server) registerTools() {
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "corral_list_repos",
+		Title:       "List local repository clones",
+		Annotations: readOnlyAnnotations(),
+		Description: "List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a sync sidecar is present. Results are paginated: the response carries total_matched, returned and next_offset; pass next_offset back as 'offset' to continue. Use response_format 'concise' (the default) unless you specifically need origin URLs and sync timestamps — 'detailed' is roughly ten times larger per repository.",
+	}, s.handleListRepos)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "corral_find_repo",
+		Title:       "Find one repository by name",
+		Annotations: readOnlyAnnotations(),
+		Description: "Resolve a fuzzy repository name (bare name, relative path, or path suffix) to a single local clone in the Corral workspace. Returns the matched repository, or an error listing all candidate paths when the query is ambiguous.",
+	}, s.handleFindRepo)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "corral_get_repo_metadata",
+		Title:       "Get full metadata for one repository",
+		Annotations: readOnlyAnnotations(),
+		Description: "Return full metadata for a single local clone: repository entry, current branch, and parsed sync state. The branch lookup spawns one git subprocess per call; prefer corral_list_repos for bulk queries.",
+	}, s.handleRepoMetadata)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "corral_status_summary",
+		Title:       "Summarise the workspace",
+		Annotations: readOnlyAnnotations(),
+		Description: "High-level workspace summary: total repository count and breakdowns by visibility and language. Cheap to compute; the right opening call for orienting in an unfamiliar workspace.",
+	}, s.handleStatusSummary)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:        "corral_workspace_index",
+		Title:       "Page through every repository",
+		Annotations: readOnlyAnnotations(),
+		Description: "Return a whole-workspace summary plus a bounded page of repositories. Prefer corral_list_repos when you can filter — this returns everything and is the most expensive read here. Paginated: pass next_offset back as 'offset'. Defaults to the concise projection; 'detailed' adds origin URLs and sync state.",
+	}, s.handleWorkspaceIndex)
+}
+
+func (s *Server) handleListRepos(ctx context.Context, _ *mcp.CallToolRequest, in listReposInput) (*mcp.CallToolResult, any, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return toolError("scan workspace: %v", err), nil, nil
+	}
+	out := filterRepos(idx.Repos, in)
+	page, meta := paginate(out, in.Limit, in.Offset)
+	body := map[string]any{
+		"root":          idx.Root,
+		"total_matched": meta.Total,
+		"returned":      meta.Returned,
+		"repos":         projectRepos(page, in.ResponseFormat),
+	}
+	if meta.NextOffset > 0 {
+		body["next_offset"] = meta.NextOffset
+		body["note"] = "More results are available. Pass next_offset as 'offset', or narrow the filters."
+	}
+	if idx.Truncated {
+		body["workspace_truncated"] = true
+	}
+	return jsonResult(body), nil, nil
+}
+
+func (s *Server) handleFindRepo(ctx context.Context, _ *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return toolError("scan workspace: %v", err), nil, nil
+	}
+	match, err := idx.Find(in.Query)
+	if err != nil {
+		return toolError("%v", err), nil, nil
+	}
+	return jsonResult(match), nil, nil
+}
+
+func (s *Server) handleRepoMetadata(ctx context.Context, _ *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return toolError("scan workspace: %v", err), nil, nil
+	}
+	match, err := idx.Find(in.Query)
+	if err != nil {
+		return toolError("%v", err), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"repo":           match,
+		"current_branch": currentBranch(ctx, match.Path),
+	}), nil, nil
+}
+
+func (s *Server) handleStatusSummary(ctx context.Context, _ *mcp.CallToolRequest, _ noInput) (*mcp.CallToolResult, any, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return toolError("scan workspace: %v", err), nil, nil
+	}
+	byVis := map[string]int{}
+	byLang := map[string]int{}
+	synced := 0
+	for _, r := range idx.Repos {
+		if r.Visibility != "" {
+			byVis[r.Visibility]++
+		}
+		if r.Language != "" {
+			byLang[r.Language]++
+		}
+		if r.State != nil && r.State.LastSyncedAt != "" {
+			synced++
+		}
+	}
+	return jsonResult(map[string]any{
+		"root":          idx.Root,
+		"total":         len(idx.Repos),
+		"synced":        synced,
+		"by_visibility": byVis,
+		"by_language":   sortedLangCounts(byLang),
+	}), nil, nil
+}
+
+func (s *Server) handleWorkspaceIndex(ctx context.Context, _ *mcp.CallToolRequest, in pageInput) (*mcp.CallToolResult, any, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return toolError("scan workspace: %v", err), nil, nil
+	}
+	page, meta := paginate(idx.Repos, in.Limit, in.Offset)
+	body := map[string]any{
+		"root":          idx.Root,
+		"total_matched": meta.Total,
+		"returned":      meta.Returned,
+		"repos":         projectRepos(page, in.ResponseFormat),
+	}
+	if meta.NextOffset > 0 {
+		body["next_offset"] = meta.NextOffset
+		body["note"] = "More results are available. Pass next_offset as 'offset', or use corral_list_repos with filters."
+	}
+	if idx.Truncated {
+		// Set when a workspace exceeds the scan cap. Previously never surfaced
+		// in any payload, so an over-cap workspace looked complete to callers.
+		body["workspace_truncated"] = true
+		body["workspace_truncated_note"] = "The workspace exceeded the scan cap; some repositories are missing from this index."
+	}
+	return jsonResult(body), nil, nil
+}
+
+// filterRepos applies the corral_list_repos filters. Split out so the handler
+// stays about protocol shape and this stays about selection.
+func filterRepos(repos []RepoEntry, in listReposInput) []RepoEntry {
+	visibility := lowerTrim(in.Visibility)
+	language := lowerTrim(in.Language)
+	nameSubstr := lowerTrim(in.NameContains)
+
+	var out []RepoEntry
+	for _, r := range repos {
+		if visibility != "" && lowerTrim(r.Visibility) != visibility {
+			continue
+		}
+		if language != "" && lowerTrim(r.Language) != language {
+			continue
+		}
+		if nameSubstr != "" && !containsFold(r.Name, nameSubstr) {
+			continue
+		}
+		if in.SyncedOnly && (r.State == nil || r.State.LastSyncedAt == "") {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+var _ = fmt.Sprintf // retained for handlers that format errors
+
+// cloneInput is the argument set for corral_clone_repo.
+type cloneInput struct {
+	URL      string `json:"url" jsonschema:"Git remote URL to clone."`
+	Target   string `json:"target" jsonschema:"Destination path, relative to the workspace root or absolute within it."`
+	Depth    int    `json:"depth,omitempty" jsonschema:"Shallow-clone depth. 0 (the default) clones full history."`
+	Blobless bool   `json:"blobless,omitempty" jsonschema:"Use a partial clone with filter=blob:none."`
+}
+
 func sortedLangCounts(m map[string]int) []map[string]any {
 	out := make([]map[string]any, 0, len(m))
 	for k, v := range m {

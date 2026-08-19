@@ -3,6 +3,8 @@
 
 package mcp
 
+import "strings"
+
 // Response budgeting.
 //
 // Tool results were unbounded: corral_list_repos and corral_workspace_index
@@ -92,4 +94,13 @@ func projectRepos(entries []RepoEntry, format string) any {
 		})
 	}
 	return out
+}
+
+// lowerTrim normalises a filter value for case-insensitive comparison.
+func lowerTrim(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// containsFold reports whether haystack contains needle, case-insensitively.
+// needle is expected to be pre-lowered by the caller.
+func containsFold(haystack, needle string) bool {
+	return strings.Contains(strings.ToLower(haystack), needle)
 }

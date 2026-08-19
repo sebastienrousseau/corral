@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MIME types the corral resources advertise. Pinned constants keep the
@@ -30,7 +30,10 @@ const (
 // bound documented for VS Code MCP clients and is plenty for source.
 const maxFileBytes = 1 << 20
 
-const maxTreeEntries = 2_000
+// maxTreeEntries bounds a tree listing. A var, not a const, for the same
+// reason as maxIndexRepos: the truncation branch is a real behaviour and
+// tests need to reach it without materialising 2,000 files.
+var maxTreeEntries = 2_000
 
 var (
 	marshalResource = json.MarshalIndent
@@ -45,75 +48,71 @@ var (
 // expansion (handled by mcp-go via the github.com/yosida95/uritemplate
 // dependency it already pulls in).
 func (s *Server) registerResources() {
-	s.mcp.AddResource(s.workspaceIndexResource())
-	s.mcp.AddResourceTemplate(s.repoStateResource())
-	s.mcp.AddResourceTemplate(s.repoTreeResource())
-	s.mcp.AddResourceTemplate(s.repoFileResource())
+	s.mcp.AddResource(&mcp.Resource{
+		URI:         "corral://workspace/index",
+		Name:        "Workspace index",
+		Description: "Full JSON index of every clone in the Corral workspace. Mirrors the corral_workspace_index tool output.",
+		MIMEType:    mimeJSON,
+	}, s.handleWorkspaceIndexResource)
+
+	s.mcp.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "corral://repo/{owner}/{name}/state",
+		Name:        "Repository sync state",
+		Description: "Parsed sync sidecar for a single clone: last upstream pushed_at and last local sync timestamp.",
+		MIMEType:    mimeJSON,
+	}, s.handleRepoStateResource)
+
+	s.mcp.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "corral://repo/{owner}/{name}/tree",
+		Name:        "Repository top-level tree",
+		Description: "Shallow (two levels) directory listing for a single clone. Use the file resource to read individual file contents.",
+		MIMEType:    mimePlain,
+	}, s.handleRepoTreeResource)
+
+	// {+path} uses RFC 6570 reserved expansion so the segment matches "/".
+	// With plain {path} (simple expansion) no file below the repository's top
+	// level was reachable at all.
+	s.mcp.AddResourceTemplate(&mcp.ResourceTemplate{
+		URITemplate: "corral://repo/{owner}/{name}/file/{+path}",
+		Name:        "Repository file contents",
+		Description: "Read a single file from a clone, bounded at 1 MiB. The path segment is relative to the repository root, may contain subdirectories, and is validated against the configured server root to prevent directory traversal. Git internals and common credential files are not readable.",
+		MIMEType:    mimePlain,
+	}, s.handleRepoFileResource)
 }
 
 // workspaceIndexResource is the only static resource. It mirrors the
 // corral_workspace_index tool, but exposed as a resource so clients
 // that prefer to subscribe (rather than call tools) get the same data.
-func (s *Server) workspaceIndexResource() (mcp.Resource, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)) {
-	r := mcp.NewResource(
-		"corral://workspace/index",
-		"Workspace index",
-		mcp.WithResourceDescription("Full JSON index of every clone in the Corral workspace. Mirrors the corral_workspace_index tool output."),
-		mcp.WithMIMEType(mimeJSON),
-	)
-	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		idx, err := s.scan()
-		if err != nil {
-			return nil, fmt.Errorf("scan workspace: %w", err)
-		}
-		b, err := marshalResource(idx, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      req.Params.URI,
-				MIMEType: mimeJSON,
-				Text:     string(b),
-			},
-		}, nil
+func (s *Server) handleWorkspaceIndexResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	idx, err := s.scan()
+	if err != nil {
+		return nil, fmt.Errorf("scan workspace: %w", err)
 	}
-	return r, handler
+	b, err := marshalResource(idx, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: mimeJSON, Text: string(b)}}}, nil
 }
 
 // repoStateResource exposes the on-disk .corral-state.json sidecar for
 // a single clone via a URI template. Returns 404-equivalent (error)
 // when the repo or sidecar isn't found, so clients can distinguish
 // "no such repo" from "no sync yet" by the error text.
-func (s *Server) repoStateResource() (mcp.ResourceTemplate, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)) {
-	r := mcp.NewResourceTemplate(
-		"corral://repo/{owner}/{name}/state",
-		"Repository sync state",
-		mcp.WithTemplateDescription("Parsed .corral-state.json sidecar for a single clone: last upstream pushed_at and last local sync timestamp."),
-		mcp.WithTemplateMIMEType(mimeJSON),
-	)
-	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		repo, err := s.resolveURIRepo(req.Params.URI)
-		if err != nil {
-			return nil, err
-		}
-		state, ok := readState(repo.Path)
-		if !ok {
-			return nil, fmt.Errorf("no .corral-state.json sidecar found in %s", repo.RelPath)
-		}
-		b, err := marshalResource(state, "", "  ")
-		if err != nil {
-			return nil, err
-		}
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      req.Params.URI,
-				MIMEType: mimeJSON,
-				Text:     string(b),
-			},
-		}, nil
+func (s *Server) handleRepoStateResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	repo, err := s.resolveURIRepo(req.Params.URI)
+	if err != nil {
+		return nil, err
 	}
-	return r, handler
+	state, ok := readState(repo.Path)
+	if !ok {
+		return nil, fmt.Errorf("no .corral-state.json sidecar found in %s", repo.RelPath)
+	}
+	b, err := marshalResource(state, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: mimeJSON, Text: string(b)}}}, nil
 }
 
 // repoTreeResource returns a top-level file/directory listing for one
@@ -121,67 +120,58 @@ func (s *Server) repoStateResource() (mcp.ResourceTemplate, func(ctx context.Con
 // rarely needs more than that, and a deep listing of a large repo would
 // blow the response budget). Bigger walks go through follow-up tool
 // calls in later phases.
-func (s *Server) repoTreeResource() (mcp.ResourceTemplate, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)) {
-	r := mcp.NewResourceTemplate(
-		"corral://repo/{owner}/{name}/tree",
-		"Repository top-level tree",
-		mcp.WithTemplateDescription("Shallow (two levels) directory listing for a single clone. Use the corral://repo/{owner}/{name}/file/{path} resource to read individual file contents."),
-		mcp.WithTemplateMIMEType(mimePlain),
-	)
-	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		repo, err := s.resolveURIRepo(req.Params.URI)
-		if err != nil {
-			return nil, err
-		}
-		var lines []string
-		err = walkResource(repo.Path, func(path string, d os.DirEntry, walkErr error) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if len(lines) >= maxTreeEntries {
-				return filepath.SkipAll
-			}
-			if walkErr != nil {
-				return nil
-			}
-			rel, _ := filepath.Rel(repo.Path, path)
-			if rel == "." {
-				return nil
-			}
-			depth := strings.Count(rel, string(filepath.Separator))
-			if depth >= 2 {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			// Hide the .git internals — the agent doesn't need them and
-			// they overwhelm the listing.
-			if d.IsDir() && d.Name() == ".git" {
-				return filepath.SkipDir
-			}
-			suffix := ""
-			if d.IsDir() {
-				suffix = "/"
-			}
-			lines = append(lines, filepath.ToSlash(rel)+suffix)
-			return nil
-		})
-		if err != nil {
-			return nil, err
+func (s *Server) handleRepoTreeResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	repo, err := s.resolveURIRepo(req.Params.URI)
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	err = walkResource(repo.Path, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if len(lines) >= maxTreeEntries {
-			lines = append(lines, "[corral-mcp: tree truncated at 2000 entries]")
+			return filepath.SkipAll
 		}
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      req.Params.URI,
-				MIMEType: mimePlain,
-				Text:     strings.Join(lines, "\n"),
-			},
-		}, nil
+		if walkErr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(repo.Path, path)
+		if rel == "." {
+			return nil
+		}
+		depth := strings.Count(rel, string(filepath.Separator))
+		if depth >= 2 {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Hide the .git internals — the agent doesn't need them and
+		// they overwhelm the listing.
+		if d.IsDir() && d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		suffix := ""
+		if d.IsDir() {
+			suffix = "/"
+		}
+		lines = append(lines, filepath.ToSlash(rel)+suffix)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return r, handler
+	if len(lines) >= maxTreeEntries {
+		lines = append(lines, fmt.Sprintf("[corral-mcp: tree truncated at %d entries]", maxTreeEntries))
+	}
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{{
+			URI:      req.Params.URI,
+			MIMEType: mimePlain,
+			Text:     strings.Join(lines, "\n"),
+		}},
+	}, nil
 }
 
 // repoFileResource reads one file inside a clone. This is the highest-
@@ -189,74 +179,55 @@ func (s *Server) repoTreeResource() (mcp.ResourceTemplate, func(ctx context.Cont
 // an agent escape the workspace root. The handler validates the
 // resolved path is still under the configured Root via Index.SafePath
 // before opening the file, and bounds the read at maxFileBytes.
-func (s *Server) repoFileResource() (mcp.ResourceTemplate, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)) {
-	// {+path} uses RFC 6570 reserved expansion so the segment matches "/".
-	// With plain {path} (simple expansion) no file below the repository's top
-	// level was reachable at all: corral://repo/o/n/file/src/main.go returned
-	// "resource not found" while file/README.md worked.
-	r := mcp.NewResourceTemplate(
-		"corral://repo/{owner}/{name}/file/{+path}",
-		"Repository file contents",
-		mcp.WithTemplateDescription("Read a single file from a clone, bounded at 1 MiB. The {path} segment is relative to the repository root, may contain subdirectories, and is validated against the configured server root to prevent directory traversal. Git internals and common credential files are not readable."),
-		mcp.WithTemplateMIMEType(mimePlain),
-	)
-	handler := func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		repo, err := s.resolveURIRepo(req.Params.URI)
-		if err != nil {
-			return nil, err
-		}
-		path, err := extractFilePath(req.Params.URI)
-		if err != nil {
-			return nil, err
-		}
-		// Content policy runs before path resolution: the sandbox stops an
-		// agent leaving the repository, but .git/config is *inside* it and
-		// contains the credentials of anyone who has cloned over HTTPS with a
-		// token in the URL. The tree listing already hides .git; the file
-		// reader did not, so fixing the {+path} routing above without this
-		// would have turned an unreachable resource into a token leak.
-		if reason, blocked := blockedRepoFile(path); blocked {
-			return nil, fmt.Errorf("refusing to read %s: %s", path, reason)
-		}
-
-		// Scope validation to the selected repository, not merely the wider
-		// workspace. Otherwise ../ traversal could read a sibling clone.
-		idx := &Index{Root: repo.Path}
-		candidate := filepath.Join(repo.Path, path)
-		safe, err := idx.SafePath(candidate)
-		if err != nil {
-			return nil, err
-		}
-		f, err := openResource(safe) // #nosec G304 -- SafePath enforces the workspace sandbox
-		if err != nil {
-			return nil, fmt.Errorf("open file: %w", err)
-		}
-		defer func() { _ = f.Close() }()
-
-		limited := io.LimitReader(f, maxFileBytes+1)
-		body, err := readResourceAll(limited)
-		if err != nil {
-			return nil, fmt.Errorf("read file: %w", err)
-		}
-		truncated := false
-		if int64(len(body)) > maxFileBytes {
-			body = body[:maxFileBytes]
-			truncated = true
-		}
-		mime := guessMIME(safe)
-		text := string(body)
-		if truncated {
-			text += "\n\n[corral-mcp: truncated at 1 MiB]\n"
-		}
-		return []mcp.ResourceContents{
-			mcp.TextResourceContents{
-				URI:      req.Params.URI,
-				MIMEType: mime,
-				Text:     text,
-			},
-		}, nil
+func (s *Server) handleRepoFileResource(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	repo, err := s.resolveURIRepo(req.Params.URI)
+	if err != nil {
+		return nil, err
 	}
-	return r, handler
+	path, err := extractFilePath(req.Params.URI)
+	if err != nil {
+		return nil, err
+	}
+	// Content policy runs before path resolution: the sandbox stops an
+	// agent leaving the repository, but .git/config is *inside* it and
+	// contains the credentials of anyone who has cloned over HTTPS with a
+	// token in the URL. The tree listing already hides .git; the file
+	// reader did not, so fixing the {+path} routing above without this
+	// would have turned an unreachable resource into a token leak.
+	if reason, blocked := blockedRepoFile(path); blocked {
+		return nil, fmt.Errorf("refusing to read %s: %s", path, reason)
+	}
+
+	// Scope validation to the selected repository, not merely the wider
+	// workspace. Otherwise ../ traversal could read a sibling clone.
+	idx := &Index{Root: repo.Path}
+	candidate := filepath.Join(repo.Path, path)
+	safe, err := idx.SafePath(candidate)
+	if err != nil {
+		return nil, err
+	}
+	f, err := openResource(safe) // #nosec G304 -- SafePath enforces the workspace sandbox
+	if err != nil {
+		return nil, fmt.Errorf("open file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	limited := io.LimitReader(f, maxFileBytes+1)
+	body, err := readResourceAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	truncated := false
+	if int64(len(body)) > maxFileBytes {
+		body = body[:maxFileBytes]
+		truncated = true
+	}
+	mime := guessMIME(safe)
+	text := string(body)
+	if truncated {
+		text += "\n\n[corral-mcp: truncated at 1 MiB]\n"
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: mime, Text: text}}}, nil
 }
 
 // blockedRepoFileNames are basenames never served by the file resource. Each
