@@ -12,492 +12,619 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sebastienrousseau/corral/internal/git"
 )
 
-// stubGitPull / stubGitClone / stubDirty / stubUnpushed are shared
-// across tests; a defer restores production behaviour so parallel
-// tests would still be safe.
-func stubGitPull(t *testing.T, fn func(ctx context.Context, targetDir string, opts git.PullOptions) error) {
+// Mutation-tool tests.
+//
+// These drive the write tools through a real client session, with the git and
+// filesystem seams stubbed so nothing is cloned, pulled or deleted for real.
+// The delete guard cascade is the highest-risk code in this package: every
+// refusal below corresponds to work that exists nowhere but the user's disk.
+
+func stubSeam[T any](t *testing.T, target *T, replacement T) {
 	t.Helper()
-	old := gitPull
-	gitPull = fn
-	t.Cleanup(func() { gitPull = old })
+	old := *target
+	*target = replacement
+	t.Cleanup(func() { *target = old })
 }
 
-func stubGitClone(t *testing.T, fn func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error) {
+// safeGuards stubs the three delete guards to "nothing to protect", which is
+// the baseline most tests want; individual tests override the one they exercise.
+func safeGuards(t *testing.T) {
 	t.Helper()
-	old := gitClone
-	gitClone = fn
-	t.Cleanup(func() { gitClone = old })
+	clean := func(context.Context, string) (bool, string) { return false, "" }
+	stubSeam(t, &hasDirtyWorkingTree, clean)
+	stubSeam(t, &hasUnpushedCommits, clean)
+	stubSeam(t, &hasIgnoredContent, clean)
 }
 
-func stubDirty(t *testing.T, fn func(ctx context.Context, repoPath string) (bool, string)) {
+func mutationHarness(t *testing.T, base string, destructive bool) (*harness, string) {
 	t.Helper()
-	old := hasDirtyWorkingTree
-	hasDirtyWorkingTree = fn
-	t.Cleanup(func() { hasDirtyWorkingTree = old })
-}
-
-func stubIgnored(t *testing.T, fn func(ctx context.Context, repoPath string) (bool, string)) {
-	t.Helper()
-	old := hasIgnoredContent
-	hasIgnoredContent = fn
-	t.Cleanup(func() { hasIgnoredContent = old })
-}
-
-func stubUnpushed(t *testing.T, fn func(ctx context.Context, repoPath string) (bool, string)) {
-	t.Helper()
-	old := hasUnpushedCommits
-	hasUnpushedCommits = fn
-	t.Cleanup(func() { hasUnpushedCommits = old })
-}
-
-// newMutationServer stands up a Server with mutations enabled and an
-// auditor pointed at a temp file so tests can inspect what got written.
-func newMutationServer(t *testing.T, base string, destructive bool) *Server {
-	t.Helper()
-	audit := filepath.Join(t.TempDir(), "mutations.log")
-	srv, err := NewServer(ServerOptions{
+	auditPath := filepath.Join(t.TempDir(), "audit.log")
+	return newHarness(t, ServerOptions{
 		Root:                       base,
-		Version:                    "test",
 		EnableMutations:            true,
 		EnableDestructiveMutations: destructive,
-		AuditLogPath:               audit,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return srv
+		AuditLogPath:               auditPath,
+	}), auditPath
 }
 
-func readAudit(t *testing.T, srv *Server) []AuditRecord {
+func auditRecords(t *testing.T, path string) []AuditRecord {
 	t.Helper()
-	if srv.auditor == nil {
-		t.Fatal("no auditor configured")
-	}
-	body, err := os.ReadFile(srv.auditor.Path())
+	b, err := os.ReadFile(path) // #nosec G304 -- test-controlled path
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		t.Fatal(err)
+		return nil
 	}
 	var out []AuditRecord
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		if line == "" {
 			continue
 		}
 		var rec AuditRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatal(err)
+			t.Fatalf("audit log line is not JSON: %v (%s)", err, line)
 		}
 		out = append(out, rec)
 	}
 	return out
 }
 
-func assertAuditLifecycle(t *testing.T, records []AuditRecord, tool, result string) {
-	t.Helper()
-	if len(records) != 2 {
-		t.Fatalf("expected intent + completion records, got %+v", records)
-	}
-	if records[0].Tool != tool || records[0].Phase != "intent" || records[0].Result != "pending" {
-		t.Errorf("invalid intent record: %+v", records[0])
-	}
-	if records[1].Tool != tool || records[1].Phase != "completion" || records[1].Result != result {
-		t.Errorf("invalid completion record: %+v", records[1])
-	}
-	if records[0].OperationID == "" || records[0].OperationID != records[1].OperationID {
-		t.Errorf("audit records are not correlated: %+v", records)
-	}
-}
-
-func TestSyncRepoToolSuccess(t *testing.T) {
+func TestSyncRepoPullsAndAudits(t *testing.T) {
 	base := t.TempDir()
 	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+	pulled := 0
+	stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { pulled++; return nil })
+	stubSeam(t, &markSynced, func(string) error { return nil })
+	h, audit := mutationHarness(t, base, false)
 
-	pullCalls := 0
-	stubGitPull(t, func(ctx context.Context, dir string, opts git.PullOptions) error {
-		pullCalls++
-		return nil
-	})
-
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.syncRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "alpha"})
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", textOf(t, res))
+	var got map[string]any
+	h.callToolJSON("corral_sync_repo", map[string]any{"query": "alpha"}, &got)
+	if got["result"] != "synced" {
+		t.Errorf("result = %v, want synced", got["result"])
 	}
-	if pullCalls != 1 {
-		t.Errorf("expected 1 pull call, got %d", pullCalls)
+	if pulled != 1 {
+		t.Errorf("git pull called %d times, want 1", pulled)
 	}
-	audit := readAudit(t, srv)
-	assertAuditLifecycle(t, audit, "corral_sync_repo", "ok")
-	state, ok := readState(filepath.Join(base, "Public", "go", "alpha"))
-	if !ok || state.LastSyncedAt == "" {
-		t.Errorf("successful MCP sync should stamp state, got %+v", state)
+
+	// Intent is recorded before the mutation and completion after, so a crash
+	// mid-tool still leaves evidence of what was attempted.
+	recs := auditRecords(t, audit)
+	if len(recs) != 2 {
+		t.Fatalf("expected intent + completion records, got %d: %+v", len(recs), recs)
 	}
-}
-
-func TestSyncRepoToolPullFailure(t *testing.T) {
-	base := t.TempDir()
-	makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
-
-	stubGitPull(t, func(ctx context.Context, dir string, opts git.PullOptions) error {
-		return errors.New("network unreachable")
-	})
-
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.syncRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "alpha"})
-	if !res.IsError {
-		t.Error("expected error result")
+	if recs[0].Phase != "intent" || recs[1].Phase != "completion" {
+		t.Errorf("phases = %q,%q want intent,completion", recs[0].Phase, recs[1].Phase)
 	}
-	audit := readAudit(t, srv)
-	assertAuditLifecycle(t, audit, "corral_sync_repo", "error")
-	if !strings.Contains(audit[1].Message, "network unreachable") {
-		t.Errorf("audit message should include upstream error: %+v", audit[1])
+	if recs[0].OperationID == "" || recs[0].OperationID != recs[1].OperationID {
+		t.Errorf("records are not correlated: %+v", recs)
 	}
 }
 
-func TestSyncRepoToolMissingArg(t *testing.T) {
-	base := t.TempDir()
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.syncRepoTool()
-	res := callTool(t, handler, map[string]any{})
-	if !res.IsError {
-		t.Error("expected error when query missing")
-	}
-}
-
-func TestSyncRepoToolUnknownRepo(t *testing.T) {
+func TestSyncRepoSurfacesPullFailure(t *testing.T) {
 	base := t.TempDir()
 	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.syncRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "does-not-exist"})
-	if !res.IsError {
-		t.Error("expected error for unknown repo")
+	stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error {
+		return errors.New("network unreachable")
+	})
+	h, _ := mutationHarness(t, base, false)
+
+	text, isErr := h.callTool("corral_sync_repo", map[string]any{"query": "alpha"})
+	if !isErr {
+		t.Fatal("a failed pull must be reported as a tool error")
+	}
+	if !strings.Contains(text, "network unreachable") {
+		t.Errorf("error should carry the cause, got: %s", text)
 	}
 }
 
-func TestCloneRepoToolSuccess(t *testing.T) {
-	base := t.TempDir()
-
-	stubGitClone(t, func(ctx context.Context, url, dir string, opts git.CloneOptions) error {
-		// Simulate a successful clone by creating the .git dir.
-		return os.MkdirAll(filepath.Join(dir, ".git"), 0o750)
-	})
-
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.cloneRepoTool()
-	// #nosec G101 -- deliberate fake credential verifies redaction.
-	res := callTool(t, handler, map[string]any{
-		"url":    "https://github.com/o/repo.git",
-		"target": "Public/go/repo",
-	})
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", textOf(t, res))
-	}
-	// Confirm the audit trail captured it.
-	audit := readAudit(t, srv)
-	assertAuditLifecycle(t, audit, "corral_clone_repo", "ok")
-	// Confirm the .git dir actually landed under Root.
-	if _, err := os.Stat(filepath.Join(base, "Public", "go", "repo", ".git")); err != nil {
-		t.Errorf("expected clone at target path: %v", err)
+func TestSyncRepoRefusesUnknownRepo(t *testing.T) {
+	h, _ := mutationHarness(t, t.TempDir(), false)
+	if _, isErr := h.callTool("corral_sync_repo", map[string]any{"query": "nope"}); !isErr {
+		t.Error("syncing an unknown repository must be refused")
 	}
 }
 
-func TestCloneRepoToolRedactsCredentialsInAudit(t *testing.T) {
+func TestCloneRepoRefusesExistingTargetAndEscape(t *testing.T) {
 	base := t.TempDir()
-	stubGitClone(t, func(ctx context.Context, rawURL, dir string, opts git.CloneOptions) error {
-		return os.MkdirAll(filepath.Join(dir, ".git"), 0o750)
-	})
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.cloneRepoTool()
-	res := callTool(t, handler, map[string]any{
-		"url":    "https://user:super-secret@example.com/o/repo.git?token=also-secret", // #nosec G101 -- fake credential
-		"target": "Public/go/repo",
-	})
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", textOf(t, res))
+	existing := makeFakeRepo(t, base, "Public", "go", "taken", "", "")
+	stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return nil })
+	h, _ := mutationHarness(t, base, false)
+
+	// Never silently overwrite.
+	if _, isErr := h.callTool("corral_clone_repo", map[string]any{
+		"url": "https://github.com/o/x.git", "target": existing,
+	}); !isErr {
+		t.Error("cloning over an existing target must be refused")
 	}
-	body, err := os.ReadFile(srv.AuditLogPath())
+
+	// Never escape the sandbox root.
+	if _, isErr := h.callTool("corral_clone_repo", map[string]any{
+		"url": "https://github.com/o/x.git", "target": "../outside",
+	}); !isErr {
+		t.Error("a target outside the root must be refused")
+	}
+}
+
+func TestCloneRepoSucceedsAndRedactsCredentials(t *testing.T) {
+	base := t.TempDir()
+	var gotURL string
+	stubSeam(t, &gitClone, func(_ context.Context, url, _ string, _ git.CloneOptions) error {
+		gotURL = url
+		return nil
+	})
+	stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return nil })
+	h, audit := mutationHarness(t, base, false)
+
+	// #nosec G101 -- a fabricated credential; this test exists to prove such a
+	// URL reaches git intact but never reaches the audit log.
+	secret := "https://user:s3cr3t@github.com/o/x.git"
+	var got map[string]any
+	h.callToolJSON("corral_clone_repo", map[string]any{
+		"url": secret, "target": filepath.Join(base, "Public", "go", "x"),
+	}, &got)
+	if gotURL != secret {
+		t.Errorf("the real URL must reach git unchanged, got %q", gotURL)
+	}
+
+	// But the audit trail must not become a place credentials accumulate.
+	b, err := os.ReadFile(audit) // #nosec G304 -- test-controlled path
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "super-secret") || strings.Contains(string(body), "also-secret") {
-		t.Fatalf("audit log leaked clone credentials: %s", body)
+	if strings.Contains(string(b), "s3cr3t") {
+		t.Errorf("audit log leaked the clone credential:\n%s", b)
+	}
+	if !strings.Contains(string(b), "REDACTED") {
+		t.Errorf("audit log should record a redacted URL:\n%s", b)
 	}
 }
 
-func TestMutationRefusesWhenIntentCannotBeAudited(t *testing.T) {
+func TestDeleteRepoRequiresBothGates(t *testing.T) {
 	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+	// Mutations on, destructive off.
+	h, _ := mutationHarness(t, base, false)
+	if h.tools()["corral_delete_repo"] != nil {
+		t.Fatal("delete must not be registered without the destructive gate")
+	}
+}
+
+// The guard cascade. Each of these corresponds to work that exists nowhere but
+// the user's disk, so each must refuse rather than proceed.
+func TestDeleteRepoGuardCascade(t *testing.T) {
+	cases := []struct {
+		name   string
+		stub   func(t *testing.T)
+		expect string
+	}{
+		{
+			name: "uncommitted changes",
+			stub: func(t *testing.T) {
+				stubSeam(t, &hasDirtyWorkingTree, func(context.Context, string) (bool, string) {
+					return true, "working tree has local changes"
+				})
+			},
+			expect: "uncommitted",
+		},
+		{
+			name: "unpublished commits",
+			stub: func(t *testing.T) {
+				stubSeam(t, &hasUnpushedCommits, func(context.Context, string) (bool, string) {
+					return true, "2 commits reachable only from local refs or HEAD"
+				})
+			},
+			expect: "unpublished",
+		},
+		{
+			name: "gitignored content",
+			stub: func(t *testing.T) {
+				stubSeam(t, &hasIgnoredContent, func(context.Context, string) (bool, string) {
+					return true, "1 gitignored path(s) present, e.g. .env"
+				})
+			},
+			expect: "gitignored",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+			safeGuards(t)
+			tc.stub(t)
+			removed := 0
+			stubSeam(t, &removeMutation, func(string) error { removed++; return nil })
+			h, audit := mutationHarness(t, base, true)
+
+			text, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "alpha"})
+			if !isErr {
+				t.Fatalf("delete must refuse when %s is present", tc.name)
+			}
+			if !strings.Contains(text, tc.expect) {
+				t.Errorf("refusal should say why (%q), got: %s", tc.expect, text)
+			}
+			if removed != 0 {
+				t.Fatalf("nothing may be removed after a refusal, removeMutation called %d times", removed)
+			}
+			// A refusal is still auditable: it is evidence an agent tried.
+			recs := auditRecords(t, audit)
+			if len(recs) == 0 || recs[len(recs)-1].Result != "refused" {
+				t.Errorf("refusal should be audited, got %+v", recs)
+			}
+		})
+	}
+}
+
+func TestDeleteRepoSucceedsWhenClean(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+	safeGuards(t)
+	removed := ""
+	stubSeam(t, &removeMutation, func(p string) error { removed = p; return nil })
+	h, audit := mutationHarness(t, base, true)
+
+	var got map[string]any
+	h.callToolJSON("corral_delete_repo", map[string]any{"query": "alpha"}, &got)
+	if got["result"] != "deleted" {
+		t.Errorf("result = %v, want deleted", got["result"])
+	}
+	if !strings.HasSuffix(removed, filepath.Join("Public", "go", "alpha")) {
+		t.Errorf("removed the wrong path: %q", removed)
+	}
+	recs := auditRecords(t, audit)
+	if len(recs) != 2 || recs[1].Result != "ok" {
+		t.Errorf("expected intent + ok completion, got %+v", recs)
+	}
+}
+
+// The IsRepository guard exists for a time-of-check/time-of-use race: the
+// index is cached, so a directory can stop being a clone between the scan that
+// found it and the delete that acts on it. Deleting a directory that is no
+// longer a repository would bypass every other guard, all of which ask git.
+//
+// An earlier version of this test pointed at a directory with no .git at all —
+// which the scanner never indexes, so the lookup failed first and the guard was
+// never reached. It passed without exercising anything.
+func TestDeleteRepoRefusesTargetThatStoppedBeingARepository(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+	safeGuards(t)
+	removed := false
+	stubSeam(t, &removeMutation, func(string) error { removed = true; return nil })
+	h, auditPath := mutationHarness(t, base, true)
+
+	// Populate the scan cache while it is still a repository.
+	if _, isErr := h.callTool("corral_find_repo", map[string]any{"query": "alpha"}); isErr {
+		t.Fatal("fixture should be findable before the race")
+	}
+	// Now it isn't one any more.
+	if err := os.RemoveAll(filepath.Join(repo, ".git")); err != nil {
+		t.Fatal(err)
+	}
+
+	text, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "alpha"})
+	if !isErr {
+		t.Fatalf("delete should have been refused, got: %s", text)
+	}
+	if !strings.Contains(text, "is not a git repository") {
+		t.Errorf("refusal %q should name the failed guard, not some earlier error", text)
+	}
+	if removed {
+		t.Fatal("a directory that is not a git repository was removed")
+	}
+	recs := auditRecords(t, auditPath)
+	if len(recs) == 0 || recs[len(recs)-1].Result != "refused" {
+		t.Errorf("the refusal must be audited, got %+v", recs)
+	}
+}
+
+// A mutation that cannot be audited must not happen: an unlogged mutation
+// defeats the mechanism entirely.
+func TestMutationRefusedWhenAuditFails(t *testing.T) {
+	base := t.TempDir()
+	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+	// Record rather than t.Fatal: this runs on the server's goroutine, and
+	// t.Fatal there calls runtime.Goexit on the wrong goroutine — the handler
+	// never returns and the client blocks until the test times out.
+	pulled := false
+	stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error {
+		pulled = true
+		return nil
+	})
+	// An audit path that cannot be created: nested underneath a regular file,
+	// so creating its parent directory fails with ENOTDIR.
 	blocker := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	called := false
-	stubGitClone(t, func(ctx context.Context, rawURL, dir string, opts git.CloneOptions) error {
-		called = true
-		return nil
-	})
-	srv, err := NewServer(ServerOptions{
-		Root: base, Version: "test", EnableMutations: true,
+	h := newHarness(t, ServerOptions{
+		Root: base, EnableMutations: true,
 		AuditLogPath: filepath.Join(blocker, "audit.log"),
 	})
-	if err != nil {
-		t.Fatal(err)
+	if _, isErr := h.callTool("corral_sync_repo", map[string]any{"query": "alpha"}); !isErr {
+		t.Error("a mutation whose intent cannot be audited must be refused")
 	}
-	_, handler := srv.cloneRepoTool()
-	res := callTool(t, handler, map[string]any{"url": "https://example.com/o/r.git", "target": "Public/go/r"})
-	if !res.IsError || !strings.Contains(textOf(t, res), "audit intent failed") {
-		t.Fatalf("expected audit-intent refusal, got %q", textOf(t, res))
-	}
-	if called {
-		t.Fatal("clone ran without a durable audit intent")
+	if pulled {
+		t.Error("the pull ran even though the intent could not be audited")
 	}
 }
 
-func TestCloneRepoToolRefusesExistingTarget(t *testing.T) {
-	base := t.TempDir()
-	// Pre-create the target so the tool must refuse.
-	if err := os.MkdirAll(filepath.Join(base, "Public", "go", "repo"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	stubGitClone(t, func(ctx context.Context, url, dir string, opts git.CloneOptions) error {
-		t.Error("gitClone must not be called when target exists")
-		return nil
-	})
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.cloneRepoTool()
-	res := callTool(t, handler, map[string]any{
-		"url":    "https://github.com/o/repo.git",
-		"target": "Public/go/repo",
-	})
-	if !res.IsError {
-		t.Error("expected refusal when target exists")
-	}
-}
-
-func TestCloneRepoToolRefusesEscape(t *testing.T) {
-	base := t.TempDir()
-	stubGitClone(t, func(ctx context.Context, url, dir string, opts git.CloneOptions) error {
-		t.Error("gitClone must not run for a traversal target")
-		return nil
-	})
-	srv := newMutationServer(t, base, false)
-	_, handler := srv.cloneRepoTool()
-	res := callTool(t, handler, map[string]any{
-		"url":    "https://github.com/o/repo.git",
-		"target": "../escape",
-	})
-	if !res.IsError {
-		t.Error("expected refusal for traversal target")
-	}
-}
-
-func TestDeleteRepoToolRequiresDestructiveFlag(t *testing.T) {
-	base := t.TempDir()
-	srv := newMutationServer(t, base, false) // mutations on, destructive OFF
-	// deleteRepoTool isn't registered on this server. Confirm the tool
-	// list from the underlying registry doesn't advertise it.
-	tools := listRegisteredTools(t, srv)
-	for _, tool := range tools {
-		if tool == "corral_delete_repo" {
-			t.Errorf("corral_delete_repo must NOT be registered without EnableDestructiveMutations")
-		}
-	}
-}
-
-func TestDeleteRepoToolSuccess(t *testing.T) {
-	base := t.TempDir()
-	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
-
-	// Both git checks report clean.
-	stubDirty(t, func(ctx context.Context, dir string) (bool, string) { return false, "" })
-	stubUnpushed(t, func(ctx context.Context, dir string) (bool, string) { return false, "0" })
-	stubIgnored(t, func(ctx context.Context, dir string) (bool, string) { return false, "" })
-
-	srv := newMutationServer(t, base, true)
-	_, handler := srv.deleteRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "alpha"})
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", textOf(t, res))
-	}
-	if _, err := os.Stat(filepath.Join(base, "Public", "go", "alpha")); !os.IsNotExist(err) {
-		t.Errorf("repo directory should have been removed")
-	}
-	audit := readAudit(t, srv)
-	assertAuditLifecycle(t, audit, "corral_delete_repo", "ok")
-}
-
-func TestDeleteRepoToolRefusesDirtyTree(t *testing.T) {
-	base := t.TempDir()
-	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
-
-	stubDirty(t, func(ctx context.Context, dir string) (bool, string) {
-		return true, "M  local.txt"
-	})
-	stubUnpushed(t, func(ctx context.Context, dir string) (bool, string) { return false, "0" })
-
-	srv := newMutationServer(t, base, true)
-	_, handler := srv.deleteRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "alpha"})
-	if !res.IsError {
-		t.Error("expected refusal on dirty working tree")
-	}
-	if !strings.Contains(textOf(t, res), "uncommitted changes") {
-		t.Errorf("expected 'uncommitted changes' in error, got %q", textOf(t, res))
-	}
-	audit := readAudit(t, srv)
-	if len(audit) != 1 || audit[0].Result != "refused" {
-		t.Errorf("expected refused audit entry, got %+v", audit)
-	}
-}
-
-func TestDeleteRepoToolRefusesUnpushedCommits(t *testing.T) {
-	base := t.TempDir()
-	makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
-
-	stubDirty(t, func(ctx context.Context, dir string) (bool, string) { return false, "" })
-	stubUnpushed(t, func(ctx context.Context, dir string) (bool, string) {
-		return true, "2 commits ahead of upstream"
-	})
-
-	srv := newMutationServer(t, base, true)
-	_, handler := srv.deleteRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "alpha"})
-	if !res.IsError {
-		t.Error("expected refusal on unpushed commits")
-	}
-	if !strings.Contains(textOf(t, res), "unpublished git state") {
-		t.Errorf("expected unpublished-state error, got %q", textOf(t, res))
-	}
-}
-
-// TestDeleteRepoToolRefusesUnknownRepo exercises the earlier of the two
-// defence layers: Index.Find rejects anything that isn't in the scanned
-// workspace, so the tool refuses before its own "is this a git repo"
-// check ever runs. The inline .git-directory check in deleteRepoTool
-// stays as belt-and-braces defence against a race where .git is
-// removed between the scan and the delete; that path is not reachable
-// synchronously from the happy Index.Find flow.
-func TestDeleteRepoToolRefusesUnknownRepo(t *testing.T) {
-	base := t.TempDir()
-	// Directory without a .git subdirectory — not indexable, so Find
-	// returns ErrRepoNotFound and the tool refuses before any git
-	// check runs.
-	if err := os.MkdirAll(filepath.Join(base, "Public", "go", "orphan"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	srv := newMutationServer(t, base, true)
-	_, handler := srv.deleteRepoTool()
-	res := callTool(t, handler, map[string]any{"query": "orphan"})
-	if !res.IsError {
-		t.Error("expected refusal for non-indexed directory")
-	}
-	if !strings.Contains(textOf(t, res), "no repository matches") {
-		t.Errorf("expected 'no repository matches' in error, got %q", textOf(t, res))
-	}
-}
-
-// listRegisteredTools inspects the server's tool registry by making a
-// tools/list request. Uses mcp-go's underlying store.
-func listRegisteredTools(t *testing.T, srv *Server) []string {
+// failAuditAfter makes the audit log unwritable from the nth Write onward, so a
+// mutation can pass its intent record and then fail its completion record. That
+// pairing is the whole point of the two-phase audit: the caller must be told
+// both what went wrong and that the record of it is missing.
+func failAuditAfter(t *testing.T, n int) {
 	t.Helper()
-	// The mcp-go Server exposes tools via its internal store; the
-	// public API doesn't have a list method, so we call handlers of
-	// registered tools indirectly by inspecting what registerTools
-	// and friends did. Simpler: check by attempting to register a
-	// duplicate and observing whether it's already present. But
-	// that mutates state. Simplest still: check the presence of
-	// each expected tool via a canary getter — but mcp-go doesn't
-	// have one either. Fall back to reflecting on the exact set
-	// registerMutationTools + registerDestructiveTools would have
-	// registered.
-	tools := []string{"corral_sync_repo", "corral_clone_repo"}
-	if srv.opts.EnableDestructiveMutations && srv.opts.EnableMutations {
-		tools = append(tools, "corral_delete_repo")
-	}
-	return tools
-}
-
-// Test the audit writer directly to cover the file-creation and
-// concurrent-write paths.
-func TestAuditorWritesJSONL(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "sub", "mutations.log")
-	a := NewAuditor(logPath)
-	if err := a.Write(AuditRecord{Tool: "t1", Target: "a", Result: "ok"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Write(AuditRecord{Tool: "t2", Target: "b", Result: "refused", Message: "why"}); err != nil {
-		t.Fatal(err)
-	}
-	body, err := os.ReadFile(logPath) // #nosec G304 -- test-owned temporary path
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d: %q", len(lines), string(body))
-	}
-	for i, line := range lines {
-		var rec AuditRecord
-		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Fatalf("line %d not JSON: %v", i, err)
+	real := openAuditFile
+	calls := 0
+	openAuditFile = func(name string, flag int, perm os.FileMode) (auditFile, error) {
+		calls++
+		if calls >= n {
+			return nil, errors.New("disk on fire")
 		}
-		if rec.Timestamp == "" {
-			t.Errorf("expected timestamp on line %d", i)
-		}
+		return real(name, flag, perm)
+	}
+	t.Cleanup(func() { openAuditFile = real })
+}
+
+// Every failure path in a mutation must surface as a tool error carrying the
+// underlying cause — never a silent success, and never a dropped audit.
+func TestMutationFailurePathsReportCause(t *testing.T) {
+	boom := errors.New("boom")
+
+	cases := []struct {
+		name       string
+		tool       string
+		args       map[string]any
+		auditFails bool // fail the audit completion, not the intent
+		stub       func(t *testing.T)
+		wants      []string
+	}{
+		{
+			name: "pull fails",
+			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
+			stub: func(t *testing.T) {
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return boom })
+			},
+			wants: []string{"git pull failed", "boom"},
+		},
+		{
+			name: "pull fails and the completion record is lost",
+			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
+			auditFails: true,
+			stub: func(t *testing.T) {
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return boom })
+			},
+			wants: []string{"git pull failed", "audit completion failed"},
+		},
+		{
+			name: "state update fails",
+			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
+			stub: func(t *testing.T) {
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return nil })
+				stubSeam(t, &markSynced, func(string) error { return boom })
+			},
+			wants: []string{"state update failed", "boom"},
+		},
+		{
+			name: "sync succeeds but the completion record is lost",
+			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
+			auditFails: true,
+			stub: func(t *testing.T) {
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return nil })
+				stubSeam(t, &markSynced, func(string) error { return nil })
+			},
+			wants: []string{"audit completion failed"},
+		},
+		{
+			name: "clone parent directory cannot be created",
+			tool: "corral_clone_repo", args: map[string]any{"url": "https://example.com/o/new.git", "target": "Public/go/new"},
+			stub: func(t *testing.T) {
+				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return boom })
+			},
+			wants: []string{"create target parent", "boom"},
+		},
+		{
+			name: "clone fails",
+			tool: "corral_clone_repo", args: map[string]any{"url": "https://example.com/o/new.git", "target": "Public/go/new"},
+			stub: func(t *testing.T) {
+				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return nil })
+				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return boom })
+			},
+			wants: []string{"git clone failed", "boom"},
+		},
+		{
+			name: "removal fails",
+			tool: "corral_delete_repo", args: map[string]any{"query": "alpha"},
+			stub: func(t *testing.T) {
+				safeGuards(t)
+				stubSeam(t, &removeMutation, func(string) error { return boom })
+			},
+			wants: []string{"remove failed", "boom"},
+		},
+		{
+			name: "removal succeeds but the completion record is lost",
+			tool: "corral_delete_repo", args: map[string]any{"query": "alpha"},
+			auditFails: true,
+			stub: func(t *testing.T) {
+				safeGuards(t)
+				stubSeam(t, &removeMutation, func(string) error { return nil })
+			},
+			wants: []string{"audit completion failed"},
+		},
+		{
+			name: "a refusal whose audit record is lost still refuses",
+			tool: "corral_delete_repo", args: map[string]any{"query": "alpha"},
+			stub: func(t *testing.T) {
+				safeGuards(t)
+				stubSeam(t, &hasDirtyWorkingTree, func(context.Context, string) (bool, string) {
+					return true, "M README.md"
+				})
+				stubSeam(t, &removeMutation, func(string) error {
+					t.Error("a refused delete must not remove anything")
+					return nil
+				})
+				failAuditAfter(t, 1)
+			},
+			wants: []string{"uncommitted changes present", "audit failed"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/o/alpha.git", "")
+			h, _ := mutationHarness(t, base, true)
+			tc.stub(t)
+			if tc.auditFails {
+				// The intent record (call 1) lands; the completion (call 2) does not.
+				failAuditAfter(t, 2)
+			}
+			text, isErr := h.callTool(tc.tool, tc.args)
+			if !isErr {
+				t.Fatalf("%s should have failed, got: %s", tc.tool, text)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(text, want) {
+					t.Errorf("error %q does not mention %q", text, want)
+				}
+			}
+		})
 	}
 }
 
-func TestDefaultAuditLogPathHonoursXDG(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", tmp)
-	got := DefaultAuditLogPath()
-	want := filepath.Join(tmp, "corral", "mutations.log")
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-// smoke test that the server registers the expected tool set based
-// on flags. Uses a fresh MCP GetToolsRequest? mcp-go doesn't expose
-// that publicly either, so we fall back to counting the registered
-// tools via the constructor observing side-effects.
-func TestServerRegistersMutationsOnlyWhenEnabled(t *testing.T) {
-	base := t.TempDir()
-
-	// mutations OFF: no mutation tools
-	srv, err := NewServer(ServerOptions{Root: base, Version: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if srv.auditor != nil {
-		t.Error("auditor must be nil when mutations disabled")
-	}
-
-	// mutations ON, destructive OFF
-	srv, err = NewServer(ServerOptions{
-		Root: base, Version: "test",
-		EnableMutations: true,
-		AuditLogPath:    filepath.Join(t.TempDir(), "audit.log"),
+// A mutation on an unscannable root must refuse rather than act on a guess.
+func TestMutationsRefuseAnUnscannableRoot(t *testing.T) {
+	h, _ := mutationHarness(t, filepath.Join(t.TempDir(), "does-not-exist"), true)
+	stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error {
+		t.Error("pull ran against an unscannable root")
+		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if srv.auditor == nil {
-		t.Error("auditor must be initialised when mutations enabled")
-	}
-	if srv.AuditLogPath() == "" {
-		t.Error("AuditLogPath should surface the configured path")
+	stubSeam(t, &removeMutation, func(string) error {
+		t.Error("removal ran against an unscannable root")
+		return nil
+	})
+	for _, tool := range []string{"corral_sync_repo", "corral_delete_repo"} {
+		text, isErr := h.callTool(tool, map[string]any{"query": "alpha"})
+		if !isErr {
+			t.Errorf("%s returned success on an unscannable root: %s", tool, text)
+		}
 	}
 }
 
-// callTool + textOf are declared in tools_test.go.
+// If the intent record cannot be written, nothing may happen — this is the
+// same contract as the sync path, checked for clone because clone is the one
+// mutation that does not require the target to already exist.
+func TestCloneRefusedWhenIntentCannotBeAudited(t *testing.T) {
+	base := t.TempDir()
+	h, _ := mutationHarness(t, base, false)
+	cloned := false
+	stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error {
+		cloned = true
+		return nil
+	})
+	failAuditAfter(t, 1)
 
-var _ = mcp.NewToolResultText // sanity: ensures mcp import kept
+	text, isErr := h.callTool("corral_clone_repo", map[string]any{
+		"url": "https://example.com/o/new.git", "target": "Public/go/new",
+	})
+	if !isErr {
+		t.Fatalf("clone should have been refused, got: %s", text)
+	}
+	if !strings.Contains(text, "audit intent failed") {
+		t.Errorf("error %q should name the audit failure", text)
+	}
+	if cloned {
+		t.Error("the clone ran even though its intent could not be audited")
+	}
+}
+
+// Both clone failure modes, paired with a lost completion record: the caller
+// must learn the operation failed AND that the audit trail is incomplete.
+func TestCloneFailuresWithLostAuditRecord(t *testing.T) {
+	boom := errors.New("boom")
+	cases := []struct {
+		name  string
+		stub  func(t *testing.T)
+		wants []string
+	}{
+		{
+			name: "parent directory",
+			stub: func(t *testing.T) {
+				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return boom })
+			},
+			wants: []string{"create target parent", "audit completion failed"},
+		},
+		{
+			name: "clone itself",
+			stub: func(t *testing.T) {
+				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return nil })
+				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return boom })
+			},
+			wants: []string{"git clone failed", "audit completion failed"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := mutationHarness(t, t.TempDir(), false)
+			tc.stub(t)
+			failAuditAfter(t, 2)
+			text, isErr := h.callTool("corral_clone_repo", map[string]any{
+				"url": "https://example.com/o/new.git", "target": "Public/go/new",
+			})
+			if !isErr {
+				t.Fatalf("clone should have failed, got: %s", text)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(text, want) {
+					t.Errorf("error %q does not mention %q", text, want)
+				}
+			}
+		})
+	}
+}
+
+// Each delete guard, when its own refusal record cannot be written, must still
+// refuse and must say the audit failed too.
+func TestDeleteRefusalsWithLostAuditRecord(t *testing.T) {
+	guards := []struct {
+		name string
+		stub func(t *testing.T)
+		want string
+	}{
+		{"unpushed commits", func(t *testing.T) {
+			stubSeam(t, &hasUnpushedCommits, func(context.Context, string) (bool, string) {
+				return true, "ahead 2"
+			})
+		}, "unpublished git state present"},
+		{"gitignored content", func(t *testing.T) {
+			stubSeam(t, &hasIgnoredContent, func(context.Context, string) (bool, string) {
+				return true, ".env"
+			})
+		}, "gitignored content present"},
+	}
+	for _, g := range guards {
+		t.Run(g.name, func(t *testing.T) {
+			base := t.TempDir()
+			makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
+			safeGuards(t)
+			g.stub(t)
+			stubSeam(t, &removeMutation, func(string) error {
+				t.Error("a refused delete must not remove anything")
+				return nil
+			})
+			h, _ := mutationHarness(t, base, true)
+			failAuditAfter(t, 1)
+
+			text, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "alpha"})
+			if !isErr {
+				t.Fatalf("delete should have been refused, got: %s", text)
+			}
+			for _, want := range []string{g.want, "audit failed"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("error %q does not mention %q", text, want)
+				}
+			}
+		})
+	}
+}

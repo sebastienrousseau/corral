@@ -4,14 +4,14 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // ServerName is the public identifier the MCP server advertises to clients.
@@ -50,7 +50,7 @@ type ServerOptions struct {
 // so future phases can attach per-server state (search backends, audit
 // logger, etc.) without breaking the cmd-layer call site.
 type Server struct {
-	mcp     *server.MCPServer
+	mcp     *mcp.Server
 	opts    ServerOptions
 	auditor *Auditor
 
@@ -74,7 +74,7 @@ type Server struct {
 // users control over it invites confusion about staleness bugs.
 const scanTTL = 5 * time.Second
 
-var serveStdio = server.ServeStdio
+var serveStdio = serveStdioDefault
 
 var scanWorkspace = Scan
 
@@ -125,17 +125,24 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		opts.Version = "dev"
 	}
 
-	mcpSrv := server.NewMCPServer(
-		ServerName,
-		opts.Version,
-		server.WithInstructions(serverInstructions(opts)),
-		server.WithToolCapabilities(false),
-		// subscribe=false: the server advertised subscribe=true and never sent
-		// a notifications/resources/updated, so a client that subscribed waited
-		// forever. Advertise only what is implemented.
-		server.WithResourceCapabilities(false, false),
-		server.WithPromptCapabilities(false),
-		server.WithRecovery(),
+	// The official SDK takes an Implementation plus options, and derives tool
+	// schemas from Go types rather than from chained With* builders.
+	//
+	// Capabilities are declared by what is actually registered: there is no
+	// WithResourceCapabilities(subscribe, listChanged) to get wrong. That
+	// removes the class of bug corral shipped for several releases, where the
+	// server advertised resources.subscribe=true and never sent a single
+	// notifications/resources/updated, leaving a subscribing client waiting
+	// forever.
+	mcpSrv := mcp.NewServer(
+		&mcp.Implementation{
+			Name:    ServerName,
+			Title:   "Corral",
+			Version: opts.Version,
+		},
+		&mcp.ServerOptions{
+			Instructions: serverInstructions(opts),
+		},
 	)
 
 	s := &Server{mcp: mcpSrv, opts: opts}
@@ -169,6 +176,12 @@ func (s *Server) AuditLogPath() string {
 // the cmd layer wants to emit must go to stderr.
 func (s *Server) ServeStdio() error {
 	return serveStdio(s.mcp)
+}
+
+// serveStdioDefault runs the server over the stdio transport. Split out so
+// tests can stub the blocking call.
+func serveStdioDefault(srv *mcp.Server) error {
+	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }
 
 // Root returns the sandbox root the server was configured with. Useful
@@ -228,9 +241,28 @@ func describeRepo(r RepoEntry) string {
 func jsonResult(payload any) *mcp.CallToolResult {
 	b, err := jsonMarshalIndent(payload)
 	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("internal: marshal: %v", err))
+		return toolError("internal: marshal: %v", err)
 	}
-	return mcp.NewToolResultText(string(b))
+	return toolText(string(b))
+}
+
+// toolText builds a successful single-text-content result. The official SDK
+// has no NewToolResultText helper; results are plain structs.
+func toolText(body string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: body}},
+	}
+}
+
+// toolError builds a tool-execution error: an ordinary result with IsError set,
+// which is how MCP distinguishes "the tool ran and failed" from "the protocol
+// call failed". The text is what the model sees, so callers pass something it
+// can act on.
+func toolError(format string, args ...any) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(format, args...)}},
+	}
 }
 
 // jsonMarshalIndent is split out so test code can stub the marshaller if

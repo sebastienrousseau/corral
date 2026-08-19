@@ -6,6 +6,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24] — 2026-08-18
+
+### Changed
+
+- **MCP server migrated from `mark3labs/mcp-go` to the official
+  `modelcontextprotocol/go-sdk` v1.7.0.** corral's MCP surface was built on a
+  third-party implementation that tracked the specification at its own pace;
+  the official SDK is maintained alongside the spec itself. The dependency is
+  gone from `go.mod` entirely.
+
+  Every tool now takes a typed Go input struct, and the SDK derives each tool's
+  JSON Schema from that struct's fields and `jsonschema` tags. Previously the
+  schemas were hand-written alongside hand-written argument parsing, so the two
+  could disagree — a schema could advertise a parameter the handler never read.
+  They are now the same declaration, and a test asserts the generated schemas
+  reach the wire.
+
+  One behaviour worth knowing: over the legacy `initialize` handshake a client
+  negotiates protocol `2025-11-25`, not `2026-07-28`. That is the SDK's
+  deliberate cap — `initialize` is deprecated in the 2026-07-28 specification,
+  which negotiates versions by a different path — and not a corral limitation.
+
+- **`maxTreeEntries` is a variable rather than a constant**, matching the
+  existing `maxIndexRepos`, so the tree-truncation bound is reachable from a
+  test without materialising 2,000 files. The truncation notice now reports the
+  actual bound instead of a hard-coded "2000", which would have become wrong
+  the moment the bound changed.
+
+### Added
+
+- **A protocol-level test harness** driving a real client against a real server
+  over the SDK's in-memory transport. The previous tests called handler
+  functions directly, so they could not have caught a tool that was registered
+  wrongly, a schema that failed to generate, or an annotation that never
+  reached the wire — all of which are exactly what a migration puts at risk.
+
+- **Mutation coverage against the seams**: every failure path in
+  `corral_sync_repo`, `corral_clone_repo` and `corral_delete_repo` — including
+  each case where the operation fails *and* its audit record cannot be written,
+  which must tell the caller both things.
+
+### Fixed
+
+- **A delete-guard test that passed without testing anything.** It aimed a
+  delete at a directory with no `.git`, but the scanner never indexes such a
+  directory, so the lookup failed first and the `IsRepository` guard it existed
+  to cover was never reached. It now reproduces the race the guard actually
+  defends: a repository that is indexed, then stops being a repository before
+  the delete acts on it. Verified by coverage that the guard line now executes.
+
+- **Stale dependency and tooling references** to `mark3labs/mcp-go` and
+  `go-github v74` in `.bestpractices.json` and `.goreleaser.yaml`.
+
+- **A flaky `-race` failure in `internal/tui`.** `TestRemainingSelectorStates`
+  started a real Bubble Tea program to cover `runSelectorProgram`, the one-line
+  adapter over `tea.NewProgram(...).Run()`. Bubble Tea's `Program.shutdown()`
+  calls `cancelreader`'s `Close()`, which closes the underlying `os.File` while
+  that reader's own goroutine is still using it — a data race inside the
+  dependencies, not in corral. Both `cancelreader` backends are affected
+  (kqueue when stdin is a terminal, select when it is not), so redirecting
+  stdin does not avoid it; it only changes which one races, and in fact makes
+  it far more frequent.
+
+  The real-runner assertion is now built only under `!race`, so it still runs —
+  and still covers that line — in ordinary and coverage runs, while
+  `go test -race` skips just that one call rather than the surrounding test.
+  Reproduced 22 times in 40 terminal runs before the change and 0 in 40 after.
+
 ## [0.0.23] — 2026-08-18
 
 ### Changed
@@ -746,7 +814,15 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...HEAD
+[0.0.24]: https://github.com/sebastienrousseau/corral/compare/v0.0.23...v0.0.24
+[0.0.23]: https://github.com/sebastienrousseau/corral/compare/v0.0.22...v0.0.23
+[0.0.22]: https://github.com/sebastienrousseau/corral/compare/v0.0.21...v0.0.22
+[0.0.21]: https://github.com/sebastienrousseau/corral/compare/v0.0.20...v0.0.21
+[0.0.20]: https://github.com/sebastienrousseau/corral/compare/v0.0.19...v0.0.20
+[0.0.19]: https://github.com/sebastienrousseau/corral/compare/v0.0.18...v0.0.19
+[0.0.18]: https://github.com/sebastienrousseau/corral/compare/v0.0.17...v0.0.18
+[0.0.17]: https://github.com/sebastienrousseau/corral/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/sebastienrousseau/corral/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/sebastienrousseau/corral/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/sebastienrousseau/corral/compare/v0.0.13...v0.0.14

@@ -160,8 +160,8 @@ checksum:
   name_template: 'checksums.txt'
 
 # A machine-readable SBOM per archive. SBOM.md was a hand-maintained markdown
-# table and had already drifted — it omitted github.com/mark3labs/mcp-go, a
-# direct dependency powering the whole MCP server, and golang.org/x/sys — while
+# table and had already drifted — it omitted the MCP SDK powering the whole
+# server, and golang.org/x/sys — while
 # SECURITY.md pointed at it as the full bill of materials. Generated beats
 # curated. Also scored: OpenSSF Scorecard awards points for having an SBOM and
 # more for publishing it as a release artifact.
