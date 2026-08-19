@@ -4,8 +4,10 @@
 package mcp
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -721,21 +723,54 @@ func TestFileResourceRejectsBadPercentEncoding(t *testing.T) {
 
 // An unreadable file is an error, not empty content: an agent must not read
 // "no permission" as "this file is blank".
+// A file the reader cannot open must surface as an error rather than an empty
+// document, so an agent is never told a file is blank when it was actually
+// refused. Covered two ways, because neither alone is sufficient:
+//
+// The seam case runs on every platform. The real-filesystem case cannot: on
+// Windows os.Chmod only toggles the read-only attribute, which does not stop a
+// read, so chmod(0o000) there produces a perfectly readable file and the
+// assertion passes vacuously — which is how this test failed CI on
+// windows-latest while passing on macOS and Linux.
+//
+// The real-filesystem case still earns its place where the OS supports it: it
+// is what proves the seam is standing in for something that genuinely happens,
+// rather than for an error only the stub can produce.
 func TestFileResourceReportsUnreadableFile(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("running as root: permission bits do not apply")
-	}
 	base := t.TempDir()
 	repo := makeFakeRepo(t, base, "Public", "go", "alpha", "", "")
 	secret := filepath.Join(repo, "locked.txt")
 	mustWrite(t, secret, "content")
-	if err := os.Chmod(secret, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(secret, 0o600) })
 
-	h := newHarness(t, ServerOptions{Root: base})
-	if _, err := h.readResource("corral://repo/Public/alpha/file/locked.txt"); err == nil {
-		t.Error("an unreadable file must surface as an error")
-	}
+	t.Run("open refused", func(t *testing.T) {
+		stubSeam(t, &openResource, func(string) (*os.File, error) {
+			return nil, fs.ErrPermission
+		})
+		h := newHarness(t, ServerOptions{Root: base})
+		_, err := h.readResource("corral://repo/Public/alpha/file/locked.txt")
+		if err == nil {
+			t.Fatal("an unopenable file must surface as an error")
+		}
+		if !strings.Contains(err.Error(), "open file") {
+			t.Errorf("error %q should say which step failed", err)
+		}
+	})
+
+	t.Run("permission bits", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("os.Chmod on Windows toggles the read-only attribute only; it cannot make a file unreadable by its owner")
+		}
+		if os.Geteuid() == 0 {
+			t.Skip("running as root: permission bits do not apply")
+		}
+		if err := os.Chmod(secret, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(secret, 0o600) })
+
+		h := newHarness(t, ServerOptions{Root: base})
+		if _, err := h.readResource("corral://repo/Public/alpha/file/locked.txt"); err == nil {
+			t.Error("an unreadable file must surface as an error")
+		}
+	})
 }

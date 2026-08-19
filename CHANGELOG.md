@@ -84,6 +84,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owner: `No prunable repositories found for <owner>.` JSON mode was already
   unambiguous (it emits `[]`) and is unchanged; a test pins both.
 
+- **A new MCP test that could only pass on Unix.** `TestFileResourceReportsUnreadableFile`
+  made a file unreadable with `chmod 0o000` and asserted the read failed. On
+  Windows `os.Chmod` only toggles the read-only attribute, which does not stop a
+  read, so the file stayed readable and the assertion failed on
+  `windows-latest` while passing on macOS and Linux. The open-failure branch is
+  now covered through the `openResource` seam, which behaves identically on
+  every platform, and the real-filesystem permission check is kept — and skipped
+  on Windows with the reason — as proof the seam stands in for something that
+  actually happens.
+
 ## [0.0.23] — 2026-08-18
 
 ### Changed
