@@ -74,6 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `go test -race` skips just that one call rather than the surrounding test.
   Reproduced 22 times in 40 terminal runs before the change and 0 in 40 after.
 
+- **`corral prune` printed nothing when there was nothing to prune.** Text
+  mode emitted one line per pruned repository and no other output, so a run
+  that found no orphans was byte-for-byte identical to a run that never
+  reached the reporting step at all. On the one subcommand whose job is
+  deleting directories, silence is the answer a user cannot safely interpret —
+  it reads equally as "your clones are all accounted for" and as "the owner
+  lookup quietly returned nothing". It now states the result and names the
+  owner: `No prunable repositories found for <owner>.` JSON mode was already
+  unambiguous (it emits `[]`) and is unchanged; a test pins both.
+
 ## [0.0.23] — 2026-08-18
 
 ### Changed
