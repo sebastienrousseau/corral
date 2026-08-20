@@ -4,9 +4,11 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -320,22 +322,84 @@ func resolvedBaseDir(args []string) string {
 	return defaultBaseDir()
 }
 
+// configCommentPrefix marks keys that `config --init` writes as documentation
+// rather than settings: a top-level "//" block, and per-setting "//<flag>"
+// entries inside "defaults".
+const configCommentPrefix = "//"
+
+// stripConfigComments removes documentation keys from every object in a decoded
+// JSON document, at any depth.
+//
+// The decoder is deliberately strict, and should stay that way: a typo like
+// "concurrancy" must be an error rather than a setting that silently does
+// nothing. But `config --init` writes "//" keys itself, so strictness rejected
+// corral's own starter file — the config the tool had just written could not be
+// read back, and every later `config --explain`, `plan` or `profile` failed
+// with `unknown field "//"`. Stripping comment keys before the strict pass
+// keeps typo detection while honouring the convention corral documents and
+// emits.
+func stripConfigComments(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			if strings.HasPrefix(key, configCommentPrefix) {
+				delete(typed, key)
+				continue
+			}
+			typed[key] = stripConfigComments(nested)
+		}
+		return typed
+	case []any:
+		for i := range typed {
+			typed[i] = stripConfigComments(typed[i])
+		}
+		return typed
+	}
+	return value
+}
+
 func loadConfig(path string) (configFile, error) {
 	if path == "" {
 		path = defaultConfigPath()
 	}
-	f, err := os.Open(path) // #nosec G304 -- path is explicitly selected by the local user
+	raw, err := readConfigFile(path)
 	if err != nil {
-		return configFile{}, fmt.Errorf("open config %s: %w", path, err)
+		return configFile{}, err
 	}
-	defer func() { _ = f.Close() }()
+
+	// Two passes: a permissive one to find and drop the comment keys, then the
+	// strict one that actually validates the settings.
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return configFile{}, fmt.Errorf("decode config %s: %w", path, err)
+	}
+	cleaned, err := json.Marshal(stripConfigComments(document))
+	if err != nil {
+		return configFile{}, fmt.Errorf("decode config %s: %w", path, err)
+	}
+
 	var cfg configFile
-	decoder := json.NewDecoder(f)
+	decoder := json.NewDecoder(bytes.NewReader(cleaned))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
 		return configFile{}, fmt.Errorf("decode config %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// readConfigFile is a seam so tests can exercise an unreadable config without
+// depending on permission bits, which do not behave the same on every platform.
+var readConfigFile = func(path string) ([]byte, error) {
+	f, err := os.Open(path) // #nosec G304 -- path is explicitly selected by the local user
+	if err != nil {
+		return nil, fmt.Errorf("open config %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	return raw, nil
 }
 
 func defaultConfigPath() string {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,4 +447,61 @@ func TestPruneReportsWhenThereIsNothingToPrune(t *testing.T) {
 	if len(decoded) != 0 {
 		t.Errorf("expected an empty array, got %+v", decoded)
 	}
+}
+
+// `config --init` writes a starter file containing "//" documentation keys —
+// a top-level block and per-setting "//<flag>" entries — while loadConfig
+// decodes strictly. The tool therefore could not read the config it had just
+// written, and every later `config --explain`, `plan` or `profile` failed with
+// `unknown field "//"`. Round-trip was broken out of the box (#92).
+//
+// Strictness is still worth having, so this pins both halves: comments are
+// ignored, and a misspelled setting is still an error.
+func TestLoadConfigIgnoresCommentKeysButNotTypos(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	t.Run("comment keys at every level are ignored", func(t *testing.T) {
+		// Mirrors the shape `config --init` actually emits: a "//" array at the
+		// top level and "//<flag>" strings beside real settings.
+		cfg, err := loadConfig(write(t, `{
+		  "//": ["corral configuration.", "Settings are named after flags."],
+		  "defaults": {
+		    "//concurrency": "how many repositories to process at once",
+		    "concurrency": 8
+		  }
+		}`))
+		if err != nil {
+			t.Fatalf("the starter file corral itself writes must load: %v", err)
+		}
+		if got := cfg.Defaults["concurrency"]; fmt.Sprint(got) != "8" {
+			t.Errorf("real settings must survive comment stripping, got %v", got)
+		}
+		if _, present := cfg.Defaults["//concurrency"]; present {
+			t.Error("comment keys must not leak into the decoded settings")
+		}
+	})
+
+	t.Run("a misspelled setting is still rejected", func(t *testing.T) {
+		_, err := loadConfig(write(t, `{"defaultz": {"concurrency": 8}}`))
+		if err == nil {
+			t.Fatal("strictness must survive: a typo is a silent no-op otherwise")
+		}
+		if !strings.Contains(err.Error(), "decode config") {
+			t.Errorf("error should name the decode step, got %v", err)
+		}
+	})
+
+	t.Run("a key that merely starts with a slash is not a comment", func(t *testing.T) {
+		// Guards the prefix check against over-matching: "/path" is not "//".
+		if _, err := loadConfig(write(t, `{"/defaults": {}}`)); err == nil {
+			t.Error(`"/defaults" is a typo, not a comment, and must still fail`)
+		}
+	})
 }

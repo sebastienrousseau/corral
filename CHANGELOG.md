@@ -6,7 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.24] — 2026-08-18
+## [0.0.25] — 2026-08-20
+
+### Fixed
+
+- **`corralctl config --init` wrote a file the tool could not read back.** The
+  starter config documents itself with `"//"` keys — a block at the top level
+  and `"//<flag>"` notes beside each setting — but the config decoder runs with
+  `DisallowUnknownFields`, so loading it failed immediately:
+
+  ```
+  corralctl: decode config ~/.config/corral/config.json: json: unknown field "//"
+  ```
+
+  Round-trip was broken out of the box: after `--init`, every subsequent
+  `config --explain`, `plan` or `profile` aborted. Reported as #92.
+
+  The strictness is worth keeping — a misspelled `concurrancy` should be an
+  error, not a setting that silently does nothing — so the fix is not to relax
+  the decoder. Comment keys are stripped from every object in the document
+  first, at any depth, and the strict pass then validates what remains.
+
+  Pinned by a test covering all three properties: the starter file loads, real
+  settings alongside comments still apply, and a misspelled key is still
+  rejected. A key beginning with a single `/` is a typo rather than a comment
+  and is still an error, so the prefix check cannot over-match.
+
+## [0.0.24] — 2026-08-19
 
 ### Changed
 
@@ -834,7 +860,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...HEAD
+[0.0.25]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/sebastienrousseau/corral/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/sebastienrousseau/corral/compare/v0.0.22...v0.0.23
 [0.0.22]: https://github.com/sebastienrousseau/corral/compare/v0.0.21...v0.0.22
