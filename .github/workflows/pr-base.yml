@@ -1,0 +1,65 @@
+name: PR Base
+
+# Every pull request must target the default branch.
+#
+# On 2026-08-19, PR #91 was opened against `feat/v0.0.24` rather than `main`.
+# Two consequences followed, neither of them visible at the time:
+#
+#   1. None of this repository's checks ran for it. Every other workflow here
+#      filters on `pull_request: branches: [main]`, so a PR aimed anywhere else
+#      is invisible to CI. #91's head commit carries check suites only because
+#      the same commit was pushed to `feat/v0.0.24` while PR #90 (base `main`)
+#      was open, so #90's synchronize event happened to run on it.
+#
+#   2. When #90 merged, GitHub marked #91 merged too and collapsed its commit
+#      range to nothing: `GET /pulls/91/commits` returns `[]` and the PR's
+#      `commits` count is 0. OpenSSF Scorecard's CI-Tests check reads a merged
+#      PR's check suites through `associatedPullRequests { commits(last: 1) }`,
+#      so an empty commit range yields zero check suites — and it caches that
+#      empty answer under the head SHA, which defeats its own REST fallback.
+#      #91 was therefore scored as a merged PR with no CI test at all, dropping
+#      CI-Tests from 10/10 to 9/10 (code scanning alert 37).
+#
+# Both failure modes vanish if every PR targets `main`. This job is what makes
+# that a rule instead of a habit. It deliberately carries no `branches` filter,
+# because a PR aimed at the wrong base is exactly what it exists to catch — a
+# filtered workflow could never see one.
+
+on:
+  pull_request:
+    # `edited` fires when the base branch is retargeted after opening, which is
+    # the one way a PR can go from compliant to non-compliant without a push.
+    types: [opened, reopened, edited, synchronize]
+
+permissions: {}
+
+jobs:
+  base-is-default-branch:
+    name: PR targets default branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # No checkout: everything this needs is in the event payload. Values are
+      # passed through `env` rather than interpolated into the script body, so
+      # a branch name can never be read as shell.
+      - name: Check base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "${BASE}" = "${DEFAULT}" ]; then
+            echo "base branch is '${BASE}'"
+            exit 0
+          fi
+          echo "::error::This pull request targets '${BASE}', but every pull" \
+            "request must target '${DEFAULT}'. A PR based on another branch" \
+            "does not run this repository's CI (all other workflows filter on" \
+            "'branches: [${DEFAULT}]'), and GitHub marks it merged with an" \
+            "empty commit range once the parent branch lands — which reads" \
+            "downstream as a merged, untested pull request. Rebase the branch" \
+            "onto '${DEFAULT}' and retarget this PR, or fold the change into" \
+            "the pull request it is stacked on."
+          exit 1

@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.26] — 2026-08-29
+
+### Fixed
+
+- **A pull request opened against the wrong base branch left the project
+  scored as merging untested code.** OpenSSF Scorecard's CI-Tests check
+  dropped to 9/10 — "9 out of 10 merged PRs checked by a CI test", code
+  scanning alert 37 — and the missing PR was #91.
+
+  #91 was opened against `feat/v0.0.24` instead of `main`. Nothing in this
+  repository ran for it: every workflow here filters on `pull_request:
+  branches: [main]`, so a pull request aimed anywhere else is invisible to
+  CI. The check suites that do sit on its head commit are incidental — the
+  same commit was pushed to `feat/v0.0.24` while PR #90 (base `main`) was
+  open, and #90's synchronize event ran on it.
+
+  When #90 merged, GitHub marked #91 merged too and collapsed its commit
+  range to nothing: `GET /pulls/91/commits` returns `[]` and the PR reports
+  0 commits. Scorecard reads a merged PR's check suites through
+  `associatedPullRequests { commits(last: 1) { ... checkSuites } }`, so an
+  empty commit range yields zero check suites — and `parseCheckRuns` caches
+  that empty answer under the head SHA, which defeats the REST fallback in
+  `listCheckRunsForRef` that would otherwise have found the eleven check
+  suites GitHub does hold for that commit. #91 was scored as a merged pull
+  request with no CI test at all.
+
+  A `PR Base` workflow now fails any pull request whose base is not the
+  default branch. It carries no `branches` filter of its own, because a
+  pull request aimed at the wrong base is precisely what a filtered
+  workflow can never see. `CONTRIBUTING.md` states the rule alongside it.
+
 ## [0.0.25] — 2026-08-20
 
 ### Fixed
@@ -860,7 +891,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.26...HEAD
+[0.0.26]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/sebastienrousseau/corral/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/sebastienrousseau/corral/compare/v0.0.22...v0.0.23
