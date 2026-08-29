@@ -34,13 +34,26 @@ import (
 // buildTag is substituted for `ignore` so the copied file builds.
 const buildTag = "examplecheck"
 
+// main keeps no logic of its own beyond turning run's result into an exit
+// status. os.Exit does not run deferred functions, so calling it from a
+// function that holds a defer — as this did — silently skipped the scratch
+// directory cleanup on exactly the failing runs where it mattered, leaving
+// a .example-check-* directory inside the repository.
 func main() {
+	os.Exit(run())
+}
+
+// run performs the check and returns the process exit status, unwinding its
+// own defers before main exits.
+func run() int {
 	examples, err := filepath.Glob(filepath.Join("examples", "*.go"))
 	if err != nil {
-		fail("listing examples: %v", err)
+		fmt.Fprintf(os.Stderr, "listing examples: %v\n", err)
+		return 1
 	}
 	if len(examples) == 0 {
-		fail("no examples found under examples/ — has the directory moved?")
+		fmt.Fprintln(os.Stderr, "no examples found under examples/ — has the directory moved?")
+		return 1
 	}
 
 	// The scratch tree has to live inside the module: the examples import
@@ -48,7 +61,8 @@ func main() {
 	// module that declares them.
 	scratch, err := os.MkdirTemp(".", ".example-check-")
 	if err != nil {
-		fail("creating scratch directory: %v", err)
+		fmt.Fprintf(os.Stderr, "creating scratch directory: %v\n", err)
+		return 1
 	}
 	defer func() {
 		if err := os.RemoveAll(scratch); err != nil {
@@ -72,9 +86,10 @@ func main() {
 		for _, b := range broken {
 			fmt.Fprintf(os.Stderr, "\n%s\n", b)
 		}
-		os.Exit(1)
+		return 1
 	}
 	fmt.Printf("\nExample check: %d/%d compile\n", len(examples), len(examples))
+	return 0
 }
 
 // compileExample copies one example into the scratch tree with a satisfiable
@@ -102,10 +117,4 @@ func compileExample(scratch, name, path string) error {
 		return fmt.Errorf("%w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// fail reports a fatal setup error.
-func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
 }
