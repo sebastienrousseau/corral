@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dependabot pull requests inside a narrow policy now auto-merge.** `main`
+  requires branches to be up to date before merging — a real correctness
+  gate, and one that makes every Dependabot pull request go stale the moment
+  anything else lands. #96 (alpine 3.20 → 3.24) had to be rebased twice for
+  that reason, once because merging #97 moved `main` underneath it. With
+  weekly grouped updates that is recurring toil, and toil on a
+  security-update path is how security updates end up sitting.
+
+  Auto-merge bypasses nothing: all thirteen required checks, the signature
+  requirement and the up-to-date gate still have to pass first. It removes
+  the click, not the gate. "Always suggest updating pull request branches"
+  is enabled alongside it so GitHub can clear the up-to-date requirement
+  without a manual rebase.
+
+  The policy is an allowlist, deliberately: `github-actions` and `docker`
+  updates of any size, because both are pinned by SHA or digest here and the
+  diff is a single reference; Go module *patch* and *minor* bumps. Major Go
+  bumps and anything whose update type is unknown — which is what a grouped
+  pull request reports — fall through to review. A denylist would have
+  failed open on exactly the grouped case that most needs a human.
+
+  The trade-off, stated plainly: a dependency passing CodeQL, gosec,
+  govulncheck, Dependency Review, gitleaks and a 100%-coverage suite on three
+  platforms would merge without anyone reading it. On a repository with no
+  second reviewer, the alternative is not review — it is the same maintainer
+  clicking merge without reading it either. Delete the workflow to go back to
+  that.
+
 ### Fixed
 
 - **A base-image bump silently falsified an attestation.** Dependabot moved
