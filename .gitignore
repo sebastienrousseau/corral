@@ -25,3 +25,6 @@ dist/
 # tree during development it lands at the project root by accident — keep it
 # out of version control.
 .corral-state.json
+
+# Scratch trees from scripts/example_check.go, if cleanup is ever prevented.
+.example-check-*/

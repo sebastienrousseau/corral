@@ -106,6 +106,35 @@ itself true and mechanically checked.
 - **Dependencies refreshed.** Every direct and reachable indirect module is
   at its latest version; `govulncheck` reports none.
 
+### Documentation
+
+- **The examples now compile in CI.** They carry `//go:build ignore`, so
+  `go build ./...` skipped them and nothing else touched them — they could
+  have referenced a renamed function indefinitely without a single job
+  noticing. `make example-check` compiles all four against the real module.
+  `examples/engine_run.go` now demonstrates `RunE` and `*ExitError`, which is
+  the point of making the engine embeddable.
+
+- **README corrections.** The MCP section's `--audit-log` flag was
+  undocumented; the deletion refusal list omitted gitignored content and
+  submodules holding unpublished commits, both of which the cascade actually
+  checks; the "no network calls" claim did not distinguish the read-only
+  default from `--enable-mutations`, where `git` does reach the network; and
+  an install cross-reference pointed at a `go install` section that did not
+  exist. That section now exists, and records that a `go install` build
+  reports `version dev` because `-ldflags` are applied only at release.
+
+- **`docs/security-model.md`** claims C2, C3 and C4 updated: C2 cites the new
+  path-sandbox fuzz target, C3 records provenance as a release asset, and C4's
+  refusal list and evidence now match the code.
+
+- **`docs/osps-baseline-fillable.md`** refreshed from a v0.0.11 snapshot. It
+  claimed 90.2% coverage (now 100%), 56/56 documented symbols (now 93/93),
+  gitleaks running on every PR (it was not, until this release), and
+  `OSPS-SA-03.02` unmet with a threat model as a "candidate for a future
+  security-model.md" — which exists. The prefilled bestpractices.dev form
+  links were rewritten alongside the tables so the two cannot disagree.
+
 ### Testing
 
 - **Coverage is 100% of statements**, up from 97.6%, across all eight
