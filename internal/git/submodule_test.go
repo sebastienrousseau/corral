@@ -6,22 +6,50 @@ package git
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// runGit runs a git fixture command with an explicit identity and no user or
+// system configuration.
+//
+// The identity has to come from the environment rather than `git config`:
+// a submodule's working directory has no .git directory of its own — it has
+// a .git *file* pointing into the parent's .git/modules — so `git -C sub
+// config user.name` does not reach the config that a commit inside the
+// submodule actually reads. A developer machine with a global identity masks
+// this completely; a CI runner without one fails with "empty ident name",
+// which is exactly how this was found.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	full := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", full...) // #nosec G204 -- fixture arguments are literals in this file
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=Corral Test",
+		"GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=Corral Test",
+		"GIT_COMMITTER_EMAIL=test@example.invalid",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s failed: %v (%s)", args, dir, err, out)
+	}
+}
+
 // initRepoWithCommit creates a working repository with one commit on main.
 func initRepoWithCommit(t *testing.T, dir, filename string) {
 	t.Helper()
-	run(t, "git", "-C", dir, "init", "-b", "main")
-	run(t, "git", "-C", dir, "config", "user.name", "Test")
-	run(t, "git", "-C", dir, "config", "user.email", "test@test.com")
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "user.email", "test@test.com")
 	if err := os.WriteFile(filepath.Join(dir, filename), []byte("body\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", dir, "add", ".")
-	run(t, "git", "-C", dir, "commit", "-m", "init")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "init")
 }
 
 // repoWithSubmodule builds a parent repository containing one submodule that
@@ -36,15 +64,15 @@ func repoWithSubmodule(t *testing.T) (parent, subInParent string) {
 	if err := os.MkdirAll(subUpstream, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", subUpstream, "init", "--bare", "-b", "main")
+	runGit(t, subUpstream, "init", "--bare", "-b", "main")
 
 	subWork := filepath.Join(root, "sub-work")
 	if err := os.MkdirAll(subWork, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	initRepoWithCommit(t, subWork, "sub.txt")
-	run(t, "git", "-C", subWork, "remote", "add", "origin", subUpstream)
-	run(t, "git", "-C", subWork, "push", "-u", "origin", "main")
+	runGit(t, subWork, "remote", "add", "origin", subUpstream)
+	runGit(t, subWork, "push", "-u", "origin", "main")
 
 	parent = filepath.Join(root, "parent")
 	if err := os.MkdirAll(parent, 0o750); err != nil {
@@ -54,9 +82,8 @@ func repoWithSubmodule(t *testing.T) (parent, subInParent string) {
 	// -c protocol.file.allow=always: git refuses local-path submodules by
 	// default. This is a fixture on a temp dir, not a clone of anything
 	// untrusted.
-	run(t, "git", "-C", parent, "-c", "protocol.file.allow=always",
-		"submodule", "add", subUpstream, "sub")
-	run(t, "git", "-C", parent, "commit", "-m", "add submodule")
+	runGit(t, parent, "-c", "protocol.file.allow=always", "submodule", "add", subUpstream, "sub")
+	runGit(t, parent, "commit", "-m", "add submodule")
 
 	return parent, filepath.Join(parent, "sub")
 }
@@ -92,8 +119,8 @@ func TestSubmodulesHaveUnpublishedWorkDetectsLocalCommit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "local-only.txt"), []byte("unpushed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", sub, "add", ".")
-	run(t, "git", "-C", sub, "commit", "-m", "local only")
+	runGit(t, sub, "add", ".")
+	runGit(t, sub, "commit", "-m", "local only")
 
 	unpublished, detail := submodulesHaveUnpublishedWork(context.Background(), parent)
 	if !unpublished {
@@ -133,9 +160,9 @@ func TestHasUnpublishedWorkConsultsSubmodules(t *testing.T) {
 	if err := os.MkdirAll(parentUpstream, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", parentUpstream, "init", "--bare", "-b", "main")
-	run(t, "git", "-C", parent, "remote", "add", "origin", parentUpstream)
-	run(t, "git", "-C", parent, "push", "-u", "origin", "main")
+	runGit(t, parentUpstream, "init", "--bare", "-b", "main")
+	runGit(t, parent, "remote", "add", "origin", parentUpstream)
+	runGit(t, parent, "push", "-u", "origin", "main")
 
 	if unpublished, detail := HasUnpublishedWork(context.Background(), parent); unpublished {
 		t.Fatalf("clean parent with published submodule reported unpublished: %s", detail)
@@ -144,17 +171,17 @@ func TestHasUnpublishedWorkConsultsSubmodules(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "local-only.txt"), []byte("unpushed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", sub, "add", ".")
-	run(t, "git", "-C", sub, "commit", "-m", "local only")
+	runGit(t, sub, "add", ".")
+	runGit(t, sub, "commit", "-m", "local only")
 
 	// Record and publish the new submodule pointer in the parent. Without
 	// this the parent's own working tree is dirty, HasUnpublishedWork stops
 	// at "working tree has local changes", and the submodule branch is
 	// never reached — which is exactly the state this test must avoid, so
 	// that a regression in the submodule check cannot hide behind it.
-	run(t, "git", "-C", parent, "add", "sub")
-	run(t, "git", "-C", parent, "commit", "-m", "bump submodule")
-	run(t, "git", "-C", parent, "push", "origin", "main")
+	runGit(t, parent, "add", "sub")
+	runGit(t, parent, "commit", "-m", "bump submodule")
+	runGit(t, parent, "push", "origin", "main")
 
 	unpublished, detail := HasUnpublishedWork(context.Background(), parent)
 	if !unpublished {
@@ -183,8 +210,8 @@ func TestHasIgnoredContentSamplesAtMostThree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("secret*\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	run(t, "git", "-C", dir, "add", ".gitignore")
-	run(t, "git", "-C", dir, "commit", "-m", "ignore")
+	runGit(t, dir, "add", ".gitignore")
+	runGit(t, dir, "commit", "-m", "ignore")
 
 	// Five ignored files, so the reported sample must be truncated.
 	for _, name := range []string{"secret1", "secret2", "secret3", "secret4", "secret5"} {
