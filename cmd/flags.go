@@ -102,10 +102,16 @@ func newCloneFlags() *pflag.FlagSet {
 	return fs
 }
 
+// numCPU reports the host's usable core count. A seam rather than a direct
+// call so both clamp branches below are reachable from a test: the bounds
+// only bite on hosts with fewer than four or more than eight cores, which
+// makes the clamps untestable on whatever machine happens to run CI.
+var numCPU = runtime.NumCPU
+
 // defaultConcurrency sizes the worker pool from the host, bounded to a range
 // that is useful without being hostile to the GitHub API.
 func defaultConcurrency() int {
-	n := runtime.NumCPU()
+	n := numCPU()
 	if n < minDefaultConcurrency {
 		return minDefaultConcurrency
 	}

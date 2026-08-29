@@ -161,17 +161,42 @@ func FetchReposWithOptions(ctx context.Context, owner string, opts FetchOptions)
 	// go-github v57+ replaced NewClient(*http.Client) with a variadic
 	// options constructor that also returns an error, and WithAuthToken moved
 	// from a chained client method to a ClientOptionsFunc.
-	client, err := gh.NewClient(gh.WithHTTPClient(httpClient), gh.WithAuthToken(token))
+	client, err := newGitHubClient(gh.WithHTTPClient(httpClient), gh.WithAuthToken(token))
 	if err != nil {
 		return nil, fmt.Errorf("construct GitHub client: %w", err)
 	}
 	return FetchReposWithClientOptions(ctx, client, owner, opts)
 }
 
+// newGitHubClient constructs the go-github client. A seam rather than a
+// direct call so the construction-failure branch is reachable from a test:
+// gh.NewClient only fails on a malformed option, which production code
+// cannot produce, and an unreachable error path is an untested error path.
+var newGitHubClient = gh.NewClient
+
 // FetchReposWithClient allows injecting a GitHub client for retrieving repositories.
 // This is primarily exposed for testing purposes.
 func FetchReposWithClient(ctx context.Context, client *gh.Client, owner string, limit int) ([]Repo, error) {
 	return FetchReposWithClientOptions(ctx, client, owner, FetchOptions{Limit: limit})
+}
+
+// pageFetcher retrieves one page of repositories from whichever GitHub
+// listing endpoint suits the requested owner.
+type pageFetcher func(page int) ([]*gh.Repository, *gh.Response, error)
+
+// listingKind records which listing endpoint an owner resolves to. The
+// choice is made once, before any page is fetched, because it depends on
+// two API lookups that must not be repeated per page.
+type listingKind struct {
+	// search is true when owner is a `topic:` or `language:` search query
+	// rather than a user or organisation.
+	search bool
+	// org is true when owner is a GitHub organisation.
+	org bool
+	// authenticatedUser is true when owner is the token's own account, in
+	// which case the authenticated-user endpoint is used so private
+	// repositories are included.
+	authenticatedUser bool
 }
 
 // FetchReposWithClientOptions allows injecting a GitHub client and advanced filtering.
@@ -185,189 +210,229 @@ func FetchReposWithClientOptions(ctx context.Context, client *gh.Client, owner s
 		return nil, errors.New("owner must not be empty")
 	}
 
-	isSearch := strings.HasPrefix(owner, "topic:") || strings.HasPrefix(owner, "language:")
+	kind, err := resolveListingKind(ctx, client, owner)
+	if err != nil {
+		return nil, err
+	}
 
-	var isOrg bool
-	var isAuthenticatedUser bool
-	if !isSearch {
-		u, _, err := client.Users.Get(ctx, owner)
-		if err != nil {
-			return nil, describeOwnerLookupError(ctx, client, owner, err)
+	collector := &repoCollector{
+		limit:       opts.Limit,
+		includeLang: toLookupSet(opts.IncludeLanguages),
+		excludeLang: toLookupSet(opts.ExcludeLanguages),
+		opts:        opts,
+	}
+	fetchPage := newPageFetcher(ctx, client, owner, opts, kind)
+
+	// Fetch the first page to learn the total page count.
+	repos, resp, err := fetchPage(1)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing repositories for '%s': %w", owner, err)
+	}
+	collector.absorb(repos)
+
+	switch {
+	case resp.LastPage > 1 && collector.wants():
+		if err := collectConcurrently(ctx, owner, fetchPage, resp.LastPage, collector); err != nil {
+			return nil, err
 		}
-		isOrg = u.GetType() == "Organization"
-
-		// When the requested owner is the authenticated user, list via the
-		// authenticated-user endpoint, which returns private repositories that the
-		// public ListByUser endpoint omits.
-		if !isOrg {
-			if authedUser, _, authErr := client.Users.Get(ctx, ""); authErr == nil {
-				login := authedUser.GetLogin()
-				isAuthenticatedUser = login != "" && login == u.GetLogin()
-			}
+	case resp.NextPage > 0 && collector.wants():
+		// Fallback to a sequential fetch when LastPage isn't provided but
+		// NextPage is.
+		if err := collectSequentially(owner, fetchPage, resp.NextPage, collector); err != nil {
+			return nil, err
 		}
 	}
 
-	includeLang := toLookupSet(opts.IncludeLanguages)
-	excludeLang := toLookupSet(opts.ExcludeLanguages)
+	sortRepos(collector.repos, opts.Sort)
+	return collector.repos, nil
+}
 
-	fetchPage := func(p int) ([]*gh.Repository, *gh.Response, error) {
+// resolveListingKind determines which listing endpoint owner should be read
+// from, performing the owner lookups that decision needs.
+func resolveListingKind(ctx context.Context, client *gh.Client, owner string) (listingKind, error) {
+	kind := listingKind{
+		search: strings.HasPrefix(owner, "topic:") || strings.HasPrefix(owner, "language:"),
+	}
+	if kind.search {
+		return kind, nil
+	}
+
+	u, _, err := client.Users.Get(ctx, owner)
+	if err != nil {
+		return kind, describeOwnerLookupError(ctx, client, owner, err)
+	}
+	kind.org = u.GetType() == "Organization"
+	if kind.org {
+		return kind, nil
+	}
+
+	// When the requested owner is the authenticated user, list via the
+	// authenticated-user endpoint, which returns private repositories that the
+	// public ListByUser endpoint omits.
+	if authedUser, _, authErr := client.Users.Get(ctx, ""); authErr == nil {
+		login := authedUser.GetLogin()
+		kind.authenticatedUser = login != "" && login == u.GetLogin()
+	}
+	return kind, nil
+}
+
+// newPageFetcher returns the page-fetching closure for the resolved
+// listing kind. Every endpoint is paged 100 at a time.
+func newPageFetcher(ctx context.Context, client *gh.Client, owner string, opts FetchOptions, kind listingKind) pageFetcher {
+	return func(p int) ([]*gh.Repository, *gh.Response, error) {
+		listOpts := gh.ListOptions{Page: p, PerPage: 100}
 		switch {
-		case isSearch:
+		case kind.search:
 			result, resp, err := client.Search.Repositories(ctx, owner, &gh.SearchOptions{
-				Sort: "stars",
-				ListOptions: gh.ListOptions{
-					Page:    p,
-					PerPage: 100,
-				},
+				Sort:        "stars",
+				ListOptions: listOpts,
 			})
 			if err != nil {
 				return nil, nil, err
 			}
 			return result.Repositories, resp, nil
-		case isOrg:
+		case kind.org:
 			return client.Repositories.ListByOrg(ctx, owner, &gh.RepositoryListByOrgOptions{
-				Type: orgTypeForVisibility(opts.Visibility),
-				Sort: "updated",
-				ListOptions: gh.ListOptions{
-					Page:    p,
-					PerPage: 100,
-				},
+				Type:        orgTypeForVisibility(opts.Visibility),
+				Sort:        "updated",
+				ListOptions: listOpts,
 			})
-		case isAuthenticatedUser:
+		case kind.authenticatedUser:
 			return client.Repositories.ListByAuthenticatedUser(ctx, &gh.RepositoryListByAuthenticatedUserOptions{
 				Visibility:  opts.Visibility,
 				Affiliation: "owner",
 				Sort:        "updated",
-				ListOptions: gh.ListOptions{
-					Page:    p,
-					PerPage: 100,
-				},
+				ListOptions: listOpts,
 			})
 		default:
 			return client.Repositories.ListByUser(ctx, owner, &gh.RepositoryListByUserOptions{
-				Type: "owner",
-				Sort: "updated",
-				ListOptions: gh.ListOptions{
-					Page:    p,
-					PerPage: 100,
-				},
+				Type:        "owner",
+				Sort:        "updated",
+				ListOptions: listOpts,
 			})
 		}
 	}
+}
 
-	// Fetch first page to learn total page count
-	repos, resp, err := fetchPage(1)
-	if err != nil {
-		return nil, fmt.Errorf("failed listing repositories for '%s': %w", owner, err)
-	}
-	var allRepos []Repo
-	for _, r := range repos {
-		if opts.Limit > 0 && len(allRepos) >= opts.Limit {
-			break
+// repoCollector accumulates mapped repositories, applying the language and
+// visibility filters and stopping at the requested limit.
+type repoCollector struct {
+	repos       []Repo
+	limit       int
+	includeLang map[string]struct{}
+	excludeLang map[string]struct{}
+	opts        FetchOptions
+}
+
+// wants reports whether the collector can still take more repositories.
+func (c *repoCollector) wants() bool {
+	return c.limit == 0 || len(c.repos) < c.limit
+}
+
+// absorb maps and filters one page of API results into the collection.
+func (c *repoCollector) absorb(page []*gh.Repository) {
+	for _, r := range page {
+		if !c.wants() {
+			return
 		}
 		repo := mapRepository(r)
-		if !matchesFilters(repo, includeLang, excludeLang, opts) {
+		if !matchesFilters(repo, c.includeLang, c.excludeLang, c.opts) {
 			continue
 		}
-		allRepos = append(allRepos, repo)
+		c.repos = append(c.repos, repo)
 	}
+}
 
-	if resp.LastPage > 1 && (opts.Limit == 0 || len(allRepos) < opts.Limit) {
-		lastPageToFetch := resp.LastPage
+// maxConcurrentPageFetches bounds how many listing pages are requested at
+// once. Five keeps a large organisation responsive without tripping GitHub's
+// secondary rate limits.
+//
+// A var rather than a const so a test can shrink it to zero, which makes the
+// semaphore unacquirable and the cancellation branch in collectConcurrently
+// deterministic instead of a scheduling race.
+var maxConcurrentPageFetches = 5
 
-		var (
-			mu         sync.Mutex
-			errs       []error
-			resultsMap = make(map[int][]*gh.Repository)
-			sem        = make(chan struct{}, 5) // semaphore: limit to 5 concurrent requests
-			wg         sync.WaitGroup
-		)
+// collectConcurrently fetches pages 2..lastPage in parallel, bounded to five
+// in flight, and absorbs them in page order so the result stays
+// deterministic regardless of completion order.
+func collectConcurrently(ctx context.Context, owner string, fetchPage pageFetcher, lastPage int, collector *repoCollector) error {
+	var (
+		mu         sync.Mutex
+		errs       []error
+		resultsMap = make(map[int][]*gh.Repository)
+		sem        = make(chan struct{}, maxConcurrentPageFetches)
+		wg         sync.WaitGroup
+	)
 
-		for p := 2; p <= lastPageToFetch; p++ {
-			wg.Add(1)
-			go func(pNum int) {
-				defer wg.Done()
-				if err := acquirePageSlot(ctx, sem); err != nil {
-					mu.Lock()
-					errs = append(errs, err)
-					mu.Unlock()
-					return
-				}
-				defer func() { <-sem }()
-
-				pRepos, _, pErr := fetchPage(pNum)
-
+	for p := 2; p <= lastPage; p++ {
+		wg.Add(1)
+		go func(pNum int) {
+			defer wg.Done()
+			if err := acquirePageSlot(ctx, sem); err != nil {
 				mu.Lock()
-				defer mu.Unlock()
-				if pErr != nil {
-					errs = append(errs, pErr)
-					return
-				}
-				resultsMap[pNum] = pRepos
-			}(p)
-		}
-		wg.Wait()
-
-		if len(errs) > 0 {
-			return nil, fmt.Errorf("failed listing repositories for '%s' (concurrent fetch failed): %w", owner, errs[0])
-		}
-
-		for p := 2; p <= lastPageToFetch; p++ {
-			for _, r := range resultsMap[p] {
-				if opts.Limit > 0 && len(allRepos) >= opts.Limit {
-					break
-				}
-				repo := mapRepository(r)
-				if !matchesFilters(repo, includeLang, excludeLang, opts) {
-					continue
-				}
-				allRepos = append(allRepos, repo)
+				errs = append(errs, err)
+				mu.Unlock()
+				return
 			}
-		}
-	} else if resp.NextPage > 0 && (opts.Limit == 0 || len(allRepos) < opts.Limit) {
-		// Fallback to sequential fetch if LastPage isn't provided but NextPage is
-		page := resp.NextPage
-		for {
-			pRepos, pResp, pErr := fetchPage(page)
+			defer func() { <-sem }()
+
+			pRepos, _, pErr := fetchPage(pNum)
+
+			mu.Lock()
+			defer mu.Unlock()
 			if pErr != nil {
-				return nil, fmt.Errorf("failed listing repositories for '%s' (fallback fetch failed): %w", owner, pErr)
+				errs = append(errs, pErr)
+				return
 			}
-			for _, r := range pRepos {
-				if opts.Limit > 0 && len(allRepos) >= opts.Limit {
-					break
-				}
-				repo := mapRepository(r)
-				if !matchesFilters(repo, includeLang, excludeLang, opts) {
-					continue
-				}
-				allRepos = append(allRepos, repo)
-			}
-			if pResp.NextPage == 0 || (opts.Limit > 0 && len(allRepos) >= opts.Limit) {
-				break
-			}
-			page = pResp.NextPage
-		}
+			resultsMap[pNum] = pRepos
+		}(p)
+	}
+	wg.Wait()
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed listing repositories for '%s' (concurrent fetch failed): %w", owner, errs[0])
 	}
 
-	// Apply post-fetch sorting if requested
-	if opts.Sort != "" {
-		switch strings.ToLower(opts.Sort) {
-		case "name":
-			sort.Slice(allRepos, func(i, j int) bool {
-				return strings.ToLower(allRepos[i].Name) < strings.ToLower(allRepos[j].Name)
-			})
-		case "stars":
-			sort.Slice(allRepos, func(i, j int) bool {
-				return allRepos[i].Stars > allRepos[j].Stars
-			})
-		case "last updated", "updated":
-			sort.Slice(allRepos, func(i, j int) bool {
-				return allRepos[i].PushedAt.After(allRepos[j].PushedAt)
-			})
-		}
+	for p := 2; p <= lastPage; p++ {
+		collector.absorb(resultsMap[p])
 	}
+	return nil
+}
 
-	return allRepos, nil
+// collectSequentially walks the NextPage chain from firstPage until the
+// listing is exhausted or the collector is full.
+func collectSequentially(owner string, fetchPage pageFetcher, firstPage int, collector *repoCollector) error {
+	page := firstPage
+	for {
+		pRepos, pResp, pErr := fetchPage(page)
+		if pErr != nil {
+			return fmt.Errorf("failed listing repositories for '%s' (fallback fetch failed): %w", owner, pErr)
+		}
+		collector.absorb(pRepos)
+		if pResp.NextPage == 0 || !collector.wants() {
+			return nil
+		}
+		page = pResp.NextPage
+	}
+}
+
+// sortRepos applies the requested post-fetch ordering in place. An unknown
+// or empty sort key leaves the API's own ordering untouched.
+func sortRepos(repos []Repo, key string) {
+	switch strings.ToLower(key) {
+	case "name":
+		sort.Slice(repos, func(i, j int) bool {
+			return strings.ToLower(repos[i].Name) < strings.ToLower(repos[j].Name)
+		})
+	case "stars":
+		sort.Slice(repos, func(i, j int) bool {
+			return repos[i].Stars > repos[j].Stars
+		})
+	case "last updated", "updated":
+		sort.Slice(repos, func(i, j int) bool {
+			return repos[i].PushedAt.After(repos[j].PushedAt)
+		})
+	}
 }
 
 func acquirePageSlot(ctx context.Context, sem chan struct{}) error {

@@ -1,0 +1,14 @@
+# Accepted gitleaks findings, one fingerprint per line.
+#
+# A fingerprint is commit:path:rule:line, so an entry stops applying the
+# moment the finding moves. That is deliberate — a blanket path or rule
+# exclusion would keep hiding a real secret introduced later in the same file.
+#
+# f3c4d0c5 — internal/mcp/resources_test.go, `private-key` rule.
+# The fixture is a table of deliberately fake credential files
+# (".env", "deploy.pem", "id_ed25519", …) used to prove that the MCP file
+# resource refuses to serve them. The matched value is the literal string
+# "-----BEGIN OPENSSH PRIVATE KEY-----" with no key material after it. The
+# test has since moved to internal/mcp/protocol_test.go; this entry covers
+# only the historical commit, which cannot be edited without a rewrite.
+f3c4d0c5e212a57480c3e3ba3b5c1af46f20b23a:internal/mcp/resources_test.go:private-key:479

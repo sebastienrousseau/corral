@@ -5,11 +5,12 @@ package mcp
 
 import (
 	"errors"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sebastienrousseau/corral/internal/diag"
 )
 
 // makeFakeRepo creates a directory layout that looks like a corral-
@@ -222,10 +223,10 @@ func TestIndexFindUniqueAndAmbiguous(t *testing.T) {
 // missing sidecar must NOT log — that's the expected state for any
 // clone made before smart-sync existed and would flood the output.
 func TestReadStateLogsOnMalformedJSON(t *testing.T) {
-	var buf strings.Builder
-	oldOut := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(oldOut)
+	// readState's parse failure is debug detail: a malformed sidecar is
+	// recovered from silently at the default level, so the capture has to
+	// raise the threshold to see it.
+	buf := captureDiag(t, diag.LevelDebug)
 
 	// Missing sidecar: silent.
 	dirNoState := t.TempDir()

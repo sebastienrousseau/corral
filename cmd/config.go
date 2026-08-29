@@ -248,6 +248,11 @@ func defaultConfigTemplate(cmd *cobra.Command) string {
 	return b.String()
 }
 
+// writeConfigFile is a seam so the write-failure path is testable without
+// depending on permission bits, which do not behave the same on every
+// platform. Same reasoning as readConfigFile.
+var writeConfigFile = os.WriteFile
+
 // writeConfigTemplate creates the config file, refusing to overwrite an
 // existing one.
 func writeConfigTemplate(path, body string) error {
@@ -260,7 +265,7 @@ func writeConfigTemplate(path, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	if err := writeConfigFile(path, []byte(body), 0o600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "Wrote %s\n", path)

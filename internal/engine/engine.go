@@ -22,6 +22,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
+	"github.com/sebastienrousseau/corral/internal/diag"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
 	"github.com/sebastienrousseau/corral/internal/tui"
@@ -179,128 +180,307 @@ var (
 	applyTags        = applyFinderTags
 )
 
-// Run executes the core Corral workflow, orchestrating GitHub API fetches,
-// legacy layout migrations, concurrent Git operations, and orphaned repository detection.
+// ExitError carries the process exit status a failed run should produce.
+//
+// The engine is a library: it reports failure by returning an error rather
+// than by calling os.Exit, so an embedder can decide what a failure means.
+// Run is the thin wrapper that turns this back into a process exit for the
+// CLI. Silent is set when the condition was already reported to the user —
+// per-repository failures are printed as results, and cancellation is
+// announced by emitCancellation — so the caller must not print it a second
+// time.
+type ExitError struct {
+	// Code is the process exit status the CLI should terminate with.
+	Code int
+	// Silent is true when the failure has already been reported to the user
+	// and printing the error again would duplicate it.
+	Silent bool
+	// Err is the underlying cause, or nil when Silent.
+	Err error
+}
+
+// Error implements the error interface.
+func (e *ExitError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("run failed with exit status %d", e.Code)
+}
+
+// Unwrap returns the underlying cause so errors.Is and errors.As reach it.
+func (e *ExitError) Unwrap() error { return e.Err }
+
+// exitStatus reports the process exit status an error from RunE maps to.
+// Anything that is not an ExitError is an ordinary failure and exits 1.
+func exitStatus(err error) int {
+	var exit *ExitError
+	if errors.As(err, &exit) {
+		return exit.Code
+	}
+	return 1
+}
+
+// silentFailure reports whether err was already communicated to the user.
+func silentFailure(err error) bool {
+	var exit *ExitError
+	return errors.As(err, &exit) && exit.Silent
+}
+
+// Run executes the core Corral workflow and terminates the process when the
+// run fails. It is the entry point for the CLI; embedders should call RunE,
+// which returns the error instead of exiting.
 func Run(ctx context.Context, opts RunOptions) {
+	err := RunE(ctx, opts)
+	if err == nil {
+		return
+	}
+	if !silentFailure(err) {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+	}
+	osExit(exitStatus(err))
+}
+
+// RunE executes the core Corral workflow, orchestrating GitHub API fetches,
+// legacy layout migrations, concurrent Git operations, and orphaned
+// repository detection. It returns nil on a clean run, and otherwise an
+// error — an *ExitError when the failure maps to a specific exit status.
+func RunE(ctx context.Context, opts RunOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if opts.Concurrency < 1 {
-		fmt.Fprintln(os.Stderr, "ERROR: concurrency must be >= 1")
-		osExit(1)
-		return
+	if err := opts.normalize(); err != nil {
+		return err
 	}
-	if opts.Fetch.Limit < 0 {
-		fmt.Fprintln(os.Stderr, "ERROR: limit must be >= 0")
-		osExit(1)
-		return
-	}
-	if opts.Owner == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: owner must not be empty")
-		osExit(1)
-		return
-	}
-	if opts.BaseDir == "" {
-		fmt.Fprintln(os.Stderr, "ERROR: base directory must not be empty")
-		osExit(1)
-		return
-	}
-	if opts.Protocol != "https" && opts.Protocol != "ssh" {
-		fmt.Fprintln(os.Stderr, "ERROR: protocol must be either ssh or https")
-		osExit(1)
-		return
-	}
-	if opts.Output == "" {
-		opts.Output = OutputText
-	}
-
-	// Allow git to authenticate HTTPS clones/pulls of private repositories using
-	// the same credential resolved for the GitHub API.
-	var tokenOnce sync.Once
-	var token string
-	git.TokenProvider = func() string {
-		tokenOnce.Do(func() { token = github.Token(ctx, opts.Fetch.AuthMode) })
-		return token
-	}
+	installTokenProvider(ctx, opts)
 
 	isTTY := isTerminal(os.Stdout.Fd())
 	// stdout is reserved for the selected output format. Diagnostics always go
 	// to stderr so JSON and NDJSON remain parseable.
 	log.SetOutput(os.Stderr)
 
-	var repos []github.Repo
-	var err error
-
-	if opts.Interactive {
-		var ok bool
-		tui.Version = opts.Version
-		repos, ok, err = runSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
-			return fetchRepos(ctx, opts.Owner, opts.Fetch)
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			osExit(1)
-			return
-		}
-		if !ok {
-			return
-		}
-		if len(repos) == 0 {
-			if opts.Output == OutputText {
-				fmt.Println("No repositories selected.")
-			}
-			return
-		}
-		if opts.Output == OutputText && isTTY {
-			fmt.Print("\033[2J\033[H")
-		}
-	} else {
-		if opts.Output == OutputText {
-			if isTTY {
-				if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
-					fmt.Print(tui.GetStyledLogo())
-					fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ Organising Repositories") + "\n")
-					fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n")
-				}
-				fmt.Println("Fetching repositories from GitHub...")
-			} else {
-				log.Println("Fetching repositories from GitHub...")
-			}
-		}
-		repos, err = fetchRepos(ctx, opts.Owner, opts.Fetch)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			osExit(1)
-			return
-		}
+	repos, proceed, err := resolveRepos(ctx, opts, isTTY)
+	if err != nil {
+		return err
 	}
-
-	if opts.Fetch.Limit > 0 && len(repos) == opts.Fetch.Limit && opts.Output == OutputText {
-		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
+	if !proceed {
+		return nil
 	}
 
 	layoutTemplate, err := parseLayoutTemplate(effectiveLayout(opts, github.Repo{}))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: invalid layout template: %v\n", err)
-		osExit(1)
-		return
+		return fmt.Errorf("invalid layout template: %w", err)
+	}
+	if err := prepareWorkspace(opts, repos); err != nil {
+		return err
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+
+	outcome := executeJobs(ctx, opts, repos, layoutTemplate, isTTY, encoder)
+
+	// Detect cancellation after workers + consumer drain. ctx.Err() at this
+	// point is the authoritative signal: it's set if and only if a SIGINT/
+	// SIGTERM (or a parent's cancel()) fired during the run. The result set
+	// in that case is partial and we must signal that to downstream consumers
+	// so they don't mistake an aborted run for a clean one.
+	if err := ctx.Err(); err != nil {
+		outcome.summary.Canceled = true
+		emitCancellation(opts.Output, isTTY, encoder, err)
 	}
 
 	if usesClassicLayout(opts) && !opts.DryRun {
-		if err := ensureAppleCollections(opts.BaseDir); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: failed creating repository collections: %v\n", err)
-			osExit(1)
-			return
-		}
-		migrateLegacy(opts.BaseDir, repos)
-		normalizeLayoutDirCase(opts.BaseDir, repos)
+		cleanupEmptyFolders(opts.BaseDir, repos)
 	}
+
+	orphanPaths := emitOrphanReport(opts, repos, &outcome, encoder)
+
+	if err := emitAggregate(opts, &outcome, orphanPaths); err != nil {
+		return err
+	}
+	return runOutcomeError(&outcome)
+}
+
+// normalize validates the option set and fills in documented defaults. It is
+// the single place a bad option becomes an error, so every caller — CLI,
+// MCP server or embedder — rejects the same inputs for the same reasons.
+func (opts *RunOptions) normalize() error {
+	if opts.Concurrency < 1 {
+		return errors.New("concurrency must be >= 1")
+	}
+	if opts.Fetch.Limit < 0 {
+		return errors.New("limit must be >= 0")
+	}
+	if opts.Owner == "" {
+		return errors.New("owner must not be empty")
+	}
+	if opts.BaseDir == "" {
+		return errors.New("base directory must not be empty")
+	}
+	if opts.Protocol != "https" && opts.Protocol != "ssh" {
+		return errors.New("protocol must be either ssh or https")
+	}
+	if opts.Output == "" {
+		opts.Output = OutputText
+	}
+	return nil
+}
+
+// installTokenProvider lets git authenticate HTTPS clones and pulls of
+// private repositories with the same credential resolved for the GitHub API.
+// The token is resolved at most once, and only if git actually asks for it.
+func installTokenProvider(ctx context.Context, opts RunOptions) {
+	var tokenOnce sync.Once
+	var token string
+	git.TokenProvider = func() string {
+		tokenOnce.Do(func() { token = github.Token(ctx, opts.Fetch.AuthMode) })
+		return token
+	}
+}
+
+// resolveRepos produces the repository set for this run, either from the
+// interactive selector or from a direct API fetch. The bool reports whether
+// the run should proceed: it is false when the user dismissed the selector
+// or selected nothing, which is a clean exit rather than a failure.
+func resolveRepos(ctx context.Context, opts RunOptions, isTTY bool) ([]github.Repo, bool, error) {
+	if !opts.Interactive {
+		announceFetch(opts, isTTY)
+		repos, err := fetchRepos(ctx, opts.Owner, opts.Fetch)
+		if err != nil {
+			return nil, false, err
+		}
+		warnOnLimit(opts, len(repos))
+		return repos, true, nil
+	}
+
+	tui.Version = opts.Version
+	repos, ok, err := runSelector(ctx, opts.Owner, opts.Fetch, func() ([]github.Repo, error) {
+		return fetchRepos(ctx, opts.Owner, opts.Fetch)
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	if len(repos) == 0 {
+		if opts.Output == OutputText {
+			fmt.Println("No repositories selected.")
+		}
+		return nil, false, nil
+	}
+	if opts.Output == OutputText && isTTY {
+		fmt.Print("\033[2J\033[H")
+	}
+	warnOnLimit(opts, len(repos))
+	return repos, true, nil
+}
+
+// announceFetch prints the banner and progress line that precede a
+// non-interactive fetch, honouring the selected output format and whether
+// stdout is a terminal.
+func announceFetch(opts RunOptions, isTTY bool) {
+	if opts.Output != OutputText {
+		return
+	}
+	if !isTTY {
+		log.Println("Fetching repositories from GitHub...")
+		return
+	}
+	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
+		fmt.Print(tui.GetStyledLogo())
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ Organising Repositories") + "\n")
+		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n")
+	}
+	fmt.Println("Fetching repositories from GitHub...")
+}
+
+// warnOnLimit reports a fetch that returned exactly --limit repositories,
+// which means the listing was probably truncated.
+func warnOnLimit(opts RunOptions, fetched int) {
+	if opts.Fetch.Limit > 0 && fetched == opts.Fetch.Limit && opts.Output == OutputText {
+		fmt.Printf("WARNING: Fetched exactly %d repositories. There may be more.\n", opts.Fetch.Limit)
+	}
+}
+
+// prepareWorkspace performs the one-off layout work a classic-layout run
+// needs before any repository is processed: creating the collection folders,
+// migrating clones left by older layouts, and repairing directory case.
+func prepareWorkspace(opts RunOptions, repos []github.Repo) error {
+	if !usesClassicLayout(opts) || opts.DryRun {
+		return nil
+	}
+	if err := ensureAppleCollections(opts.BaseDir); err != nil {
+		return fmt.Errorf("failed creating repository collections: %w", err)
+	}
+	migrateLegacy(opts.BaseDir, repos)
+	normalizeLayoutDirCase(opts.BaseDir, repos)
+	return nil
+}
+
+// runOutcome is everything the worker phase produced.
+type runOutcome struct {
+	results   []RepoResult
+	summary   Summary
+	outputErr error
+}
+
+// executeJobs runs the whole worker phase: it starts the pool, enqueues one
+// job per repository, streams results to the selected output, and returns
+// once every worker and the consumer have drained.
+func executeJobs(
+	ctx context.Context,
+	opts RunOptions,
+	repos []github.Repo,
+	layoutTemplate *template.Template,
+	isTTY bool,
+	encoder *json.Encoder,
+) runOutcome {
 	existingByRemote := discoverExistingRepos(opts.BaseDir)
 
 	jobs := make(chan Job, len(repos))
 	results := make(chan RepoResult, len(repos))
-	var wg sync.WaitGroup
 
+	workers := startWorkers(ctx, opts, jobs, results)
+	scheduled := enqueueJobs(ctx, opts, repos, layoutTemplate, existingByRemote, jobs, results)
+	close(jobs)
+
+	outcome := runOutcome{}
+	outcome.summary.Total = scheduled
+
+	var program *tea.Program
+	if opts.Output == OutputText && isTTY {
+		program = tea.NewProgram(tui.NewModel(scheduled))
+	}
+
+	var consumer sync.WaitGroup
+	consumer.Add(1)
+	go func() {
+		defer consumer.Done()
+		consumeResults(opts, results, program, encoder, &outcome)
+	}()
+
+	if program != nil {
+		if _, err := runProgram(program); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
+		}
+		// Ensure Send unblocks if an injected runner or an early TUI failure
+		// returns without shutting down Bubble Tea's context.
+		program.Kill()
+	}
+
+	workers.Wait()
+	close(results)
+	consumer.Wait()
+	return outcome
+}
+
+// startWorkers launches opts.Concurrency goroutines draining jobs into
+// results, and returns the WaitGroup that reports when they have all
+// finished. Every send and receive is guarded by ctx so a cancelled run
+// unwinds instead of blocking on a full channel.
+func startWorkers(ctx context.Context, opts RunOptions, jobs <-chan Job, results chan<- RepoResult) *sync.WaitGroup {
+	var wg sync.WaitGroup
 	for i := 0; i < opts.Concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -324,9 +504,23 @@ func Run(ctx context.Context, opts RunOptions) {
 			}
 		}()
 	}
+	return &wg
+}
 
+// enqueueJobs resolves each repository's target directory and queues it for
+// a worker, returning the number of results the consumer should expect. A
+// repository whose layout cannot be evaluated, or which is cloned in more
+// than one place, is reported directly as an ERROR result and not queued.
+func enqueueJobs(
+	ctx context.Context,
+	opts RunOptions,
+	repos []github.Repo,
+	layoutTemplate *template.Template,
+	existingByRemote map[string][]string,
+	jobs chan<- Job,
+	results chan<- RepoResult,
+) int {
 	scheduled := 0
-enqueueLoop:
 	for _, repo := range repos {
 		existingPaths := existingByRemote[repoRemoteIdentity(repo)]
 		relPath, err := executeLayout(layoutTemplate, repo, opts.Owner)
@@ -354,138 +548,129 @@ enqueueLoop:
 		legacyDir := filepath.Join(opts.BaseDir, normalizeLanguage(repo.Language), repo.Name)
 		select {
 		case <-ctx.Done():
-			break enqueueLoop
+			return scheduled
 		case jobs <- Job{Repo: repo, Target: targetDir, Legacy: legacyDir, Existing: firstPath(existingPaths)}:
 			scheduled++
 		}
 	}
-	close(jobs)
+	return scheduled
+}
 
-	var (
-		allResults []RepoResult
-		summary    Summary
-		outputErr  error
-	)
-
-	summary.Total = scheduled
-	var (
-		consumerWG sync.WaitGroup
-		p          *tea.Program
-	)
-	if opts.Output == OutputText && isTTY {
-		p = tea.NewProgram(tui.NewModel(scheduled))
-	}
-
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetEscapeHTML(false)
-
-	consumerWG.Add(1)
-	go func() {
-		defer consumerWG.Done()
-		for msg := range results {
-			allResults = append(allResults, msg)
-			summary.add(msg)
-			if p != nil {
-				p.Send(toLogMsg(msg))
-				continue
-			}
-			if opts.Output == OutputText {
-				icon := "✓"
-				if msg.Action == "ERROR" || strings.HasPrefix(msg.Action, "FAIL") {
-					icon = "✗"
-				} else if msg.Action == "SKIP" {
-					icon = "-"
-				}
-				log.Printf("%s [%s] %s: %s", icon, msg.Action, msg.RepoName, msg.Message)
-				continue
-			}
-			if opts.Output == OutputNDJSON {
-				if err := encoder.Encode(msg); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: failed to encode ndjson result: %v\n", err)
-					if outputErr == nil {
-						outputErr = err
-					}
-				}
-			}
-		}
-	}()
-
-	if p != nil {
-		if _, err := runProgram(p); err != nil {
-			fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
-		}
-		// Ensure Send unblocks if an injected runner or an early TUI failure
-		// returns without shutting down Bubble Tea's context.
-		p.Kill()
-	}
-
-	wg.Wait()
-	close(results)
-	consumerWG.Wait()
-
-	// Detect cancellation after workers + consumer drain. ctx.Err() at this
-	// point is the authoritative signal: it's set if and only if a SIGINT/
-	// SIGTERM (or a parent's cancel()) fired during the run. The result set
-	// in that case is partial and we must signal that to downstream consumers
-	// so they don't mistake an aborted run for a clean one.
-	if err := ctx.Err(); err != nil {
-		summary.Canceled = true
-		emitCancellation(opts.Output, isTTY, encoder, err)
-	}
-
-	if usesClassicLayout(opts) && !opts.DryRun {
-		cleanupEmptyFolders(opts.BaseDir, repos)
-	}
-
-	var orphanPaths []string
-	if opts.Orphans && !summary.Canceled {
-		// Skip orphan detection on cancel: the local tree may be mid-clone
-		// and the report would be misleading.
-		orphanPaths = findOrphans(opts.Owner, opts.BaseDir, repos)
-		switch opts.Output {
-		case OutputText:
-			emitOrphans(opts.Owner, orphanPaths)
-		case OutputNDJSON:
-			for _, orphan := range orphanPaths {
-				if err := encoder.Encode(RepoResult{Action: "ORPHAN", Target: orphan, Message: "local repository is absent upstream"}); err != nil {
-					fmt.Fprintf(os.Stderr, "ERROR: failed to encode orphan result: %v\n", err)
-					if outputErr == nil {
-						outputErr = err
-					}
+// consumeResults drains the results channel, accumulating the summary and
+// emitting each result in the selected format. It runs until results is
+// closed, which the caller does only after every worker has finished.
+func consumeResults(
+	opts RunOptions,
+	results <-chan RepoResult,
+	program *tea.Program,
+	encoder *json.Encoder,
+	outcome *runOutcome,
+) {
+	for msg := range results {
+		outcome.results = append(outcome.results, msg)
+		outcome.summary.add(msg)
+		switch {
+		case program != nil:
+			program.Send(toLogMsg(msg))
+		case opts.Output == OutputText:
+			log.Printf("%s [%s] %s: %s", resultIcon(msg), msg.Action, msg.RepoName, msg.Message)
+		case opts.Output == OutputNDJSON:
+			if err := encoder.Encode(msg); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: failed to encode ndjson result: %v\n", err)
+				if outcome.outputErr == nil {
+					outcome.outputErr = err
 				}
 			}
 		}
 	}
+}
 
-	if opts.Output == OutputJSON {
-		payload := struct {
-			Summary Summary      `json:"summary"`
-			Repos   []RepoResult `json:"repos"`
-			Orphans []string     `json:"orphans,omitempty"`
-		}{
-			Summary: summary,
-			Repos:   allResults,
-			Orphans: orphanPaths,
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(payload); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: failed to encode json output: %v\n", err)
-			osExit(1)
-			return
+// resultIcon is the single-character status marker shown beside a result in
+// non-TTY text output.
+func resultIcon(msg RepoResult) string {
+	switch {
+	case msg.Action == "ERROR" || strings.HasPrefix(msg.Action, "FAIL"):
+		return "✗"
+	case msg.Action == "SKIP":
+		return "-"
+	default:
+		return "✓"
+	}
+}
+
+// emitOrphanReport finds and reports local clones that no longer exist
+// upstream, returning the paths so the aggregate JSON document can carry
+// them. Orphan detection is skipped on cancellation: the local tree may be
+// mid-clone and the report would be misleading.
+func emitOrphanReport(opts RunOptions, repos []github.Repo, outcome *runOutcome, encoder *json.Encoder) []string {
+	if !opts.Orphans || outcome.summary.Canceled {
+		return nil
+	}
+	orphanPaths := findOrphans(opts.Owner, opts.BaseDir, repos)
+	switch opts.Output {
+	case OutputText:
+		emitOrphans(opts.Owner, orphanPaths)
+	case OutputNDJSON:
+		for _, orphan := range orphanPaths {
+			if err := encoder.Encode(RepoResult{Action: "ORPHAN", Target: orphan, Message: "local repository is absent upstream"}); err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: failed to encode orphan result: %v\n", err)
+				if outcome.outputErr == nil {
+					outcome.outputErr = err
+				}
+			}
 		}
 	}
+	return orphanPaths
+}
 
-	if summary.Canceled {
+// emitAggregate writes the single JSON document produced by --output json.
+// The other formats have already streamed their output by this point.
+func emitAggregate(opts RunOptions, outcome *runOutcome, orphanPaths []string) error {
+	if opts.Output != OutputJSON {
+		return nil
+	}
+	payload := struct {
+		Summary Summary      `json:"summary"`
+		Repos   []RepoResult `json:"repos"`
+		Orphans []string     `json:"orphans,omitempty"`
+	}{
+		Summary: outcome.summary,
+		Repos:   outcome.results,
+		Orphans: orphanPaths,
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(payload); err != nil {
+		return fmt.Errorf("failed to encode json output: %w", err)
+	}
+	return nil
+}
+
+// runOutcomeError maps a completed run to the error the caller should see.
+// Both failure modes are silent: cancellation is already announced by
+// emitCancellation, and per-repository failures were emitted as results.
+func runOutcomeError(outcome *runOutcome) error {
+	if outcome.summary.Canceled {
 		// POSIX 130 = killed by SIGINT. Lets scripted callers distinguish
 		// cancellation from other failure modes (which exit 1).
-		osExit(cancelExitCode)
-		return
+		return &ExitError{Code: cancelExitCode, Silent: true}
 	}
-	if outputErr != nil || summary.Failed > 0 {
-		osExit(1)
+	if outcome.outputErr != nil {
+		return &ExitError{Code: 1, Silent: true, Err: outcome.outputErr}
 	}
+	if outcome.summary.Failed > 0 {
+		return &ExitError{Code: 1, Silent: true, Err: fmt.Errorf("%d repositor%s failed", outcome.summary.Failed, plural(outcome.summary.Failed))}
+	}
+	return nil
+}
+
+// plural returns the suffix that agrees with n for the stem "repositor".
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
 }
 
 func ensureAppleCollections(baseDir string) error {
@@ -509,7 +694,7 @@ func applyJobFinderTags(opts RunOptions, job Job, result RepoResult) {
 		return
 	}
 	if err := applyTags(tagPath, job.Repo, result); err != nil {
-		log.Printf("WARN: failed applying Finder tags to %s: %v", tagPath, err)
+		diag.Warnf("failed applying Finder tags to %s: %v", tagPath, err)
 	}
 }
 
@@ -697,15 +882,15 @@ func migrateLegacy(baseDir string, repos []github.Repo) {
 			// "tools" was moved with no prompt and — because the dry-run
 			// preview path requires git.IsRepository — no preview either.
 			if ok, why := migratableClone(legacyDir, repo); !ok {
-				log.Printf("SKIP: not migrating %s: %s", legacyDir, why)
+				diag.Warnf("not migrating %s: %s", legacyDir, why)
 				continue
 			}
 			if err := os.MkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
-				log.Printf("WARN: failed creating target parent for migration %s: %v", targetDir, err)
+				diag.Warnf("failed creating target parent for migration %s: %v", targetDir, err)
 				continue
 			}
 			if err := os.Rename(legacyDir, targetDir); err != nil {
-				log.Printf("WARN: failed migrating %s to %s: %v", legacyDir, targetDir, err)
+				diag.Warnf("failed migrating %s to %s: %v", legacyDir, targetDir, err)
 			}
 		}
 	}
@@ -800,11 +985,11 @@ func canonicalCollectionName(name string) string {
 func renameCaseOnly(src, dst string) bool {
 	tmp := dst + ".corral-rename-tmp"
 	if err := renamePath(src, tmp); err != nil {
-		log.Printf("WARN: failed normalizing case for %s: %v", src, err)
+		diag.Warnf("failed normalizing case for %s: %v", src, err)
 		return false
 	}
 	if err := renamePath(tmp, dst); err != nil {
-		log.Printf("WARN: failed normalizing case for %s -> %s: %v", tmp, dst, err)
+		diag.Warnf("failed normalizing case for %s -> %s: %v", tmp, dst, err)
 		_ = renamePath(tmp, src)
 		return false
 	}
@@ -833,6 +1018,10 @@ func cleanupEmptyFolders(baseDir string, repos []github.Repo) {
 	}
 }
 
+// processRepo brings one repository to its desired state: relocating an
+// identity-matched clone that sits at an older layout path, then syncing an
+// existing clone or making a new one. Every outcome is a RepoResult; no
+// error escapes to the caller.
 func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun bool, cloneOpts git.CloneOptions, syncOpts SyncOptions, job Job) RepoResult {
 	repo := job.Repo
 	targetDir := job.Target
@@ -850,50 +1039,9 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 		return result
 	}
 
-	if job.Existing != "" && filepath.Clean(job.Existing) != filepath.Clean(targetDir) {
-		needsMove := true
-		if targetInfo, err := statPath(targetDir); err == nil {
-			existingInfo, existingErr := statPath(job.Existing)
-			if existingErr != nil {
-				result.Action = "ERROR"
-				result.Message = fmt.Sprintf("failed checking existing clone: %v", existingErr)
-				return result
-			}
-			if sameFile(existingInfo, targetInfo) {
-				// Case-insensitive filesystems can resolve Public and public to
-				// the same directory even though their cleaned strings differ.
-				targetDir = job.Existing
-				result.Target = targetDir
-				needsMove = false
-			} else {
-				result.Action = "ERROR"
-				result.Message = fmt.Sprintf("target collision: %s already exists while matching clone is at %s", targetDir, job.Existing)
-				return result
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			result.Action = "ERROR"
-			result.Message = fmt.Sprintf("failed checking target collision: %v", err)
-			return result
-		}
-		if needsMove && dryRun {
-			result.Action = "DRY-RUN"
-			result.Message = fmt.Sprintf("move %s to %s", job.Existing, targetDir)
-			result.Moved = true
-			return result
-		}
-		if needsMove {
-			if err := mkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
-				result.Action = "ERROR"
-				result.Message = fmt.Sprintf("failed creating relocation target: %v", err)
-				return result
-			}
-			if err := renamePath(job.Existing, targetDir); err != nil {
-				result.Action = "ERROR"
-				result.Message = fmt.Sprintf("failed moving identity-matched clone from %s: %v", job.Existing, err)
-				return result
-			}
-			result.Moved = true
-		}
+	targetDir, terminal := relocateIdentityMatch(&result, job, targetDir, dryRun)
+	if terminal != nil {
+		return *terminal
 	}
 
 	if !dryRun {
@@ -905,101 +1053,203 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	}
 
 	if git.IsRepository(targetDir) {
-		wantIdentity := repoRemoteIdentity(repo)
-		if wantIdentity != "" {
-			remote, remoteErr := gitRemoteOrigin(targetDir)
-			gotIdentity := git.CanonicalRemote(remote)
-			if remoteErr != nil || gotIdentity != wantIdentity {
-				result.Action = "ERROR"
-				if remoteErr != nil {
-					result.Message = fmt.Sprintf("cannot verify existing repository origin: %v", remoteErr)
-				} else {
-					result.Message = fmt.Sprintf("origin collision: target has %s, expected %s", gotIdentity, wantIdentity)
-				}
-				return result
-			}
-		}
-		if doSync {
-			result.SyncAttempt = true
-			if dryRun {
-				result.Action = "DRY-RUN"
-				result.Message = "git pull"
-				return result
-			}
-			// An empty upstream repo (created but never pushed to) results
-			// in an unborn HEAD locally, and `git pull` would fail with
-			// "no such ref was fetched". Detect that state cheaply and
-			// SKIP with a specific reason instead of surfacing the git
-			// error as a sync failure.
-			if gitIsEmpty(targetDir) {
-				result.Action = "SKIP"
-				result.Message = "empty repository (no commits yet)"
-				return result
-			}
-			branch, err := gitCurrentBranch(targetDir)
-			if err == nil && branch != repo.DefaultBranch {
-				result.Action = "SKIP"
-				result.Message = fmt.Sprintf("on branch %s", branch)
-				return result
-			}
-			// Skip the network round-trip when the upstream pushed_at is
-			// unchanged since the last successful sync. The cached value
-			// lives in <targetDir>/.corral-state.json. A read error or a
-			// zero state falls through to the original pull-always
-			// behaviour, so a missing/corrupt sidecar can never cause a
-			// stale working tree.
-			if !syncOpts.Force && !repo.PushedAt.IsZero() {
-				if st, err := readCloneState(targetDir); err == nil &&
-					!st.LastSyncedPushedAt.IsZero() &&
-					!repo.PushedAt.After(st.LastSyncedPushedAt) {
-					result.Action = "SKIP"
-					result.Message = "up-to-date (pushed_at unchanged)"
-					return result
-				}
-			}
-			err = gitPull(ctx, targetDir, git.PullOptions{
-				RecurseSubmodules:       cloneOpts.RecurseSubmodules,
-				IgnoreSubmoduleFailures: syncOpts.IgnoreSubmoduleFailures,
-			})
-			if err != nil {
-				result.Action = "ERROR"
-				result.Message = fmt.Sprintf("sync failed: %v", err)
-				return result
-			}
-			stampCloneState(targetDir, repo)
-			result.Action = "SYNC"
-			result.Message = "synced successfully"
-			return result
-		}
-		result.Action = "SKIP"
-		if result.Moved {
-			result.Message = "moved to desired layout; sync disabled"
-		} else {
-			result.Message = "already exists"
-		}
-		return result
-	} else if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
+		return processExistingClone(ctx, result, repo, targetDir, doSync, dryRun, cloneOpts, syncOpts)
+	}
+	if info, err := os.Stat(targetDir); err == nil && info.IsDir() {
 		result.Action = "SKIP"
 		result.Message = "exists but is not a git repo"
 		return result
 	}
+	return cloneRepository(ctx, result, repo, owner, protocol, targetDir, dryRun, cloneOpts)
+}
 
-	url := repo.CloneURL
-	if protocol == "ssh" && repo.SSHURL != "" {
-		url = repo.SSHURL
-	} else if protocol == "ssh" {
-		url = fmt.Sprintf("git@github.com:%s/%s.git", owner, repo.Name)
+// relocateIdentityMatch moves a clone found at a previous layout path to the
+// path the current layout asks for. It returns the directory subsequent
+// steps should operate on, plus a terminal RepoResult when the run for this
+// repository is already decided (a dry-run preview, or a failure).
+func relocateIdentityMatch(result *RepoResult, job Job, targetDir string, dryRun bool) (string, *RepoResult) {
+	if job.Existing == "" || filepath.Clean(job.Existing) == filepath.Clean(targetDir) {
+		return targetDir, nil
 	}
-	result.ClonedURL = url
 
+	needsMove := true
+	targetInfo, err := statPath(targetDir)
+	switch {
+	case err == nil:
+		existingInfo, existingErr := statPath(job.Existing)
+		if existingErr != nil {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("failed checking existing clone: %v", existingErr)
+			return targetDir, result
+		}
+		if !sameFile(existingInfo, targetInfo) {
+			result.Action = "ERROR"
+			result.Message = fmt.Sprintf("target collision: %s already exists while matching clone is at %s", targetDir, job.Existing)
+			return targetDir, result
+		}
+		// Case-insensitive filesystems can resolve Public and public to
+		// the same directory even though their cleaned strings differ.
+		targetDir = job.Existing
+		result.Target = targetDir
+		needsMove = false
+	case !errors.Is(err, os.ErrNotExist):
+		result.Action = "ERROR"
+		result.Message = fmt.Sprintf("failed checking target collision: %v", err)
+		return targetDir, result
+	}
+
+	if !needsMove {
+		return targetDir, nil
+	}
+	if dryRun {
+		result.Action = "DRY-RUN"
+		result.Message = fmt.Sprintf("move %s to %s", job.Existing, targetDir)
+		result.Moved = true
+		return targetDir, result
+	}
+	if err := mkdirAll(filepath.Dir(targetDir), 0o750); err != nil {
+		result.Action = "ERROR"
+		result.Message = fmt.Sprintf("failed creating relocation target: %v", err)
+		return targetDir, result
+	}
+	if err := renamePath(job.Existing, targetDir); err != nil {
+		result.Action = "ERROR"
+		result.Message = fmt.Sprintf("failed moving identity-matched clone from %s: %v", job.Existing, err)
+		return targetDir, result
+	}
+	result.Moved = true
+	return targetDir, nil
+}
+
+// processExistingClone handles a target that is already a git repository:
+// it confirms the clone is the repository we think it is, then either syncs
+// it or reports why it was left alone.
+func processExistingClone(
+	ctx context.Context,
+	result RepoResult,
+	repo github.Repo,
+	targetDir string,
+	doSync, dryRun bool,
+	cloneOpts git.CloneOptions,
+	syncOpts SyncOptions,
+) RepoResult {
+	if msg, mismatched := originMismatch(repo, targetDir); mismatched {
+		result.Action = "ERROR"
+		result.Message = msg
+		return result
+	}
+	if doSync {
+		return syncExistingClone(ctx, result, repo, targetDir, dryRun, cloneOpts, syncOpts)
+	}
+	result.Action = "SKIP"
+	if result.Moved {
+		result.Message = "moved to desired layout; sync disabled"
+	} else {
+		result.Message = "already exists"
+	}
+	return result
+}
+
+// originMismatch reports whether the clone at targetDir points somewhere
+// other than the repository we intend to sync, which would otherwise mean
+// pulling one project's history into another project's directory.
+func originMismatch(repo github.Repo, targetDir string) (string, bool) {
+	wantIdentity := repoRemoteIdentity(repo)
+	if wantIdentity == "" {
+		return "", false
+	}
+	remote, remoteErr := gitRemoteOrigin(targetDir)
+	if remoteErr != nil {
+		return fmt.Sprintf("cannot verify existing repository origin: %v", remoteErr), true
+	}
+	gotIdentity := git.CanonicalRemote(remote)
+	if gotIdentity != wantIdentity {
+		return fmt.Sprintf("origin collision: target has %s, expected %s", gotIdentity, wantIdentity), true
+	}
+	return "", false
+}
+
+// syncExistingClone pulls an existing clone, skipping the network round-trip
+// whenever the local state already proves the pull would be a no-op.
+func syncExistingClone(
+	ctx context.Context,
+	result RepoResult,
+	repo github.Repo,
+	targetDir string,
+	dryRun bool,
+	cloneOpts git.CloneOptions,
+	syncOpts SyncOptions,
+) RepoResult {
+	result.SyncAttempt = true
+	if dryRun {
+		result.Action = "DRY-RUN"
+		result.Message = "git pull"
+		return result
+	}
+	if reason, skip := syncSkipReason(repo, targetDir, syncOpts); skip {
+		result.Action = "SKIP"
+		result.Message = reason
+		return result
+	}
+	err := gitPull(ctx, targetDir, git.PullOptions{
+		RecurseSubmodules:       cloneOpts.RecurseSubmodules,
+		IgnoreSubmoduleFailures: syncOpts.IgnoreSubmoduleFailures,
+	})
+	if err != nil {
+		result.Action = "ERROR"
+		result.Message = fmt.Sprintf("sync failed: %v", err)
+		return result
+	}
+	stampCloneState(targetDir, repo)
+	result.Action = "SYNC"
+	result.Message = "synced successfully"
+	return result
+}
+
+// syncSkipReason reports why a pull should be skipped, if it should. Each
+// case is a state where pulling is either impossible or provably pointless.
+func syncSkipReason(repo github.Repo, targetDir string, syncOpts SyncOptions) (string, bool) {
+	// An empty upstream repo (created but never pushed to) results in an
+	// unborn HEAD locally, and `git pull` would fail with "no such ref was
+	// fetched". Detect that state cheaply and SKIP with a specific reason
+	// instead of surfacing the git error as a sync failure.
+	if gitIsEmpty(targetDir) {
+		return "empty repository (no commits yet)", true
+	}
+	if branch, err := gitCurrentBranch(targetDir); err == nil && branch != repo.DefaultBranch {
+		return fmt.Sprintf("on branch %s", branch), true
+	}
+	// Skip the network round-trip when the upstream pushed_at is unchanged
+	// since the last successful sync. The cached value lives in
+	// <targetDir>/.corral-state.json. A read error or a zero state falls
+	// through to the original pull-always behaviour, so a missing or corrupt
+	// sidecar can never cause a stale working tree.
+	if !syncOpts.Force && !repo.PushedAt.IsZero() {
+		if st, err := readCloneState(targetDir); err == nil &&
+			!st.LastSyncedPushedAt.IsZero() &&
+			!repo.PushedAt.After(st.LastSyncedPushedAt) {
+			return "up-to-date (pushed_at unchanged)", true
+		}
+	}
+	return "", false
+}
+
+// cloneRepository makes a new clone at targetDir over the selected protocol.
+func cloneRepository(
+	ctx context.Context,
+	result RepoResult,
+	repo github.Repo,
+	owner, protocol, targetDir string,
+	dryRun bool,
+	cloneOpts git.CloneOptions,
+) RepoResult {
+	result.ClonedURL = cloneURL(repo, owner, protocol)
 	if dryRun {
 		result.Action = "DRY-RUN"
 		result.Message = "git clone"
 		return result
 	}
-
-	err := gitClone(ctx, url, targetDir, cloneOpts)
-	if err != nil {
+	if err := gitClone(ctx, result.ClonedURL, targetDir, cloneOpts); err != nil {
 		result.Action = "ERROR"
 		result.Message = fmt.Sprintf("clone failed: %v", err)
 		return result
@@ -1008,6 +1258,19 @@ func processRepo(ctx context.Context, owner, protocol string, doSync, dryRun boo
 	result.Action = "CLONE"
 	result.Message = "cloned successfully"
 	return result
+}
+
+// cloneURL selects the URL to clone from. For ssh it prefers the API's own
+// ssh_url and falls back to the conventional github.com form when the API
+// did not supply one.
+func cloneURL(repo github.Repo, owner, protocol string) string {
+	if protocol != "ssh" {
+		return repo.CloneURL
+	}
+	if repo.SSHURL != "" {
+		return repo.SSHURL
+	}
+	return fmt.Sprintf("git@github.com:%s/%s.git", owner, repo.Name)
 }
 
 // stampCloneState records the upstream pushed_at in the per-clone state
@@ -1020,7 +1283,7 @@ func stampCloneState(targetDir string, repo github.Repo) {
 		LastSyncedPushedAt: repo.PushedAt,
 		LastSyncedAt:       time.Now().UTC(),
 	}); err != nil {
-		log.Printf("WARN: failed writing %s in %s: %v", StateFileName, targetDir, err)
+		diag.Warnf("failed writing %s in %s: %v", StateFileName, targetDir, err)
 	}
 }
 

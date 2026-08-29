@@ -373,7 +373,7 @@ func loadConfig(path string) (configFile, error) {
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return configFile{}, fmt.Errorf("decode config %s: %w", path, err)
 	}
-	cleaned, err := json.Marshal(stripConfigComments(document))
+	cleaned, err := marshalConfig(stripConfigComments(document))
 	if err != nil {
 		return configFile{}, fmt.Errorf("decode config %s: %w", path, err)
 	}
@@ -386,6 +386,12 @@ func loadConfig(path string) (configFile, error) {
 	}
 	return cfg, nil
 }
+
+// marshalConfig re-encodes the comment-stripped document for the strict
+// decoding pass. A seam because the re-encode cannot fail on any input the
+// permissive pass accepts, which would leave its error check permanently
+// unexercised — and an untested error path is one nobody knows is wrong.
+var marshalConfig = json.Marshal
 
 // readConfigFile is a seam so tests can exercise an unreadable config without
 // depending on permission bits, which do not behave the same on every platform.

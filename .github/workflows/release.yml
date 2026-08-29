@@ -103,9 +103,38 @@ jobs:
       # .goreleaser.yaml emits checksums.txt.sig and .pem as assets, which is what
       # the check reads.
       - name: Attest release artifacts
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/checksums.txt
+
+      # Attach the provenance bundle to the release itself.
+      #
+      # The attestation above already lives in GitHub's attestation store,
+      # which is where `gh attestation verify` looks. But that store is not
+      # the release, and anyone auditing the download page — or any tool
+      # reading release assets, OpenSSF Scorecard's Signed-Releases check
+      # among them — sees signatures with no provenance beside them.
+      # Publishing the bundle as an asset costs one command and makes the
+      # build's provenance verifiable by whoever has the tarball, without
+      # them having to know the attestation API exists.
+      #
+      # The .intoto.jsonl name is the ecosystem convention for in-toto
+      # provenance and is what tooling looks for; the file is the Sigstore
+      # bundle the step above produced, unmodified.
+      - name: Publish provenance alongside the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUNDLE}" ] || [ ! -f "${BUNDLE}" ]; then
+            echo "::error::attestation step produced no bundle at '${BUNDLE}'"
+            exit 1
+          fi
+          cp "${BUNDLE}" "${RUNNER_TEMP}/checksums.txt.intoto.jsonl"
+          gh release upload "${GITHUB_REF_NAME}" \
+            "${RUNNER_TEMP}/checksums.txt.intoto.jsonl" --clobber
 
       # Publish the MCP registry entry.
       #

@@ -14,10 +14,19 @@ Corral is a compiled Go application with a Bubble Tea terminal user interface th
    ```bash
    git config core.hooksPath .githooks
    ```
-4. Create a branch:
+4. Create a branch **from `main`**:
    ```bash
+   git checkout main && git pull
    git checkout -b feat/my-change
    ```
+
+   Branch from `main` and open the pull request against `main` — never
+   against another branch. Every workflow in this repository filters on
+   `pull_request: branches: [main]`, so a PR aimed elsewhere runs no CI
+   at all, and GitHub records it as merged with an empty commit range
+   once the branch it was stacked on lands. A `PR Base` check enforces
+   this. If your change depends on work that is still in review, wait
+   for it to merge or fold the two into one pull request.
 5. Make changes.
 6. Verify everything passes:
    ```bash

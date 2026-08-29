@@ -19,13 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/sebastienrousseau/corral/internal/diag"
 	"github.com/sebastienrousseau/corral/internal/git"
 )
 
@@ -264,13 +264,13 @@ func readState(repoPath string) (*StateRecord, bool) {
 		b, err := readStateFile(path) // #nosec G304 -- repoPath comes from the root-confined index
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				log.Printf("corral-mcp: read state %s: %v", path, err)
+				diag.Debugf("corral-mcp: read state %s: %v", path, err)
 			}
 			continue
 		}
 		var s StateRecord
 		if err := json.Unmarshal(b, &s); err != nil {
-			log.Printf("corral-mcp: parse state %s: %v", path, err)
+			diag.Debugf("corral-mcp: parse state %s: %v", path, err)
 			continue
 		}
 		return &s, true

@@ -438,6 +438,29 @@ corralctl <owner> [base_dir] [limit]
 | `--exclude-languages`| — | — | Comma-separated language exclude list |
 | `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
 | `--api-timeout` | — | `30s` | Deadline for GitHub API operations |
+| `--log-level` | — | `info` | Diagnostic verbosity on stderr: `error`, `warn`, `info`, `debug` |
+
+### Diagnostics
+
+Results go to stdout in the format `--output` selects. Diagnostics — what was
+skipped, what was worked around, why — go to stderr, so `--output json` stays
+pipeable no matter how noisy the run is.
+
+`--log-level` controls how much of that stderr you get. `CORRAL_LOG_LEVEL`
+sets the same thing for a whole shell session.
+
+```bash
+# Why did that repository not migrate? Turn the detail up.
+corralctl sebastienrousseau --log-level debug
+
+# Machine-readable results, quiet stderr, both at once.
+corralctl sebastienrousseau --output json --log-level error > repos.json
+
+# For a bug report: full detail, everything captured.
+CORRAL_LOG_LEVEL=debug corralctl sebastienrousseau > out.json 2> diagnostics.log
+```
+
+The default, `info`, is what corral has always printed.
 
 ### Operational Commands
 

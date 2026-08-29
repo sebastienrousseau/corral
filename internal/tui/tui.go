@@ -370,6 +370,12 @@ func (m *selectorModel) renderCustomTable() string {
 	return sb.String()
 }
 
+// slashCommands are the in-session commands the filter line accepts. Kept in
+// one place so tab-completion and execution can never disagree about the set.
+var slashCommands = []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
+
+// Update handles one Bubble Tea message. Anything the selector does not
+// consume is forwarded to the embedded table, which owns cursor movement.
 func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -378,124 +384,160 @@ func (m *selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case fetchedReposMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.loadingErr = msg.err
-			return m, tea.Quit
-		}
-		m.repos = msg.repos
-		m.filteredRepos = msg.repos
-		for _, r := range msg.repos {
-			m.selected[repoSelectionKey(r)] = true
-		}
-		m.updateTableRows()
-		return m, nil
+		return m.handleFetched(msg)
 
 	case tea.KeyMsg:
 		m.cmdErr = ""
-		switch msg.String() {
-		case "ctrl+c":
-			m.quitting = true
-			return m, tea.Quit
-		case "esc":
-			if m.showHelp {
-				m.showHelp = false
-				return m, nil
-			}
-			m.quitting = true
-			return m, tea.Quit
-		case "?":
-			if !m.loading {
-				m.showHelp = !m.showHelp
-				return m, nil
-			}
-		case "right", "tab":
-			if strings.HasPrefix(m.filter, "/") {
-				commands := []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
-				for _, cmd := range commands {
-					if len(cmd) > len(m.filter) && strings.HasPrefix(cmd, m.filter) {
-						m.filter = cmd
-						return m, nil
-					}
-				}
-			}
-		case "enter":
-			if m.loading {
-				return m, nil
-			}
-			if strings.HasPrefix(m.filter, "/") {
-				target := m.filter
-				commands := []string{"/exit", "/quit", "/help", "/all", "/none", "/sort"}
-				for _, cmd := range commands {
-					if strings.HasPrefix(cmd, m.filter) {
-						target = cmd
-						break
-					}
-				}
-				cmd := m.executeSlashCommand(target)
-				m.filter = ""
-				return m, cmd
-			}
-			m.confirmed = true
-			return m, tea.Quit
-		case " ", "space":
-			if m.loading {
-				return m, nil
-			}
-			if strings.HasPrefix(m.filter, "/") {
-				m.filter += " "
-				return m, nil
-			}
-			if len(m.filteredRepos) > 0 {
-				idx := m.table.Cursor()
-				if idx >= 0 && idx < len(m.filteredRepos) {
-					key := repoSelectionKey(m.filteredRepos[idx])
-					m.selected[key] = !m.selected[key]
-					m.updateTableRows()
-				}
-			}
-			return m, nil
-		case "backspace":
-			if m.loading {
-				return m, nil
-			}
-			if len(m.filter) > 0 {
-				m.filter = m.filter[:len(m.filter)-1]
-				m.applyFilter()
-			}
-			return m, nil
-		case "ctrl+a": // Select all filtered
-			if m.loading {
-				return m, nil
-			}
-			for _, r := range m.filteredRepos {
-				m.selected[repoSelectionKey(r)] = true
-			}
-			m.updateTableRows()
-			return m, nil
-		case "ctrl+n": // Select none filtered
-			if m.loading {
-				return m, nil
-			}
-			for _, r := range m.filteredRepos {
-				m.selected[repoSelectionKey(r)] = false
-			}
-			m.updateTableRows()
-			return m, nil
-		default:
-			if m.loading {
-				return m, nil
-			}
-			if len(msg.String()) == 1 && len(msg.Runes) > 0 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
-				m.filter += msg.String()
-				m.applyFilter()
-				return m, nil
-			}
+		if model, keyCmd, handled := m.handleKey(msg); handled {
+			return model, keyCmd
 		}
 	}
 
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
+}
+
+// handleFetched installs the repository listing the fetch goroutine
+// returned, selecting every repository by default.
+func (m *selectorModel) handleFetched(msg fetchedReposMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if msg.err != nil {
+		m.loadingErr = msg.err
+		return m, tea.Quit
+	}
+	m.repos = msg.repos
+	m.filteredRepos = msg.repos
+	for _, r := range msg.repos {
+		m.selected[repoSelectionKey(r)] = true
+	}
+	m.updateTableRows()
+	return m, nil
+}
+
+// handleKey dispatches one keypress. The third return value reports whether
+// the selector consumed the key; when it is false the caller forwards the
+// message to the table instead.
+func (m *selectorModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	switch msg.String() {
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit, true
+	case "esc":
+		if m.showHelp {
+			m.showHelp = false
+			return m, nil, true
+		}
+		m.quitting = true
+		return m, tea.Quit, true
+	case "?":
+		if !m.loading {
+			m.showHelp = !m.showHelp
+			return m, nil, true
+		}
+	case "right", "tab":
+		if completed, ok := completeSlashCommand(m.filter); ok {
+			m.filter = completed
+			return m, nil, true
+		}
+	case "enter":
+		return m.handleEnter()
+	case " ", "space":
+		return m.handleSpace()
+	case "backspace":
+		if m.loading {
+			return m, nil, true
+		}
+		if len(m.filter) > 0 {
+			m.filter = m.filter[:len(m.filter)-1]
+			m.applyFilter()
+		}
+		return m, nil, true
+	case "ctrl+a": // Select all filtered
+		return m.setFilteredSelection(true)
+	case "ctrl+n": // Select none filtered
+		return m.setFilteredSelection(false)
+	default:
+		if m.loading {
+			return m, nil, true
+		}
+		if len(msg.String()) == 1 && len(msg.Runes) > 0 && msg.Runes[0] >= 32 && msg.Runes[0] <= 126 {
+			m.filter += msg.String()
+			m.applyFilter()
+			return m, nil, true
+		}
+	}
+	return m, nil, false
+}
+
+// handleEnter either runs the slash command being typed or confirms the
+// selection and exits the selector.
+func (m *selectorModel) handleEnter() (tea.Model, tea.Cmd, bool) {
+	if m.loading {
+		return m, nil, true
+	}
+	if strings.HasPrefix(m.filter, "/") {
+		target := m.filter
+		for _, cmd := range slashCommands {
+			if strings.HasPrefix(cmd, m.filter) {
+				target = cmd
+				break
+			}
+		}
+		cmd := m.executeSlashCommand(target)
+		m.filter = ""
+		return m, cmd, true
+	}
+	m.confirmed = true
+	return m, tea.Quit, true
+}
+
+// handleSpace toggles the repository under the cursor, unless a slash
+// command is being typed — where space is just a character.
+func (m *selectorModel) handleSpace() (tea.Model, tea.Cmd, bool) {
+	if m.loading {
+		return m, nil, true
+	}
+	if strings.HasPrefix(m.filter, "/") {
+		m.filter += " "
+		return m, nil, true
+	}
+	if len(m.filteredRepos) > 0 {
+		idx := m.table.Cursor()
+		if idx >= 0 && idx < len(m.filteredRepos) {
+			key := repoSelectionKey(m.filteredRepos[idx])
+			m.selected[key] = !m.selected[key]
+			m.updateTableRows()
+		}
+	}
+	return m, nil, true
+}
+
+// setFilteredSelection selects or deselects every repository currently
+// passing the filter.
+func (m *selectorModel) setFilteredSelection(selected bool) (tea.Model, tea.Cmd, bool) {
+	if m.loading {
+		return m, nil, true
+	}
+	for _, r := range m.filteredRepos {
+		m.selected[repoSelectionKey(r)] = selected
+	}
+	m.updateTableRows()
+	return m, nil, true
+}
+
+// completeSlashCommand returns the unique command the partial filter
+// prefixes, and whether one was found. A filter that is not a slash command,
+// or is already complete, completes to nothing.
+func completeSlashCommand(filter string) (string, bool) {
+	if !strings.HasPrefix(filter, "/") {
+		return "", false
+	}
+	for _, cmd := range slashCommands {
+		if len(cmd) > len(filter) && strings.HasPrefix(cmd, filter) {
+			return cmd, true
+		}
+	}
+	return "", false
 }
 
 func (m *selectorModel) View() string {

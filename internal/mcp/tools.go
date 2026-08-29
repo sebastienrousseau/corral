@@ -6,12 +6,13 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"log"
 	"os/exec"
 	"sort"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/sebastienrousseau/corral/internal/diag"
 )
 
 // Read-only tool set.
@@ -277,9 +278,9 @@ var currentBranch = func(ctx context.Context, repoPath string) string {
 			stderr = strings.TrimSpace(string(ee.Stderr))
 		}
 		if stderr != "" {
-			log.Printf("corral-mcp: git rev-parse in %s failed: %v (%s)", repoPath, err, stderr)
+			diag.Warnf("corral-mcp: git rev-parse in %s failed: %v (%s)", repoPath, err, stderr)
 		} else {
-			log.Printf("corral-mcp: git rev-parse in %s failed: %v", repoPath, err)
+			diag.Warnf("corral-mcp: git rev-parse in %s failed: %v", repoPath, err)
 		}
 		return ""
 	}

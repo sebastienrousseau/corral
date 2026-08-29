@@ -16,3 +16,12 @@ updates:
       github-actions:
         patterns:
           - "*"
+  # The Dockerfile pins its Alpine base by digest, which is correct — and
+  # meant nothing was watching it. A digest pin with no update automation
+  # only moves when someone remembers, so the base image silently ages.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(docker)"

@@ -6,6 +6,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.26] — 2026-08-29
+
+A hardening release. No behaviour changes for existing invocations; one new
+flag, and a large amount of work making the repository's own claims about
+itself true and mechanically checked.
+
+### Added
+
+- **`--log-level` (and `CORRAL_LOG_LEVEL`)** selects diagnostic verbosity on
+  stderr: `error`, `warn`, `info` or `debug`. Results still go to stdout in
+  whatever `--output` selects, so `--output json --log-level debug` stays
+  pipeable while giving a bug report something to attach. The default,
+  `info`, prints exactly what corral printed before. Diagnostics now run
+  through a new `internal/diag` package rather than the standard logger; an
+  unknown level name is rejected rather than silently ignored.
+
+- **Secret scanning.** `SECURITY.md` claimed *"Gitleaks scans run on every
+  push and pull request"*. No job in this repository ran gitleaks, and none
+  in the reusable pipelines it calls did either. The claim is now true:
+  `.github/workflows/secret-scan.yml` scans the full commit history on every
+  push, every pull request and weekly, using a checksum-verified upstream
+  binary rather than a mutable action. The one historical finding — a fixture
+  of deliberately fake credential filenames proving the MCP reader refuses
+  them — is recorded by fingerprint in `.gitleaksignore`, not by muting a
+  rule.
+
+- **A manifest drift check**, `make sbom-check`, run in CI. It fails if
+  `SBOM.md` gains, loses or misstates a direct dependency in either
+  direction, and if `server.json`'s version does not match the newest
+  `CHANGELOG.md` release or its own OCI image tag. Both files had drifted
+  silently before: `SBOM.md` carried `go-github/v74` for six releases after
+  `go.mod` moved to v90 and omitted three direct dependencies while
+  `SECURITY.md` linked to it as the *full* bill of materials; `server.json`
+  sat at 0.0.13 through five releases.
+
+- **A fuzz target for the MCP path sandbox.** `Index.SafePath` is the
+  boundary that keeps an agent inside the workspace root — a defect there is
+  arbitrary file access, not a wrong answer — and it was the one
+  security-critical function with no fuzz target. The invariant under test is
+  absolute: whatever the sandbox returns is inside the root.
+
+- **Benchmarks** for the workspace scan, index lookup, sandbox check, layout
+  evaluation and existing-clone discovery. CI compiles and briefly runs them
+  on every push so they cannot rot.
+
+- **Audit log rotation.** The MCP mutation log grew without limit; a
+  long-lived server would fill the disk. It now rotates at 8 MiB keeping
+  three generations, before the write rather than after, so the bound is a
+  real bound.
+
+- **`CODEOWNERS`, a pull request template and issue templates.**
+
+- **Dependabot now watches the Dockerfile base image.** The Alpine base is
+  pinned by digest, which is correct — and meant nothing was watching it.
+
+### Changed
+
+- **Provenance is published as a release asset.** SLSA build provenance was
+  attested into GitHub's attestation store, which is not the release: anyone
+  auditing the download page saw signatures with no provenance beside them.
+  Releases now carry `checksums.txt.intoto.jsonl`.
+
+- **Every pull request must target the default branch.** On 2026-08-19, PR
+  #91 was opened against `feat/v0.0.24` rather than `main`. Nothing here ran
+  for it — every workflow filters on `pull_request: branches: [main]`, so a
+  pull request aimed anywhere else is invisible to CI — and when #90 merged,
+  GitHub marked #91 merged too and collapsed its commit range to nothing.
+  OpenSSF Scorecard reads a merged PR's check suites through
+  `associatedPullRequests { commits(last: 1) { … checkSuites } }`, so an
+  empty commit range yields zero suites, and `parseCheckRuns` caches that
+  empty answer under the head SHA, defeating the REST fallback that would
+  have found the eleven suites GitHub does hold. #91 was scored as a merged
+  pull request with no CI test at all, which is code scanning alert 37.
+
+  The new `PR Base` workflow fails any pull request whose base is not the
+  default branch. It carries no `branches` filter of its own, because a pull
+  request aimed at the wrong base is precisely what a filtered workflow can
+  never see.
+
+- **`SECURITY.md` rewritten against what is actually enforced.** Every claim
+  now names the workflow or file that enforces it, and the commit-signing
+  claim states the one historical exception rather than asserting an absolute
+  that is 99.6% true.
+
+- **`internal/engine` is usable as a library.** `Run` called `os.Exit` on six
+  validation paths and returned nothing, so the package could not be embedded
+  despite `examples/engine_run.go` presenting it that way. `RunE` now returns
+  an error — an `*ExitError` when the failure maps to a specific exit status
+  — and `Run` is the thin wrapper that turns that back into a process exit
+  for the CLI. Behaviour and output are unchanged.
+
+- **The three longest functions are decomposed.** `engine.Run` (307 lines),
+  `FetchReposWithClientOptions` (195) and `processRepo` (182) are now
+  pipelines of named, individually testable steps. `selectorModel.Update`
+  (128) is split by keypress. No behaviour changed; the whole existing test
+  suite passed throughout without modification.
+
+- **Dependencies refreshed.** Every direct and reachable indirect module is
+  at its latest version; `govulncheck` reports none.
+
+### Testing
+
+- **Coverage is 100% of statements**, up from 97.6%, across all eight
+  packages. The gaps that closed matter more than the number: the least
+  covered function in the repository was `submodulesHaveUnpublishedWork` at
+  18.2% — the guard that stops a clone with unpushed submodule commits from
+  being deleted. It is now exercised against real git repositories with real
+  submodules, as are the ignored-content and origin-mismatch guards beside
+  it.
+
+- Error paths that could not previously be reached are reachable and tested:
+  every audit-write failure arm of every mutation tool, the concurrent
+  page-fetch cancellation path, the config write and re-encode failures, and
+  the clamps on `defaultConcurrency`. Where that required a seam, the seam
+  says in its comment why the branch was otherwise untestable.
+
+## [0.0.25] — 2026-08-20
 ## [0.0.25] — 2026-08-20
 
 ### Fixed
@@ -860,7 +977,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.26...HEAD
+[0.0.26]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/sebastienrousseau/corral/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/sebastienrousseau/corral/compare/v0.0.22...v0.0.23

@@ -42,6 +42,7 @@ var (
 	gitPull            = git.Pull
 	gitClone           = git.Clone
 	hasUnpushedCommits = git.HasUnpublishedWork
+	gitIsRepository    = git.IsRepository
 	statMutation       = os.Stat
 	mkdirMutation      = os.MkdirAll
 	removeMutation     = os.RemoveAll
@@ -304,7 +305,7 @@ func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, i
 
 	// Refusal cascade: any single check failing aborts, audits,
 	// and returns to the agent with a specific reason.
-	if !git.IsRepository(safe) {
+	if !gitIsRepository(safe) {
 		rec.Message = fmt.Sprintf("target %s is not a git repository", safe)
 		if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
 			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil

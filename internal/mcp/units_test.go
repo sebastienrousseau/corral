@@ -8,12 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sebastienrousseau/corral/internal/diag"
 )
 
 // Unit tests for helpers that do not touch the MCP protocol. Carried over
@@ -384,10 +385,10 @@ func TestBlockedRepoFile(t *testing.T) {
 }
 
 func TestCurrentBranchLogsOnFailure(t *testing.T) {
-	var buf strings.Builder
-	oldOut := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(oldOut)
+	// Diagnostics moved from the stdlib logger to internal/diag, which is
+	// where verbosity is now decided; this failure is reported at warn, so
+	// it is visible at the default level.
+	buf := captureDiag(t, diag.LevelWarn)
 
 	// Point at a definitely-not-a-git-repo path so rev-parse exits nonzero.
 	got := currentBranch(context.Background(), "/dev/null")
