@@ -48,6 +48,17 @@ jobs:
           set -euo pipefail
           go version
           go test -race -shuffle=on ./...
+      # Benchmarks are compiled and executed, briefly, on every run. Not to
+      # measure anything — runner timings are far too noisy for that — but so
+      # a benchmark cannot rot into something that no longer builds or panics
+      # on an empty fixture, which is what happens to benchmarks nobody runs.
+      - name: Smoke-run benchmarks
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go test -run '^$' -bench . -benchtime 1x ./...
+
       # Fixed seeds alongside -shuffle=on: a random seed catches ordering bugs
       # eventually, named seeds catch them reproducibly.
       - name: Test with fixed shuffle seeds
@@ -142,3 +153,15 @@ jobs:
           set -euo pipefail
           go version
           go run scripts/doc_coverage.go
+
+      # SBOM.md and server.json are hand-maintained and have both drifted
+      # silently before — SBOM.md carried go-github v74 for six releases after
+      # go.mod moved to v90, and server.json's version sat at 0.0.13 through
+      # five releases. Neither is where the change happens, so review does not
+      # catch it. This does.
+      - name: Check manifests against go.mod and CHANGELOG
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go run scripts/manifest_check.go

@@ -1,0 +1,14 @@
+# Gitleaks configuration.
+#
+# Extends the upstream default rule set rather than replacing it: the default
+# rules are the value of the tool, and a hand-written subset would silently
+# stop matching new credential formats as they are added upstream.
+#
+# Nothing is muted here. Individual accepted findings live in .gitleaksignore
+# as fingerprints, so every exception names the exact commit, file and rule it
+# covers instead of disabling a rule for the whole repository.
+
+title = "corral"
+
+[extend]
+useDefault = true

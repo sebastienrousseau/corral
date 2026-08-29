@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+// Package diag carries corral's diagnostic output: the messages that explain
+// what the tool is doing or why something was skipped, as distinct from the
+// results it produces.
+//
+// The distinction matters because stdout is reserved for the selected output
+// format — text, json or ndjson — and must stay parseable. Diagnostics
+// therefore go to stderr, and this package is where their verbosity is
+// decided.
+//
+// Three things motivated levelling them rather than printing everything:
+//
+//   - The MCP server runs long-lived over stdio with no terminal attached.
+//     When it misbehaves the only evidence is stderr, and "turn on more
+//     logging" was not something a user could do.
+//   - A `corralctl` run over a large account emits a WARN per unmigratable
+//     directory. Useful when you are debugging a layout; noise when you are
+//     not.
+//   - A bug report is far more useful with debug output attached, and asking
+//     for it needs to be a flag, not a rebuild.
+//
+// The default is Info, which reproduces the output corral had before this
+// package existed. Nothing is hidden by default that used to be shown.
+package diag
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"sync"
+)
+
+// Level is the verbosity threshold: a message is emitted when its own level
+// is at or below the configured one.
+type Level int
+
+const (
+	// LevelError reports only failures that stopped something from working.
+	LevelError Level = iota
+	// LevelWarn adds conditions corral worked around or declined to act on.
+	LevelWarn
+	// LevelInfo adds ordinary progress narration. This is the default.
+	LevelInfo
+	// LevelDebug adds detail that is only useful when diagnosing corral
+	// itself, such as why a state sidecar was ignored.
+	LevelDebug
+)
+
+// String returns the lowercase name of the level, as accepted by ParseLevel.
+func (l Level) String() string {
+	switch l {
+	case LevelError:
+		return "error"
+	case LevelWarn:
+		return "warn"
+	case LevelInfo:
+		return "info"
+	case LevelDebug:
+		return "debug"
+	default:
+		return fmt.Sprintf("Level(%d)", int(l))
+	}
+}
+
+// ParseLevel maps a level name to a Level. Names are case-insensitive, and
+// "warning" is accepted alongside "warn" because both are habitual.
+func ParseLevel(name string) (Level, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "error":
+		return LevelError, nil
+	case "warn", "warning":
+		return LevelWarn, nil
+	case "info", "":
+		return LevelInfo, nil
+	case "debug":
+		return LevelDebug, nil
+	default:
+		return LevelInfo, fmt.Errorf("unknown log level %q (want error, warn, info or debug)", name)
+	}
+}
+
+var (
+	mu     sync.RWMutex
+	level            = LevelInfo
+	output io.Writer = os.Stderr
+)
+
+// SetLevel sets the verbosity threshold.
+func SetLevel(l Level) {
+	mu.Lock()
+	defer mu.Unlock()
+	level = l
+}
+
+// CurrentLevel reports the verbosity threshold in force.
+func CurrentLevel() Level {
+	mu.RLock()
+	defer mu.RUnlock()
+	return level
+}
+
+// SetOutput redirects diagnostics. Intended for tests; production writes to
+// stderr, which is the only channel that cannot corrupt the result stream.
+func SetOutput(w io.Writer) {
+	mu.Lock()
+	defer mu.Unlock()
+	if w == nil {
+		w = os.Stderr
+	}
+	output = w
+}
+
+// Enabled reports whether a message at l would be emitted. Callers use it to
+// skip work that only exists to build a message.
+func Enabled(l Level) bool {
+	return l <= CurrentLevel()
+}
+
+// emit writes one diagnostic line if the level permits it.
+func emit(l Level, format string, args ...any) {
+	mu.RLock()
+	threshold, w := level, output
+	mu.RUnlock()
+	if l > threshold {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	// One line per diagnostic, prefixed with its level, so stderr stays
+	// greppable when it is the only evidence available.
+	_, _ = fmt.Fprintf(w, "%s: %s\n", strings.ToUpper(l.String()), strings.TrimRight(msg, "\n"))
+}
+
+// Errorf reports a failure that stopped something from working.
+func Errorf(format string, args ...any) { emit(LevelError, format, args...) }
+
+// Warnf reports a condition corral worked around or declined to act on.
+func Warnf(format string, args ...any) { emit(LevelWarn, format, args...) }
+
+// Infof reports ordinary progress.
+func Infof(format string, args ...any) { emit(LevelInfo, format, args...) }
+
+// Debugf reports detail useful only when diagnosing corral itself.
+func Debugf(format string, args ...any) { emit(LevelDebug, format, args...) }

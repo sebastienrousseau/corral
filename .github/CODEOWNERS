@@ -1,0 +1,8 @@
+# Every file in this repository is owned by the maintainer.
+#
+# GOVERNANCE.md and docs/security-model.md both record that this project has a
+# bus factor of one. A CODEOWNERS file does not change that, but it does make
+# the ownership explicit to GitHub, so review requests route automatically and
+# branch protection can require an owner's review once a second maintainer
+# exists. Add finer-grained ownership lines above this one as that happens.
+*       @sebastienrousseau

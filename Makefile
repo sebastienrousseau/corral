@@ -13,7 +13,7 @@ LDFLAGS = -s -w \
 
 .PHONY: all build install test test-race vet lint clean format
 
-all: format vet test test-race build
+all: format vet sbom-check test test-race build
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY_NAME) ./cmd/corralctl
@@ -33,6 +33,11 @@ vet:
 
 lint:
 	golangci-lint run ./...
+
+# Verify SBOM.md matches go.mod's direct requirements, and that
+# server.json's version matches the newest CHANGELOG.md release.
+sbom-check:
+	go run scripts/manifest_check.go
 
 format:
 	go fmt ./...

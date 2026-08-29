@@ -11,13 +11,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/sebastienrousseau/corral/internal/diag"
 )
 
 // TokenProvider, when set, returns a GitHub token used to authenticate HTTPS
@@ -177,7 +178,7 @@ func Pull(ctx context.Context, targetDir string, opts PullOptions) error {
 	if opts.RecurseSubmodules && opts.IgnoreSubmoduleFailures {
 		if sErr := updateSubmodulesFn(ctx, targetDir); sErr != nil {
 			// Best-effort: log and swallow, matching the documented contract.
-			log.Printf("WARN: submodule update failed in %s: %v (continuing)", targetDir, sErr)
+			diag.Warnf("submodule update failed in %s: %v (continuing)", targetDir, sErr)
 		}
 	}
 	return nil

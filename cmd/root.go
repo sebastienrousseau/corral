@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sebastienrousseau/corral/internal/diag"
 	"github.com/sebastienrousseau/corral/internal/engine"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
@@ -57,6 +58,7 @@ var (
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
 	apiTimeout          time.Duration
+	logLevel            string
 	osExit              = os.Exit
 	engineRun           = engine.Run
 	preflightRunner     = runPreflight
@@ -242,6 +244,12 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&baseDir, "base-dir", defaultBaseDir(), "root directory for cloned repos")
 	rootCmd.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "preview actions without making changes")
+	// Diagnostics go to stderr; stdout carries the selected output format.
+	// This raises or lowers how much of stderr you get without changing what
+	// lands on stdout, so `--log-level debug --output json` stays pipeable
+	// while giving a bug report something to attach.
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", envLogLevel(),
+		"diagnostic verbosity on stderr: error, warn, info or debug")
 
 	// Shared groups, also registered on plan/prune/profile so those commands
 	// can set what they already consume. See cmd/flags.go.
@@ -257,10 +265,14 @@ func init() {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		// `config --init` writes the file this hook would read.
 		if configInit {
-			return nil
+			return applyLogLevel()
 		}
-		_, err := configuredDefaults(cmd)
-		return err
+		if _, err := configuredDefaults(cmd); err != nil {
+			return err
+		}
+		// After the config is applied, so `"log-level": "debug"` in the
+		// defaults block behaves exactly like passing the flag.
+		return applyLogLevel()
 	}
 
 	rootCmd.Flags().AddFlagSet(fetchFlags())
@@ -328,6 +340,32 @@ func validateRootArgs(cmd *cobra.Command, args []string) error {
 				args[1], kind, args[0], kind, args[1], args[0], args[1])
 		}
 	}
+	return nil
+}
+
+// envLogLevel is the default for --log-level, taken from CORRAL_LOG_LEVEL so
+// the setting can be exported for a whole shell session rather than repeated
+// on every invocation. An unset or unrecognised value leaves the default at
+// "info"; a bad value passed explicitly is reported when the flag is applied.
+func envLogLevel() string {
+	if v := strings.TrimSpace(os.Getenv("CORRAL_LOG_LEVEL")); v != "" {
+		if _, err := diag.ParseLevel(v); err == nil {
+			return strings.ToLower(v)
+		}
+	}
+	return diag.LevelInfo.String()
+}
+
+// applyLogLevel installs the requested verbosity, rejecting an unknown name
+// rather than silently falling back — a typo'd level that quietly does
+// nothing is how someone ends up filing a bug report with no debug output in
+// it.
+func applyLogLevel() error {
+	level, err := diag.ParseLevel(logLevel)
+	if err != nil {
+		return err
+	}
+	diag.SetLevel(level)
 	return nil
 }
 

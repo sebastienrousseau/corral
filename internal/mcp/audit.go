@@ -66,6 +66,29 @@ var openAuditFile = func(name string, flag int, perm os.FileMode) (auditFile, er
 	return os.OpenFile(name, flag, perm)
 }
 
+var (
+	statAuditFile   = os.Stat
+	renameAuditFile = os.Rename
+	removeAuditFile = os.Remove
+)
+
+// maxAuditLogBytes is the size at which the active log is rotated. An
+// unbounded audit log is a slow-motion disk-full bug: a long-lived MCP
+// server writes two records per mutation forever and nothing ever trims
+// them. 8 MiB holds on the order of a hundred thousand records, which is
+// far more history than a mutation log is ever consulted for, while
+// staying small enough to open in an editor.
+//
+// A var rather than a const so the rotation path is reachable from a test
+// without writing 8 MiB.
+var maxAuditLogBytes int64 = 8 << 20
+
+// auditLogGenerations is how many rotated logs are kept beside the active
+// one (mutations.log.1 … mutations.log.N). Older generations are deleted.
+// Retaining some history matters here in a way it does not for ordinary
+// logs: this file is the record of what an agent was allowed to destroy.
+var auditLogGenerations = 3
+
 // NewAuditor constructs an Auditor writing to the given path. When path
 // is empty, DefaultAuditLogPath is used. The parent directory is
 // created with 0o700 on first write so the log file itself is only
@@ -118,6 +141,9 @@ func (a *Auditor) Write(r AuditRecord) error {
 	if err := os.MkdirAll(filepath.Dir(a.path), 0o700); err != nil {
 		return fmt.Errorf("create audit dir: %w", err)
 	}
+	if err := a.rotateIfLarge(int64(len(line))); err != nil {
+		return err
+	}
 	f, err := openAuditFile(a.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open audit log: %w", err)
@@ -125,6 +151,49 @@ func (a *Auditor) Write(r AuditRecord) error {
 	defer func() { _ = f.Close() }()
 	if _, err := f.Write(line); err != nil {
 		return fmt.Errorf("write audit record: %w", err)
+	}
+	return nil
+}
+
+// rotateIfLarge renames the active log aside when appending incoming
+// bytes would take it past maxAuditLogBytes, shifting the existing
+// generations down and discarding the oldest. The caller must hold a.mu.
+//
+// Rotation happens before the write rather than after, so the size bound
+// is a real bound: a post-write check would let the file exceed it by one
+// record, which for a log that can be appended to indefinitely is the
+// difference between "8 MiB" and "8 MiB plus whatever arrived last".
+//
+// A missing log is not an error — that is simply the first write.
+func (a *Auditor) rotateIfLarge(incoming int64) error {
+	info, err := statAuditFile(a.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat audit log: %w", err)
+	}
+	if info.Size()+incoming <= maxAuditLogBytes {
+		return nil
+	}
+
+	// Drop the oldest generation, then shift each remaining one down so
+	// .1 is free for the log being retired. Every removal and rename here
+	// targets a file this process just created, so a missing one means a
+	// concurrent operator cleaned up and is not a failure.
+	oldest := fmt.Sprintf("%s.%d", a.path, auditLogGenerations)
+	if err := removeAuditFile(oldest); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove oldest audit log: %w", err)
+	}
+	for gen := auditLogGenerations - 1; gen >= 1; gen-- {
+		from := fmt.Sprintf("%s.%d", a.path, gen)
+		to := fmt.Sprintf("%s.%d", a.path, gen+1)
+		if err := renameAuditFile(from, to); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("rotate audit log %s: %w", from, err)
+		}
+	}
+	if err := renameAuditFile(a.path, a.path+".1"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("rotate audit log: %w", err)
 	}
 	return nil
 }

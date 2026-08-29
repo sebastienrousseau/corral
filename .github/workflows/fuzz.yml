@@ -29,3 +29,8 @@ jobs:
         run: go test -fuzz=FuzzEvaluateLayout -fuzztime=30s ./internal/engine
       - name: Fuzz ParseOwnerFromURL
         run: go test -fuzz=FuzzParseOwnerFromURL -fuzztime=30s ./internal/mcp
+      # The path sandbox gets the longest budget of the four. A defect in the
+      # others is a wrong directory name; a defect here is an agent reading or
+      # deleting outside the workspace root, so it earns the extra time.
+      - name: Fuzz SafePath sandbox
+        run: go test -fuzz=FuzzSafePathNeverEscapesRoot -fuzztime=120s ./internal/mcp
