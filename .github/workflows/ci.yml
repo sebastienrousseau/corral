@@ -165,3 +165,13 @@ jobs:
         run: |
           set -euo pipefail
           go run scripts/manifest_check.go
+
+      # The examples carry `//go:build ignore`, so `go build ./...` skips them
+      # and nothing else compiles them either. They could reference a renamed
+      # function indefinitely without a single job noticing.
+      - name: Compile the examples
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          go run scripts/example_check.go

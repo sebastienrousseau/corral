@@ -32,7 +32,7 @@
 
 **Getting started**
 
-- [Install](#install) — Homebrew, Arch, source, or Docker
+- [Install](#install) — mise, Homebrew, Arch, Go, or from source
 - [Quick Start](#quick-start) — clone and organise in one command
 
 **Features & Capabilities**
@@ -75,13 +75,25 @@ brew install sebastienrousseau/tap/corralctl
 Homebrew here is a cask, which is a macOS-only mechanism — `brew install` on
 Linux will refuse it. On Linux use the `.deb`/`.rpm` packages or the tarballs
 attached to each [release](https://github.com/sebastienrousseau/corral/releases/latest),
-or `mise`/`go install` above.
+or install with [mise](#mise-macos--linux) or the
+[Go toolchain](#go-toolchain).
 
 ### Arch Linux (AUR)
 
 ```bash
 yay -S corralctl-bin    # or: paru -S corralctl-bin
 ```
+
+### Go toolchain
+
+```bash
+go install github.com/sebastienrousseau/corral/cmd/corralctl@latest
+```
+
+Installs into `$(go env GOPATH)/bin` (or `$GOBIN` when set). Note that a
+binary built this way reports `corralctl version dev`: the real version is
+stamped by the release pipeline through `-ldflags`, which `go install` does
+not apply. Use a release artefact if you need `--version` to be meaningful.
 
 ### Build from source
 
@@ -306,7 +318,7 @@ Execute arbitrary shell commands concurrently across your organized repositories
 
 ## MCP Server (for AI agents)
 
-Corral ships a Model Context Protocol server that exposes your local, Corral-organised workspace to AI coding agents — Claude Code, Cursor, Cline, Codex CLI, Aider, and anything else that speaks MCP. **No network calls are made and the GitHub API is not contacted**; the server is a read-only window into the clones already on disk.
+Corral ships a Model Context Protocol server that exposes your local, Corral-organised workspace to AI coding agents — Claude Code, Cursor, Cline, Codex CLI, Aider, and anything else that speaks MCP. **In its default read-only mode no network calls are made and the GitHub API is never contacted**; the server is a window into the clones already on disk. (`--enable-mutations` adds `corral_clone_repo` and `corral_sync_repo`, which do reach the network — they shell out to `git`. The GitHub API is still never contacted.)
 
 Where GitHub's own MCP server covers the remote API surface (issues, PRs, search), `corral-mcp` covers the dimension only it can — your *local mirror*, organised by visibility and language, queryable without a round-trip.
 
@@ -325,8 +337,14 @@ Where GitHub's own MCP server covers the remote API surface (issues, PRs, search
 - `corral_delete_repo` — Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes
 
 Every mutation writes a JSONL audit record to
-`$XDG_STATE_HOME/corral/mutations.log` (or `~/.local/state/corral/mutations.log`)
-capturing tool, target, args, result, and timestamp.
+`$XDG_STATE_HOME/corral/mutations.log` (or `~/.local/state/corral/mutations.log`),
+capturing tool, target, args, result and timestamp. Two records per mutation: a
+durable *intent* before anything happens, and a *completion* linked by operation
+ID. A mutation whose intent cannot be recorded does not run.
+
+Override the location with `--audit-log <path>`. The file rotates at 8 MiB and
+keeps three previous generations (`mutations.log.1` … `.3`), so a long-running
+server cannot fill the disk.
 
 ### Prompts (v0.0.12)
 
@@ -395,7 +413,14 @@ corralctl mcp --root /custom/workspace
 ### Safety
 
 - **Read-only by default.** `--enable-mutations` unlocks clone and sync. Deletion additionally requires `--enable-destructive-mutations`; every mutation writes intent and completion records to the audit log.
-- **Deletion fails closed.** MCP and CLI pruning refuse repositories with working-tree changes, commits on any local branch not reachable from a remote, stashes, unpublished tags, or unverifiable Git state.
+- **Deletion fails closed.** MCP and CLI pruning refuse repositories with
+  working-tree changes; commits on any local branch not reachable from a remote;
+  stashes; local-only or divergent tags; **gitignored content** (`.env` files,
+  local databases, caches — the least recoverable thing in a clone, and
+  invisible to a plain `git status`); **submodules holding unpublished
+  commits**; a target that is not a git repository at all; or any state Git
+  cannot verify. Each refusal names its specific reason and is written to the
+  audit log.
 - **Path-traversal protected.** File-resource lookups canonicalise the selected repository root and candidate path, blocking `..` and symlink escapes into sibling repositories or outside the workspace.
 - **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
 

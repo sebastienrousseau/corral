@@ -13,7 +13,7 @@ LDFLAGS = -s -w \
 
 .PHONY: all build install test test-race vet lint clean format
 
-all: format vet sbom-check test test-race build
+all: format vet sbom-check example-check test test-race build
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY_NAME) ./cmd/corralctl
@@ -38,6 +38,11 @@ lint:
 # server.json's version matches the newest CHANGELOG.md release.
 sbom-check:
 	go run scripts/manifest_check.go
+
+# Compile every program under examples/. They carry `//go:build ignore`,
+# so nothing else in the build ever touches them.
+example-check:
+	go run scripts/example_check.go
 
 format:
 	go fmt ./...

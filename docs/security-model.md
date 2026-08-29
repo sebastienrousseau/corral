@@ -82,6 +82,11 @@ with the same root sandbox before any filesystem operation.
 - Engine tests assert no writes occur when `--dry-run` is passed.
 - `internal/git/git.go` invokes `git` with `-C <targetDir>` and never
   interpolates untrusted input into shell.
+- `internal/mcp/sandbox_fuzz_test.go` fuzzes `Index.SafePath` and
+  `Index.SafeMutationPath` against the invariant that an accepted path always
+  resolves inside the configured root, comparing whole path segments rather
+  than string prefixes. Run continuously in CI (`.github/workflows/fuzz.yml`)
+  with the largest budget of the four fuzz targets.
 
 ### C3. The release artefacts you download are the artefacts we built
 
@@ -92,7 +97,11 @@ with the same root sandbox before any filesystem operation.
 2. Signed keylessly with cosign (Sigstore/Fulcio/Rekor).
 3. Accompanied by an SLSA v1.0 provenance attestation produced by
    `actions/attest-build-provenance`.
-4. Published together to the same GitHub Release under the tag.
+4. Published together to the same GitHub Release under the tag. Since v0.0.26
+   the provenance bundle is attached as a release asset,
+   `checksums.txt.intoto.jsonl`, as well as being recorded in GitHub's
+   attestation store — so provenance is verifiable by anyone holding the
+   artefact, without knowing the attestation API exists.
 
 Users can verify with:
 
@@ -117,14 +126,24 @@ cosign verify \
 require `--enable-mutations`; deletion additionally requires
 `--enable-destructive-mutations`. A mutation refuses to start unless its intent
 record is durably appended. Completion or failure is linked by operation ID.
-Deletion refuses dirty or unpublished state across every branch, stashes, and
-tags, and fails closed when verification is unavailable.
+Deletion refuses dirty or unpublished state across every branch, stashes,
+local-only or divergent tags, gitignored content, and submodules holding
+unpublished commits; it refuses a target that is not a git repository, and the
+workspace root itself. It fails closed when verification is unavailable.
 
 **Evidence.**
 - `internal/mcp/mutations_test.go` covers capability gates, audit failures,
   credential redaction, and delete refusal paths.
+- `internal/mcp/coverage_paths_test.go` covers the audit-failure arm of every
+  refusal and of every completed mutation, so an unloggable mutation cannot
+  proceed quietly.
 - `internal/git/git_test.go` covers non-current branches, stashes, tags, and
   linked worktrees.
+- `internal/git/submodule_test.go` covers the submodule guard against real
+  repositories with real submodules, and the ignored-content guard.
+- The mutation audit log rotates at 8 MiB keeping three generations
+  (`internal/mcp/audit.go`), so audit retention cannot be defeated by filling
+  the disk.
 
 ### C5. Corral fails closed on empty or hostile upstream state
 
