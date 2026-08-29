@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+
+- **A base-image bump silently falsified an attestation.** Dependabot moved
+  the Dockerfile from `alpine:3.20` to `3.24` — the first bump the new Docker
+  ecosystem entry produced. `docs/osps-baseline-fillable.md` quoted
+  `alpine:3.20@sha256:d9e853…` as its `OSPS-BR-03.02` justification, so the
+  moment that merged, a document submitted to bestpractices.dev as an
+  attestation became false. Nobody edits that file during a dependency bump,
+  which is exactly why it drifted — the same shape as `go-github` v74 sitting
+  in `SBOM.md` for six releases.
+
+  The prose no longer names a version: the Dockerfile's `FROM` line is the
+  single source of truth. `scripts/manifest_check.go` gained a third rule
+  that fails CI if any prose file names a base image the Dockerfile does not
+  build on, so a concrete version cannot be reintroduced and left to rot. The
+  rule was verified against both directions: reintroducing the stale claim
+  fails, and naming the correct version passes.
+
 ## [0.0.26] — 2026-08-29
 
 A hardening release. No behaviour changes for existing invocations; one new

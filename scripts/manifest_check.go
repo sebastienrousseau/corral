@@ -26,6 +26,7 @@
 //     exactly — same module set, same versions, in both directions.
 //  2. server.json's version matches the newest release in CHANGELOG.md, and
 //     its OCI image tag matches that same version.
+//  3. No prose file quotes a base image that disagrees with the Dockerfile.
 //
 // Exits non-zero, listing every mismatch, if any check fails.
 package main
@@ -53,6 +54,7 @@ func main() {
 	var problems []string
 	problems = append(problems, checkSBOM()...)
 	problems = append(problems, checkServerManifest()...)
+	problems = append(problems, checkBaseImage()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -61,7 +63,7 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	fmt.Println("Manifest check: SBOM.md and server.json agree with go.mod and CHANGELOG.md")
+	fmt.Println("Manifest check: SBOM.md, server.json and the prose docs agree with go.mod, CHANGELOG.md and the Dockerfile")
 }
 
 // checkSBOM compares SBOM.md's table with go.mod's direct requirements.
@@ -129,6 +131,59 @@ func checkServerManifest() []string {
 		if tag != manifest.Version {
 			problems = append(problems, fmt.Sprintf(
 				"server.json image tag is %s, its version field is %s", tag, manifest.Version))
+		}
+	}
+	return problems
+}
+
+// dockerFrom captures the image reference on the Dockerfile's FROM line.
+var dockerFrom = regexp.MustCompile(`(?m)^FROM\s+(\S+)`)
+
+// quotedImage finds a name:tag image reference inside prose, with or without
+// a trailing digest.
+var quotedImage = regexp.MustCompile(`\b([a-z][a-z0-9._-]*):(\d+\.\d+(?:\.\d+)?)(@sha256:[0-9a-f]+)?`)
+
+// proseFiles are the documents that make claims about the build, and so can
+// contradict it.
+var proseFiles = []string{"README.md", "SECURITY.md", "SBOM.md",
+	"docs/security-model.md", "docs/osps-baseline-fillable.md"}
+
+// checkBaseImage reports prose that names a base image version other than the
+// one the Dockerfile actually uses.
+//
+// docs/osps-baseline-fillable.md quoted "alpine:3.20@sha256:d9e853…" as an
+// OSPS attestation. When Dependabot bumped the base to 3.24 the attestation
+// became false, silently, in a file nobody edits during a dependency bump —
+// the same shape of drift that put go-github v74 in SBOM.md for six releases.
+// The prose no longer names a version; this makes sure it stays that way, or
+// that any version it does name is the right one.
+func checkBaseImage() []string {
+	body, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		return []string{fmt.Sprintf("reading Dockerfile: %v", err)}
+	}
+	m := dockerFrom.FindSubmatch(body)
+	if m == nil {
+		return []string{"Dockerfile: no FROM line found"}
+	}
+	actual := string(m[1])
+	name, tag, _ := strings.Cut(strings.SplitN(actual, "@", 2)[0], ":")
+
+	var problems []string
+	for _, file := range proseFiles {
+		text, err := os.ReadFile(file) // #nosec G304 -- fixed list of repository documents
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("reading %s: %v", file, err))
+			continue
+		}
+		seen := map[string]bool{}
+		for _, hit := range quotedImage.FindAllStringSubmatch(string(text), -1) {
+			if hit[1] != name || hit[2] == tag || seen[hit[0]] {
+				continue
+			}
+			seen[hit[0]] = true
+			problems = append(problems, fmt.Sprintf(
+				"%s names %s:%s, the Dockerfile builds on %s", file, hit[1], hit[2], actual))
 		}
 	}
 	return problems
