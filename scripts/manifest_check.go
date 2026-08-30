@@ -27,6 +27,7 @@
 //  2. server.json's version matches the newest release in CHANGELOG.md, and
 //     its OCI image tag matches that same version.
 //  3. No prose file quotes a base image that disagrees with the Dockerfile.
+//  4. The OSPS self-assessment's tables and its prefilled form links agree.
 //
 // Exits non-zero, listing every mismatch, if any check fails.
 package main
@@ -34,6 +35,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -55,6 +57,7 @@ func main() {
 	problems = append(problems, checkSBOM()...)
 	problems = append(problems, checkServerManifest()...)
 	problems = append(problems, checkBaseImage()...)
+	problems = append(problems, checkOSPSConsistency()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -134,6 +137,86 @@ func checkServerManifest() []string {
 		}
 	}
 	return problems
+}
+
+// ospsRow matches one criterion row of the OSPS self-assessment table.
+var ospsRow = regexp.MustCompile(`(?m)^\| ` + "`" + `OSPS-([A-Z]{2}-\d\d\.\d\d)` + "`" + ` \| \*\*([^*]+)\*\* \| (.*?) \| `)
+
+// ospsLink matches a prefilled bestpractices.dev form link.
+var ospsLink = regexp.MustCompile(`https://www\.bestpractices\.dev/en/projects/\d+/baseline-\d/edit\?[^)\s]+`)
+
+// ospsDoc is the self-assessment this rule guards.
+const ospsDoc = "docs/osps-baseline-fillable.md"
+
+// checkOSPSConsistency verifies that every justification in the OSPS tables
+// is byte-identical to the one carried in the prefilled form link for the
+// same criterion.
+//
+// The tables are what a reviewer reads; the links are what actually reaches
+// bestpractices.dev, where the answers become a public attestation under the
+// maintainer's name. Nothing but discipline kept the two in step, and
+// discipline is what failed when SECURITY.md was rewritten and five
+// justifications kept citing text that no longer existed. A reader checking
+// the table would have seen the corrected wording while the link still
+// submitted the old.
+func checkOSPSConsistency() []string {
+	body, err := os.ReadFile(ospsDoc)
+	if err != nil {
+		return []string{fmt.Sprintf("reading %s: %v", ospsDoc, err)}
+	}
+	text := string(body)
+
+	table := make(map[string]string)
+	for _, m := range ospsRow.FindAllStringSubmatch(text, -1) {
+		table["OSPS-"+m[1]] = m[3]
+	}
+	if len(table) == 0 {
+		return []string{ospsDoc + ": found no criterion rows"}
+	}
+
+	var problems []string
+	seen := make(map[string]bool)
+	for _, raw := range ospsLink.FindAllString(text, -1) {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: unparseable prefilled link: %v", ospsDoc, err))
+			continue
+		}
+		for key, values := range parsed.Query() {
+			if !strings.HasSuffix(key, "_justification") || len(values) == 0 {
+				continue
+			}
+			id := ospsCriterionID(strings.TrimSuffix(strings.TrimPrefix(key, "osps_"), "_justification"))
+			seen[id] = true
+			want, listed := table[id]
+			switch {
+			case !listed:
+				problems = append(problems, fmt.Sprintf(
+					"%s: prefilled link answers %s, which has no row in the tables", ospsDoc, id))
+			case want != values[0]:
+				problems = append(problems, fmt.Sprintf(
+					"%s: %s reads differently in the table and in the prefilled link", ospsDoc, id))
+			}
+		}
+	}
+	for id := range table {
+		if !seen[id] {
+			problems = append(problems, fmt.Sprintf(
+				"%s: %s is in the tables but no prefilled link submits it", ospsDoc, id))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// ospsCriterionID turns a form field stem such as "ac_01_01" back into the
+// canonical criterion identifier "OSPS-AC-01.01".
+func ospsCriterionID(stem string) string {
+	parts := strings.Split(stem, "_")
+	if len(parts) != 3 {
+		return "OSPS-" + strings.ToUpper(stem)
+	}
+	return fmt.Sprintf("OSPS-%s-%s.%s", strings.ToUpper(parts[0]), parts[1], parts[2])
 }
 
 // dockerFrom captures the image reference on the Dockerfile's FROM line.
