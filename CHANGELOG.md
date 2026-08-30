@@ -8,6 +8,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The OSPS self-assessment is rewritten against criteria v2026.02.19.** The
+  criterion *identifiers* were reused when the standard moved, but several of
+  the *questions* changed underneath them — so roughly half the Level 1
+  answers argued for something the criterion no longer asked.
+  `OSPS-BR-01.01` had become "sanitize untrusted CI metadata" while the answer
+  still described commit signing; `OSPS-QA-02.01` had become "provide a
+  dependency list" while the answer quoted test coverage; `OSPS-QA-01.01` had
+  become "is the repository publicly readable" while the answer described the
+  CI test suite.
+
+  Nothing had been submitted, so no false attestation was ever published. All
+  64 criteria across the three levels are now answered against the current
+  questions, each linking to the file or setting that backs it: 55 Met, 2 N/A,
+  6 Unmet, 1 left unanswered.
+
+  `OSPS-AC-01.01` is deliberately unanswered. It asks whether MFA guards
+  sensitive resources, which is a property of the maintainer's GitHub account
+  that nothing in this repository can establish.
+
+  Five of the six Unmet criteria are the same shape — the practice exists but
+  is not written down: a secrets policy covering rotation (`BR-07.02`), a VEX
+  document (`VM-04.02`), and stated remediation thresholds for dependency and
+  static-analysis findings (`VM-05.01`, `VM-05.02`, `VM-06.01`). The sixth,
+  `QA-07.01`, requires a non-author reviewer and needs a second maintainer
+  rather than a document.
+
+- **Release notes are a descriptive log again.** GoReleaser was emitting a
+  list of merge-commit subjects and SHAs, which names branches rather than
+  changes — so `OSPS-BR-04.01` could not honestly be claimed. Merge commits
+  are now filtered out, the remainder grouped into Features, Fixes, and
+  Security and dependencies, and the release header links to the changelog
+  entry and gives the one command that verifies the download.
+
+- **GitHub Discussions enabled.** The issue-template chooser added in v0.0.26
+  linked to Discussions for anything that is not a defect or a feature
+  request. Discussions were not enabled, so that link 404'd.
+
+### Added
+
+- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
+  internal consistency: every justification in the tables must be
+  byte-identical to the one carried in the prefilled form link for the same
+  criterion, in both directions. The tables are what a reviewer reads; the
+  links are what actually reaches bestpractices.dev. Nothing but discipline
+  kept them in step, and discipline is what failed when `SECURITY.md` was
+  rewritten. Verified against a diverging justification, an orphaned table row
+  and an orphaned link.
+
 ### Fixed
 
 - **Five OSPS baseline justifications asserted things `SECURITY.md` does not

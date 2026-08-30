@@ -6,6 +6,22 @@ project_name: corralctl
 # after adding the Homebrew/AUR publishing secrets.
 release:
   mode: replace
+  # The grouped commit log below answers "what changed"; this answers "how do
+  # I trust it", which is the question a release page should not make someone
+  # go looking for.
+  header: |
+    Full notes, including the reasoning behind each change, are in
+    [CHANGELOG.md](https://github.com/sebastienrousseau/corral/blob/main/CHANGELOG.md).
+
+    **Verify what you downloaded:**
+
+    ```bash
+    gh attestation verify <asset> --owner sebastienrousseau
+    ```
+
+    Every asset is covered by `checksums.txt`, which is signed
+    (`checksums.txt.sigstore.json`), and SLSA build provenance ships as
+    `checksums.txt.intoto.jsonl`.
 
 builds:
   - env:
@@ -205,10 +221,28 @@ signs:
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
+# Release notes must be a descriptive log of functional and security
+# modifications, not a list of merge-commit SHAs. Merge commits carry no
+# information a reader wants — they name a branch — so they are filtered out
+# and the remaining commits are grouped by what they did.
 changelog:
   sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Security and dependencies
+      regexp: '^(sec|deps|chore\(deps\)|chore\(docker\)|chore\(actions\))'
+      order: 2
+    - title: Other
+      order: 99
   filters:
     exclude:
+      - '^Merge pull request'
+      - '^Merge branch'
       - '^docs:'
       - '^test:'
-      - '^chore:'
+      - '^chore: '
