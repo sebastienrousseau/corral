@@ -44,14 +44,35 @@ jobs:
         with:
           go-version: '1.26.6'
 
-      - name: Generate API docs
-        run: go run scripts/generate_docs.go
+      # The site is built by ssg through the Lucid theme vendored at
+      # docs-site/_layouts. The version is pinned in a file rather than here
+      # so a bump is one line and shows up in a diff as a version change.
+      - name: Resolve the generator version
+        id: ssg_version
+        run: |
+          version="$(tr -d '[:space:]' < .github/ssg-version)"
+          if [[ -z "${version}" ]]; then
+            echo "::error::no generator version in .github/ssg-version"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "building against ssg ${version}"
 
-      # Make the custom domain stick across deploys. GitHub Pages reads the
-      # CNAME file at the artifact root to decide which custom domain to
-      # bind to the site.
-      - name: Stamp CNAME for doc.corrallib.com
-        run: echo "doc.corrallib.com" > public/CNAME
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@75b4bfae1b2c753a6806bbce6e6cb89b602de33c # v1.22.0
+
+      - name: Install ssg
+        run: |
+          cargo binstall --no-confirm "ssg@${SSG_VERSION}"
+          ssg --version
+        env:
+          SSG_VERSION: ${{ steps.ssg_version.outputs.version }}
+
+      # Generates the reference, builds through the theme, copies the theme's
+      # assets, gives headings ids and fails on a dangling fragment, and
+      # stamps the CNAME last because ssg writes an empty one.
+      - name: Build the documentation site
+        run: bash scripts/build-docs.sh
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

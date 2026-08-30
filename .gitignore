@@ -28,3 +28,6 @@ dist/
 
 # Scratch trees from scripts/example_check.go, if cleanup is ever prevented.
 .example-check-*/
+public/
+public.build-tmp/
+docs-site/content/reference.md

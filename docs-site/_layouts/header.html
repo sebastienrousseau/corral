@@ -1,0 +1,39 @@
+<header class="masthead">
+  <div class="lu-shell masthead-in">
+    <a class="brand" href="{{locale_path}}">
+      <!-- Inlined rather than linked: it removes a request, cannot 404, and
+           carries no raster sibling for an auditor to ask after. Decorative,
+           because the brand name follows it as text. -->
+      <svg class="brand-mark" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <rect width="32" height="32" rx="7" fill="currentColor" />
+        <path d="M9 8h3.4v12.6H22V24H9z" fill="var(--bg)" />
+      </svg>
+      <span class="brand-name">{{name}}</span>
+    </a>
+
+    <button
+      class="nav-btn"
+      type="button"
+      id="nav-toggle"
+      aria-expanded="false"
+      aria-controls="site-nav"
+    >{{label_menu}}</button>
+
+    <nav class="site-nav" id="site-nav" aria-label="{{label_nav}}">
+      <ul class="nav-list">
+        <li><a href="{{locale_path}}">{{nav_home}}</a></li>
+        <li><a href="{{locale_path}}{{slug_install}}/">{{nav_install}}</a></li>
+        <li><a href="{{locale_path}}{{slug_usage}}/">{{nav_usage}}</a></li>
+        <li><a href="{{locale_path}}{{slug_mcp}}/">{{nav_mcp}}</a></li>
+        <li><a href="{{locale_path}}{{slug_ref}}/">{{nav_ref}}</a></li>
+      </ul>
+    </nav>
+
+    <div class="masthead-tools">
+      <button class="mode-btn" type="button" id="mode-toggle">
+        <span class="mode-btn-label">{{label_theme}}</span>
+        <span class="mode-btn-state" id="mode-state">{{label_theme_system}}</span>
+      </button>
+    </div>
+  </div>
+</header>

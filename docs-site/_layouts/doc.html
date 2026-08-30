@@ -1,0 +1,51 @@
+{{#extends "base"}}
+{{#block "main"}}
+<div class="lu-shell doc-shell">
+  <nav class="doc-side" aria-label="{{label_docs_nav}}">
+    <h2 class="side-h">{{label_docs}}</h2>
+    <ul class="side-list">
+      <li><a href="{{locale_path}}{{slug_install}}/"{{cur_install}}>{{nav_install}}</a></li>
+      <li><a href="{{locale_path}}{{slug_usage}}/"{{cur_usage}}>{{nav_usage}}</a></li>
+      <li><a href="{{locale_path}}{{slug_mcp}}/"{{cur_mcp}}>{{nav_mcp}}</a></li>
+      <li><a href="{{locale_path}}{{slug_ref}}/"{{cur_ref}}>{{nav_ref}}</a></li>
+    </ul>
+  </nav>
+
+  <article class="doc-main">
+    <nav class="crumbs" aria-label="{{label_crumbs}}">
+      <ol>
+        <li><a href="{{locale_path}}">{{nav_home}}</a></li>
+        <li><span aria-current="page">{{headline}}</span></li>
+      </ol>
+    </nav>
+
+    <p class="eyebrow">{{eyebrow}}</p>
+    <h1 class="doc-h">{{headline}}</h1>
+    <p class="doc-lead">{{lead}}</p>
+
+    <div class="prose">
+      {{!content}}
+    </div>
+
+    <nav class="pager" aria-label="{{label_pager}}">
+      <a class="pager-link pager-prev" href="{{prev_href}}">
+        <span class="pager-dir">{{label_prev}}</span>
+        <span class="pager-name">{{prev_label}}</span>
+      </a>
+      <a class="pager-link pager-next" href="{{next_href}}">
+        <span class="pager-dir">{{label_next}}</span>
+        <span class="pager-name">{{next_label}}</span>
+      </a>
+    </nav>
+  </article>
+
+  <aside class="doc-toc" aria-labelledby="toc-h">
+    <h2 class="side-h" id="toc-h">{{label_toc}}</h2>
+    <ul class="toc-list">
+      <li><a href="#{{toc_1_id}}">{{toc_1}}</a></li>
+      <li><a href="#{{toc_2_id}}">{{toc_2}}</a></li>
+      <li><a href="#{{toc_3_id}}">{{toc_3}}</a></li>
+    </ul>
+  </aside>
+</div>
+{{/block}}
