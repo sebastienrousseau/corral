@@ -17,6 +17,7 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+import unicodedata
 
 HEADING = re.compile(r"<(h[2-4])([^>]*)>(.*?)</\1>", re.S)
 TAG = re.compile(r"<[^>]+>")
@@ -27,6 +28,12 @@ PROSE = re.compile(r'<div class="prose">(.*?)</div>\s*<nav class="pager"', re.S)
 def slug(text: str) -> str:
     text = TAG.sub("", text)
     text = text.replace("&amp;", "and").replace("&#39;", "").replace("&quot;", "")
+    # Decompose, then drop the combining marks: without this every accented
+    # character becomes a separator, so "Conformité" slugs to "conformit".
+    # These pages are English today, but an id scheme that only survives
+    # ASCII is a trap for whoever adds a translation.
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
     text = text.lower().strip()
     text = re.sub(r"[^a-z0-9]+", "-", text)
     return re.sub(r"-{2,}", "-", text).strip("-")

@@ -24,6 +24,12 @@ import (
 // headingSlug mirrors the slug that scripts/anchor_headings.py derives from
 // a heading's text. The package index links to these, so the two must agree;
 // if they diverge the index silently points at nothing.
+//
+// It handles ASCII only, which is sufficient because it is applied to import
+// paths and those cannot contain anything else. The Python side additionally
+// strips combining marks, so an accented heading slugs the same way there;
+// matching that here would mean taking a dependency on x/text for input that
+// cannot occur.
 func headingSlug(text string) string {
 	var b strings.Builder
 	prevDash := false
