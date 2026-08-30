@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Five OSPS baseline justifications asserted things `SECURITY.md` does not
+  say.** Found while preparing the bestpractices.dev submission, which is the
+  point at which these stop being documentation and become a public
+  self-attestation:
+
+  | Criterion | Claimed | Actual |
+  |---|---|---|
+  | `OSPS-VM-02.01` | 90-day coordinated disclosure timeline | not in SECURITY.md |
+  | `OSPS-VM-01.01` | private disclosure channel *(email)* | GitHub private vulnerability reporting |
+  | `OSPS-DO-04.01` | disclosure email + 90-day timeline | neither present |
+  | `OSPS-VM-05.02` | follow-up PR within 7 days | not in SECURITY.md |
+  | `OSPS-BR-07.02` | secrets rotated on personnel change | not in SECURITY.md |
+
+  Two of these predate the v0.0.26 rewrite of `SECURITY.md`; the rest became
+  false when it was rewritten. Each criterion is still genuinely met — there
+  *is* a private reporting channel, a supported-versions policy and a secrets
+  practice — so the fix is to describe what the file says rather than what
+  someone hoped it said.
+
+  The 90-day disclosure timeline and the 7-day dependency SLA are not
+  documented anywhere, and adding them would be committing the maintainer to
+  a promise rather than recording a fact, so they are left out.
+
 ## [0.0.27] — 2026-08-30
 
 ### Added
