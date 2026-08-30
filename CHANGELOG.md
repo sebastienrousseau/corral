@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documentation site at doc.corrallib.com documented the wrong things.**
+  Four defects, all visible on the published page:
+
+  | Defect | Detail |
+  |---|---|
+  | Uncompilable imports | Every package card printed `import ".../internal/github"`. Go forbids importing an `internal/` path across module boundaries, so each of the five import statements on the page was something no reader could use. |
+  | Mostly private | `doc.AllDecls` published **173 of 233** declarations that were unexported helpers — `levenshtein`, `envToken`, `acquirePageSlot` — several with no doc comment, rendering as empty paragraphs. |
+  | Stale package list | The generator hardcoded five paths. The module has eight. `internal/diag` shipped in v0.0.26 and never reached the site, while the documentation-coverage gate counted it — the gate checked eight packages and the site showed five. |
+  | Unnavigable | 233 entries on one page with **zero** links: no contents, no anchors, no way back to the source. |
+
+  The site now discovers packages instead of listing them, so it cannot go
+  stale; publishes only exported declarations (66, down from 233); replaces
+  the uncompilable import lines with a note saying why the package cannot be
+  imported and a link to its source; and carries a package index with an
+  anchor on every declaration. It is retitled **Corral Package Reference**,
+  because it documents packages that are deliberately not an API — the
+  interfaces Corral actually offers are its command line and its MCP server.
+
+- **The site is now built in CI on every pull request**, not only on push to
+  main by the deploy workflow — so a change that breaks the generator is
+  caught before it merges. The job additionally fails if any package
+  `go list` reports is absent from the page, or if an unexported declaration
+  reaches it. Both failure modes were verified by reintroducing them.
+
 ### Changed
 
 - **The OSPS self-assessment is rewritten against criteria v2026.02.19.** The
