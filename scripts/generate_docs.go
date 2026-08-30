@@ -13,20 +13,53 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"html/template"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
+	"time"
 )
+
+// headingSlug mirrors the slug that scripts/anchor_headings.py derives from
+// a heading's text. The package index links to these, so the two must agree;
+// if they diverge the index silently points at nothing.
+func headingSlug(text string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(text) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
 
 type DocData struct {
 	Packages []PkgDoc
+	// Date, PackageCount and DeclCount are front-matter values the theme
+	// renders, so they are computed before the template runs rather than
+	// printed afterwards.
+	Date         string
+	PackageCount int
+	DeclCount    int
 }
 
 type PkgDoc struct {
 	Name string
 	Path string
+	// Slug is the id the rendered heading will carry. ssg emits no heading
+	// ids, so scripts/anchor_headings.py derives them from the heading text
+	// after the build; this must agree with that derivation or the package
+	// index links at nothing.
+	Slug string
 	Doc  string
 	// Anchor is the slug used for in-page links.
 	Anchor string
@@ -61,183 +94,144 @@ type TypeDoc struct {
 	Methods []FuncDoc
 }
 
-const htmlTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Corral Package Reference</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #0f172a;
-            --text: #f1f5f9;
-            --primary: #f56b5e;
-            --border: #1e293b;
-            --card-bg: #1e293b;
-            --code-bg: #0b0f19;
-            --muted: #94a3b8;
-        }
-        body {
-            font-family: 'Inter', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 0;
-            line-height: 1.6;
-        }
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 60px 20px;
-        }
-        header {
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 30px;
-            margin-bottom: 50px;
-            text-align: center;
-        }
-        h1 { color: var(--primary); font-size: 2.8rem; margin: 0 0 10px; font-weight: 700; }
-        .subtitle { font-size: 1.2rem; color: var(--muted); }
-        .pkg-card {
-            background: #111827;
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 40px;
-            margin-bottom: 40px;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-        }
-        h2 { font-size: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-top: 0; font-weight: 600; }
-        h3 { font-size: 1.4rem; margin-top: 40px; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 5px; }
-        h4 { font-size: 1.1rem; margin-top: 25px; margin-bottom: 10px; font-family: 'JetBrains Mono', monospace; color: #f8fafc; }
-        h5 { font-size: 1rem; margin-top: 20px; margin-bottom: 5px; color: var(--muted); }
-        pre {
-            background: var(--code-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 18px;
-            overflow-x: auto;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-        }
-        code {
-            font-family: 'JetBrains Mono', monospace;
-            background: var(--code-bg);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.85rem;
-            color: #38bdf8;
-        }
-        .method-block {
-            margin-left: 20px;
-            border-left: 2px solid var(--border);
-            padding-left: 15px;
-            margin-bottom: 15px;
-        }
-        .note {
-            color: var(--muted);
-            font-size: 0.95rem;
-            line-height: 1.6;
-        }
-        .toc {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 20px 28px;
-            margin-bottom: 40px;
-        }
-        .toc ul { list-style: none; padding: 0; margin: 0; }
-        .toc li { padding: 4px 0; }
-        .toc a { color: var(--primary); text-decoration: none; }
-        .toc a:hover { text-decoration: underline; }
-        .tag {
-            font-size: 0.75rem;
-            color: var(--muted);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 1px 7px;
-            margin-left: 6px;
-        }
-        .footer {
-            text-align: center;
-            margin-top: 80px;
-            color: var(--muted);
-            font-size: 0.95rem;
-            border-top: 1px solid var(--border);
-            padding-top: 30px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>Corral Package Reference</h1>
-            <div class="subtitle">Exported Go declarations, generated from the source of every package in the module</div>
-            <p class="note">Most of Corral lives under <code>internal/</code>, which Go forbids other modules from importing. Those packages are documented here for people working on Corral, not as an API to build against. The interfaces Corral does offer to the outside world are its command line and its MCP server, both documented in the <a href="https://github.com/sebastienrousseau/corral#readme">README</a>.</p>
-        </header>
+// The site is built by ssg using the vendored Lucid theme, so this emits
+// Markdown with the theme's front matter rather than a whole HTML page. The
+// previous version carried its own dark palette, its own layout and a Google
+// Fonts link, none of which matched the rest of the project's documentation
+// and none of which had been through an accessibility gate.
+//
+// Heading levels matter here and are not cosmetic: the theme's accessibility
+// suite asserts that no heading level is skipped, so the three h2 sections
+// take h3 per package and h4 per declaration.
+//
+// FENCE and TICK stand in for backticks. A Go raw string cannot contain one,
+// and splicing them in with concatenation produced a template that looked
+// right and did not compile, so they are substituted once at startup instead.
+const (
+	fenceToken = "@@FENCE@@"
+	tickToken  = "@@TICK@@"
+)
 
-        <nav class="toc">
-            <h2>Packages</h2>
-            <ul>
-            {{range .Packages}}
-                <li><a href="#{{.Anchor}}">{{.Path}}</a>{{if .Kind}} <span class="tag">{{.Kind}}</span>{{end}}</li>
-            {{end}}
-            </ul>
-        </nav>
-        
-        {{range .Packages}}
-        <div class="pkg-card" id="{{.Anchor}}">
-            <h2>Package {{.Name}}</h2>
-            {{if .Importable}}
-            <p><code>import "{{.ImportPath}}"</code></p>
-            {{else}}
-            <p class="note">{{if eq .Kind "program"}}A command, not a library — there is nothing here to import.{{else}}Not importable from outside this module: Go refuses an <code>internal/</code> path across module boundaries.{{end}}
-            <a href="{{.SourceURL}}">Read the source</a>.</p>
-            {{end}}
-            <p>{{.Doc}}</p>
+const markdownTemplate = `---
+author: "Sebastien Rousseau"
+date: "{{.Date}}"
+language: "en-GB"
+schema: "page"
+changefreq: "weekly"
+copyright_year: "2026"
+locale_path: "/"
+base_path: "/"
+name: "Corral"
+short_name: "CO"
+slug_install: "installation"
+slug_usage: "usage"
+slug_mcp: "mcp"
+slug_ref: "reference"
+nav_home: "Home"
+nav_install: "Installation"
+nav_usage: "Usage"
+nav_mcp: "MCP Server"
+nav_ref: "Reference"
+label_skip: "Skip to main content"
+label_menu: "Menu"
+label_nav: "Main"
+label_theme: "Theme"
+label_theme_system: "System"
+label_docs: "Documentation"
+label_footer_nav: "Documentation"
+label_docs_nav: "Documentation sections"
+label_crumbs: "Breadcrumb"
+label_pager: "Page"
+label_prev: "Previous"
+label_next: "Next"
+label_toc: "On this page"
+screenshot_alt: "Corral organising GitHub repositories into a Finder-friendly directory hierarchy."
+footer_note: "Corral clones and organises GitHub repositories into a Finder-friendly hierarchy. Published under GPL-3.0-only."
+copyright: "(c) 2026 Sebastien Rousseau. Licensed under GPL-3.0-only."
+translation_key: "reference"
+title: "Package Reference - Corral"
+description: "Generated reference for the {{.PackageCount}} packages in the Corral module, covering {{.DeclCount}} exported declarations."
+keywords: "corral packages, go reference, api documentation"
+eyebrow: "Generated"
+headline: "Package Reference"
+lead: "Generated from the source on every build. These packages are deliberately not a public API - the interfaces Corral offers are its command line and its MCP server."
+cur_install: ""
+cur_usage: ""
+cur_mcp: ""
+cur_ref: ' aria-current="page"'
+toc_1: "Package index"
+toc_1_id: "package-index"
+toc_2: "Packages"
+toc_2_id: "packages"
+toc_3: "How to read this"
+toc_3_id: "how-to-read-this"
+prev_href: "/mcp/"
+prev_label: "MCP Server"
+next_href: "/"
+next_label: "Home"
+layout: "doc"
+---
 
-            {{if .Funcs}}
-            <h3>Functions</h3>
-            {{range .Funcs}}
-            <div id="{{.Anchor}}">
-                <h4>func {{.Name}}</h4>
-                <pre>{{.Decl}}</pre>
-                <p>{{.Doc}}</p>
-            </div>
-            {{end}}
-            {{end}}
+## Package index
 
-            {{if .Types}}
-            <h3>Types</h3>
-            {{range .Types}}
-            <div id="{{.Anchor}}">
-                <h4>type {{.Name}}</h4>
-                <pre>{{.Decl}}</pre>
-                <p>{{.Doc}}</p>
+{{range .Packages}}- [{{.Path}}](#{{.Slug}}){{if not .Importable}} - {{if eq .Kind "internal"}}internal{{else}}command{{end}}{{end}}
+{{end}}
+## Packages
+{{range .Packages}}
+### {{.Path}}
+{{if .Doc}}
+{{.Doc}}
+{{end}}{{if .Importable}}
+@@FENCE@@go
+import "{{.ImportPath}}"
+@@FENCE@@
+{{else if eq .Kind "internal"}}
+Go refuses an @@TICK@@internal/@@TICK@@ path across module boundaries, so this package cannot be
+imported from outside the module. [Read the source]({{.SourceURL}}).
+{{else}}
+A command, not a library. [Read the source]({{.SourceURL}}).
+{{end}}{{range .Funcs}}
+#### {{.Name}}
 
-                {{if .Methods}}
-                <h5>Methods</h5>
-                {{range .Methods}}
-                <div class="method-block">
-                    <h4>func {{.Name}}</h4>
-                    <pre>{{.Decl}}</pre>
-                    <p>{{.Doc}}</p>
-                </div>
-                {{end}}
-                {{end}}
-            </div>
-            {{end}}
-            {{end}}
-        </div>
-        {{end}}
+@@FENCE@@go
+{{.Decl}}
+@@FENCE@@
+{{if .Doc}}
+{{.Doc}}
+{{end}}{{end}}{{range .Types}}
+#### {{.Name}}
 
-        <div class="footer">
-            Generated from source by <code>scripts/generate_docs.go</code>.
-            Made with ❤️ in London, UK
-        </div>
-    </div>
-</body>
-</html>`
+@@FENCE@@go
+{{.Decl}}
+@@FENCE@@
+{{if .Doc}}
+{{.Doc}}
+{{end}}{{range .Methods}}
+#### {{.Name}}
+
+@@FENCE@@go
+{{.Decl}}
+@@FENCE@@
+{{if .Doc}}
+{{.Doc}}
+{{end}}{{end}}{{end}}{{end}}
+
+## How to read this
+
+Only exported declarations appear here. Unexported helpers are implementation
+detail and change without notice, so publishing them would suggest a stability
+this module does not offer.
+
+Where a package cannot be imported, this page says so and links to the source
+instead of printing an import statement that would not compile. Six of these
+packages sit under @@TICK@@internal/@@TICK@@, which Go refuses to resolve
+across module boundaries, and @@TICK@@cmd/corralctl@@TICK@@ is a program
+rather than a library.
+
+The interfaces Corral offers the outside world are its command line, described
+under [Usage](/usage/), and its [MCP server](/mcp/). Those are the surfaces to
+build against.
+`
 
 func formatFuncDecl(fset *token.FileSet, decl *ast.FuncDecl) string {
 	tmp := *decl
@@ -373,6 +367,7 @@ func main() {
 			pkgDoc.Path = p
 			pkgDoc.Doc = d.Doc
 			pkgDoc.Anchor = anchor("pkg", p)
+			pkgDoc.Slug = headingSlug(p)
 			pkgDoc.SourceURL = sourceRoot + "/" + p
 			pkgDoc.Importable = importable(p, name)
 			switch {
@@ -417,33 +412,8 @@ func main() {
 		}
 	}
 
-	if err := os.MkdirAll("public", 0o750); err != nil {
-		fmt.Printf("Error creating public dir: %v\n", err)
-		os.Exit(1)
-	}
-
-	f, err := os.Create(filepath.Join("public", "index.html"))
-	if err != nil {
-		fmt.Printf("Error creating index.html: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	tmpl, err := template.New("docs").Parse(htmlTemplate)
-	if err != nil {
-		fmt.Printf("Error parsing template: %v\n", err)
-		os.Exit(1)
-	}
-
-	err = tmpl.Execute(f, docData)
-	if err != nil {
-		fmt.Printf("Error executing template: %v\n", err)
-		os.Exit(1)
-	}
-
-	// A count, not a cheer. The previous version reported success while
-	// publishing five of eight packages and 173 unexported helpers, so the
-	// message says what was produced and lets the reader judge it.
+	// Counted before rendering: the front matter quotes both numbers, and a
+	// figure printed after the fact could disagree with the page.
 	exported := 0
 	for _, pkg := range docData.Packages {
 		exported += len(pkg.Funcs)
@@ -451,6 +421,41 @@ func main() {
 			exported += 1 + len(t.Methods)
 		}
 	}
-	fmt.Printf("Generated public/index.html: %d packages, %d exported declarations\n",
-		len(docData.Packages), exported)
+	docData.PackageCount = len(docData.Packages)
+	docData.DeclCount = exported
+	docData.Date = time.Now().UTC().Format("2006-01-02")
+
+	outDir := filepath.Join("docs-site", "content")
+	if err := os.MkdirAll(outDir, 0o750); err != nil {
+		fmt.Printf("Error creating %s: %v\n", outDir, err)
+		os.Exit(1)
+	}
+
+	outPath := filepath.Join(outDir, "reference.md")
+	f, err := os.Create(outPath) // #nosec G304 -- fixed path within the repo
+	if err != nil {
+		fmt.Printf("Error creating %s: %v\n", outPath, err)
+		os.Exit(1)
+	}
+	defer f.Close()
+
+	src := strings.ReplaceAll(markdownTemplate, fenceToken, "```")
+	src = strings.ReplaceAll(src, tickToken, "`")
+
+	tmpl, err := template.New("docs").Parse(src)
+	if err != nil {
+		fmt.Printf("Error parsing template: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := tmpl.Execute(f, docData); err != nil {
+		fmt.Printf("Error executing template: %v\n", err)
+		os.Exit(1)
+	}
+
+	// A count, not a cheer. An earlier version reported success while
+	// publishing five of eight packages and 173 unexported helpers, so the
+	// message says what was produced and lets the reader judge it.
+	fmt.Printf("Generated %s: %d packages, %d exported declarations\n",
+		outPath, docData.PackageCount, docData.DeclCount)
 }

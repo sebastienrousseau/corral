@@ -171,20 +171,46 @@ jobs:
       # until after it merged. Build it here too, and assert it covers every
       # package `go list` reports: the package list used to be hardcoded, and
       # internal/diag shipped in v0.0.26 without ever reaching the site.
+      # The site is built by ssg through the vendored Lucid theme, so the
+      # generator now emits Markdown rather than a whole HTML page and these
+      # assertions read that instead. The build runs here as well as in the
+      # deploy workflow, because a change that breaks it was previously
+      # invisible until after it had merged.
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install ssg
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < .github/ssg-version)"
+          cargo binstall --no-confirm "ssg@${version}"
+
       - name: Build the documentation site
         env:
           GOTOOLCHAIN: auto
         run: |
           set -euo pipefail
-          go run scripts/generate_docs.go
+          # Builds, copies assets, adds heading ids, and fails on a dangling
+          # in-page fragment.
+          bash scripts/build-docs.sh
+
+          ref="docs-site/content/reference.md"
           missing=0
+          # The package list was hardcoded once and internal/diag shipped in
+          # v0.0.26 without ever reaching the site, so this compares against
+          # what `go list` actually reports.
           for pkg in $(go list ./... | sed 's|github.com/sebastienrousseau/corral/||'); do
-            if ! grep -q ">${pkg}</a>" public/index.html; then
+            # `--` matters: the pattern starts with a hyphen, and without
+            # it grep reads it as an option and reports every package
+            # missing, which is a gate that fails whatever you do.
+            if ! grep -qF -- "- [${pkg}](#" "${ref}"; then
               echo "::error::${pkg} is missing from the generated documentation site"
               missing=1
             fi
           done
-          if grep -qE '<h4>(func|type) [a-z_]' public/index.html; then
+          # Unexported declarations are implementation detail; 173 of them
+          # were published once.
+          if grep -qE '^#### [a-z_]' "${ref}"; then
             echo "::error::the site is publishing unexported declarations"
             missing=1
           fi

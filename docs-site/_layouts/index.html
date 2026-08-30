@@ -1,0 +1,74 @@
+{{#extends "base"}}
+{{#block "main"}}
+<section class="hero" aria-labelledby="hero-h">
+  <div class="lu-shell hero-in">
+    <p class="eyebrow"><span class="eyebrow-tag">{{hero_tag}}</span> {{hero_tagline}}</p>
+    <h1 id="hero-h" class="hero-h">{{headline}}</h1>
+    <p class="hero-lead">{{lead}}</p>
+    <p class="hero-actions">
+      <a class="btn btn-primary" href="{{locale_path}}{{slug_install}}/">{{cta_primary}}</a>
+      <a class="btn btn-quiet" href="{{locale_path}}{{slug_ref}}/">{{cta_secondary}}</a>
+    </p>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="start-h">
+  <div class="lu-shell">
+    <h2 id="start-h" class="band-h">{{start_h}}</h2>
+    <p class="band-lead">{{start_lead}}</p>
+    <div class="snippet">
+      <p class="snippet-h" id="snippet-cap">{{snippet_caption}}</p>
+      <pre class="snippet-body" tabindex="0" role="group" aria-labelledby="snippet-cap"><code>{{snippet_code}}</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="band band-soft" aria-labelledby="feat-h">
+  <div class="lu-shell">
+    <h2 id="feat-h" class="band-h">{{features_h}}</h2>
+    <p class="band-lead">{{features_lead}}</p>
+    <ul class="cards">
+      <li class="card">
+        <h3 class="card-h">{{f1_h}}</h3>
+        <p>{{f1_body}}</p>
+      </li>
+      <li class="card">
+        <h3 class="card-h">{{f2_h}}</h3>
+        <p>{{f2_body}}</p>
+      </li>
+      <li class="card">
+        <h3 class="card-h">{{f3_h}}</h3>
+        <p>{{f3_body}}</p>
+      </li>
+      <li class="card">
+        <h3 class="card-h">{{f4_h}}</h3>
+        <p>{{f4_body}}</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="proof-h">
+  <div class="lu-shell">
+    <h2 id="proof-h" class="band-h">{{proof_h}}</h2>
+    <p class="band-lead">{{proof_lead}}</p>
+    <dl class="facts">
+      <div class="fact">
+        <dt class="fact-t">{{proof_1_t}}</dt>
+        <dd class="fact-d">{{proof_1_d}}</dd>
+      </div>
+      <div class="fact">
+        <dt class="fact-t">{{proof_2_t}}</dt>
+        <dd class="fact-d">{{proof_2_d}}</dd>
+      </div>
+      <div class="fact">
+        <dt class="fact-t">{{proof_3_t}}</dt>
+        <dd class="fact-d">{{proof_3_d}}</dd>
+      </div>
+    </dl>
+    <p class="band-cta">
+      <a class="btn btn-primary" href="{{locale_path}}{{slug_install}}/">{{cta_final}}</a>
+    </p>
+  </div>
+</section>
+{{/block}}

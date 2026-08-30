@@ -6,9 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [Unreleased]
+## [0.0.28] — 2026-08-30
+
+### Changed
+
+- **doc.corrallib.com is now built by `ssg` through the Lucid theme.** The site
+  was a single hand-written `public/index.html` emitted by
+  `scripts/generate_docs.go`, carrying its own dark palette, its own layout and
+  a Google Fonts link, none of which had been through an accessibility gate.
+  It is now five pages — Home, Installation, Usage, MCP Server and the
+  generated Package Reference — rendered through the Lucid documentation theme
+  vendored at `docs-site/_layouts`, which holds every WCAG 2.2 AAA criterion a
+  theme can determine on its own. Measured across the five pages in both
+  colour schemes: AAA contrast, 44px targets, heading order, one `h1` per page.
 
 ### Fixed
+
+- **Every "on this page" link pointed at nothing.** `ssg` renders Markdown with
+  pulldown-cmark configured for HTML output only, which emits no heading ids,
+  and its `{#id}` attribute syntax is not enabled either — it renders as
+  literal text. Nothing catches that on its own: a link checker reads
+  `/page/#thing` as a request for `/page/`, which is a 200, and axe has no rule
+  for it. `scripts/anchor_headings.py` now derives ids from the heading text
+  after the build and fails on a dangling fragment, verified by breaking one.
+
+- **Two duplicated changelog headings**, `## [Unreleased]` and `## [0.0.25]`,
+  each present twice from an earlier merge.
 
 - **The documentation site at doc.corrallib.com documented the wrong things.**
   Four defects, all visible on the published page:
@@ -304,7 +327,6 @@ itself true and mechanically checked.
   the clamps on `defaultConcurrency`. Where that required a seam, the seam
   says in its comment why the branch was otherwise untestable.
 
-## [0.0.25] — 2026-08-20
 ## [0.0.25] — 2026-08-20
 
 ### Fixed
