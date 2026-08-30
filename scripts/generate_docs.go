@@ -16,6 +16,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -24,23 +25,39 @@ type DocData struct {
 }
 
 type PkgDoc struct {
-	Name  string
-	Path  string
-	Doc   string
-	Funcs []FuncDoc
-	Types []TypeDoc
+	Name string
+	Path string
+	Doc  string
+	// Anchor is the slug used for in-page links.
+	Anchor string
+	// Importable is true when code outside this module may import the
+	// package. Everything under internal/ cannot be, and neither can a
+	// main package, so printing an import statement for those would be
+	// telling the reader to write something that does not compile.
+	Importable bool
+	// Kind labels why a package is not importable: "internal" or
+	// "program". Empty when it is importable.
+	Kind string
+	// ImportPath is the full module path, set only when Importable.
+	ImportPath string
+	// SourceURL points at the package directory on GitHub.
+	SourceURL string
+	Funcs     []FuncDoc
+	Types     []TypeDoc
 }
 
 type FuncDoc struct {
-	Name string
-	Decl string
-	Doc  string
+	Name   string
+	Decl   string
+	Doc    string
+	Anchor string
 }
 
 type TypeDoc struct {
 	Name    string
 	Doc     string
 	Decl    string
+	Anchor  string
 	Methods []FuncDoc
 }
 
@@ -49,7 +66,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Corral API Documentation</title>
+    <title>Corral Package Reference</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -117,6 +134,30 @@ const htmlTemplate = `<!DOCTYPE html>
             padding-left: 15px;
             margin-bottom: 15px;
         }
+        .note {
+            color: var(--muted);
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        .toc {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px 28px;
+            margin-bottom: 40px;
+        }
+        .toc ul { list-style: none; padding: 0; margin: 0; }
+        .toc li { padding: 4px 0; }
+        .toc a { color: var(--primary); text-decoration: none; }
+        .toc a:hover { text-decoration: underline; }
+        .tag {
+            font-size: 0.75rem;
+            color: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 1px 7px;
+            margin-left: 6px;
+        }
         .footer {
             text-align: center;
             margin-top: 80px;
@@ -130,20 +171,35 @@ const htmlTemplate = `<!DOCTYPE html>
 <body>
     <div class="container">
         <header>
-            <h1>Corral API Documentation</h1>
-            <div class="subtitle">Reference manual covering all modules & packages</div>
+            <h1>Corral Package Reference</h1>
+            <div class="subtitle">Exported Go declarations, generated from the source of every package in the module</div>
+            <p class="note">Most of Corral lives under <code>internal/</code>, which Go forbids other modules from importing. Those packages are documented here for people working on Corral, not as an API to build against. The interfaces Corral does offer to the outside world are its command line and its MCP server, both documented in the <a href="https://github.com/sebastienrousseau/corral#readme">README</a>.</p>
         </header>
+
+        <nav class="toc">
+            <h2>Packages</h2>
+            <ul>
+            {{range .Packages}}
+                <li><a href="#{{.Anchor}}">{{.Path}}</a>{{if .Kind}} <span class="tag">{{.Kind}}</span>{{end}}</li>
+            {{end}}
+            </ul>
+        </nav>
         
         {{range .Packages}}
-        <div class="pkg-card">
+        <div class="pkg-card" id="{{.Anchor}}">
             <h2>Package {{.Name}}</h2>
-            <p><code>import "github.com/sebastienrousseau/corral/{{.Path}}"</code></p>
+            {{if .Importable}}
+            <p><code>import "{{.ImportPath}}"</code></p>
+            {{else}}
+            <p class="note">{{if eq .Kind "program"}}A command, not a library — there is nothing here to import.{{else}}Not importable from outside this module: Go refuses an <code>internal/</code> path across module boundaries.{{end}}
+            <a href="{{.SourceURL}}">Read the source</a>.</p>
+            {{end}}
             <p>{{.Doc}}</p>
 
             {{if .Funcs}}
             <h3>Functions</h3>
             {{range .Funcs}}
-            <div>
+            <div id="{{.Anchor}}">
                 <h4>func {{.Name}}</h4>
                 <pre>{{.Decl}}</pre>
                 <p>{{.Doc}}</p>
@@ -154,7 +210,7 @@ const htmlTemplate = `<!DOCTYPE html>
             {{if .Types}}
             <h3>Types</h3>
             {{range .Types}}
-            <div>
+            <div id="{{.Anchor}}">
                 <h4>type {{.Name}}</h4>
                 <pre>{{.Decl}}</pre>
                 <p>{{.Doc}}</p>
@@ -176,6 +232,7 @@ const htmlTemplate = `<!DOCTYPE html>
         {{end}}
 
         <div class="footer">
+            Generated from source by <code>scripts/generate_docs.go</code>.
             Made with ❤️ in London, UK
         </div>
     </div>
@@ -196,11 +253,103 @@ func formatDecl(fset *token.FileSet, decl ast.Decl) string {
 	return buf.String()
 }
 
+const (
+	modulePath = "github.com/sebastienrousseau/corral"
+	sourceRoot = "https://github.com/sebastienrousseau/corral/tree/main"
+)
+
+// skipDirs are directories that hold Go files which are not part of the
+// module's package set: build-ignored example and tooling programs, plus
+// generated output and version control metadata.
+var skipDirs = map[string]bool{
+	".git": true, "scripts": true, "examples": true,
+	"public": true, "testdata": true, "vendor": true, "docs": true,
+}
+
+// discoverPackages walks the module for directories holding non-test Go
+// files, in sorted order.
+//
+// This used to be a hardcoded list of five paths, and it went stale the
+// moment a package was added: internal/diag shipped in v0.0.26 and never
+// appeared on the site, while the documentation-coverage gate counted it.
+// The gate checked eight packages and the published site showed five.
+// Discovering them removes the possibility rather than the current
+// instance.
+func discoverPackages() ([]string, error) {
+	var paths []string
+	err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if path != "." && (skipDirs[name] || strings.HasPrefix(name, ".")) {
+			return filepath.SkipDir
+		}
+		entries, readErr := os.ReadDir(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, e := range entries {
+			n := e.Name()
+			if !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+				if path != "." {
+					paths = append(paths, filepath.ToSlash(path))
+				}
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("found no packages to document")
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// importable reports whether code outside this module may import the
+// package. Go refuses an internal/ path across module boundaries, and a
+// main package is a program rather than a library, so in both cases an
+// import statement would not compile for a reader who copied it.
+func importable(path, pkgName string) bool {
+	if pkgName == "main" {
+		return false
+	}
+	return path != "internal" &&
+		!strings.HasPrefix(path, "internal/") &&
+		!strings.Contains(path, "/internal/")
+}
+
+// anchor builds a stable, URL-safe in-page identifier.
+func anchor(scope, name string) string {
+	s := strings.ToLower(scope + "-" + name)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
 func main() {
 	fset := token.NewFileSet()
 	var docData DocData
 
-	paths := []string{"internal/github", "internal/git", "internal/engine", "internal/tui", "internal/mcp"}
+	paths, err := discoverPackages()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "discovering packages: %v\n", err)
+		os.Exit(1)
+	}
 	for _, p := range paths {
 		pkgs, err := parser.ParseDir(fset, p, func(info os.FileInfo) bool {
 			return !strings.HasSuffix(info.Name(), "_test.go")
@@ -212,33 +361,53 @@ func main() {
 		}
 
 		for name, pkg := range pkgs {
-			d := doc.New(pkg, p, doc.AllDecls)
+			// Mode 0, not doc.AllDecls: this is documentation, and an
+			// unexported helper is not part of any surface a reader can
+			// use. The previous setting published 173 private
+			// declarations — three quarters of the page — including
+			// several with no doc comment at all, which rendered as
+			// empty paragraphs.
+			d := doc.New(pkg, p, 0)
 			var pkgDoc PkgDoc
 			pkgDoc.Name = name
 			pkgDoc.Path = p
 			pkgDoc.Doc = d.Doc
+			pkgDoc.Anchor = anchor("pkg", p)
+			pkgDoc.SourceURL = sourceRoot + "/" + p
+			pkgDoc.Importable = importable(p, name)
+			switch {
+			case pkgDoc.Importable:
+				pkgDoc.ImportPath = modulePath + "/" + p
+			case name == "main":
+				pkgDoc.Kind = "program"
+			default:
+				pkgDoc.Kind = "internal"
+			}
 
 			// Functions
 			for _, f := range d.Funcs {
 				pkgDoc.Funcs = append(pkgDoc.Funcs, FuncDoc{
-					Name: f.Name,
-					Decl: formatFuncDecl(fset, f.Decl),
-					Doc:  f.Doc,
+					Name:   f.Name,
+					Decl:   formatFuncDecl(fset, f.Decl),
+					Doc:    f.Doc,
+					Anchor: anchor(p, f.Name),
 				})
 			}
 
 			// Types
 			for _, t := range d.Types {
 				typeDoc := TypeDoc{
-					Name: t.Name,
-					Doc:  t.Doc,
-					Decl: formatDecl(fset, t.Decl),
+					Name:   t.Name,
+					Doc:    t.Doc,
+					Decl:   formatDecl(fset, t.Decl),
+					Anchor: anchor(p, t.Name),
 				}
 				for _, m := range t.Methods {
 					typeDoc.Methods = append(typeDoc.Methods, FuncDoc{
-						Name: m.Name,
-						Decl: formatFuncDecl(fset, m.Decl),
-						Doc:  m.Doc,
+						Name:   m.Name,
+						Decl:   formatFuncDecl(fset, m.Decl),
+						Doc:    m.Doc,
+						Anchor: anchor(p, t.Name+"."+m.Name),
 					})
 				}
 				pkgDoc.Types = append(pkgDoc.Types, typeDoc)
@@ -248,8 +417,7 @@ func main() {
 		}
 	}
 
-	err := os.MkdirAll("public", 0755)
-	if err != nil {
+	if err := os.MkdirAll("public", 0o750); err != nil {
 		fmt.Printf("Error creating public dir: %v\n", err)
 		os.Exit(1)
 	}
@@ -273,5 +441,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Successfully generated Corral API documentation inside public/index.html")
+	// A count, not a cheer. The previous version reported success while
+	// publishing five of eight packages and 173 unexported helpers, so the
+	// message says what was produced and lets the reader judge it.
+	exported := 0
+	for _, pkg := range docData.Packages {
+		exported += len(pkg.Funcs)
+		for _, t := range pkg.Types {
+			exported += 1 + len(t.Methods)
+		}
+	}
+	fmt.Printf("Generated public/index.html: %d packages, %d exported declarations\n",
+		len(docData.Packages), exported)
 }
