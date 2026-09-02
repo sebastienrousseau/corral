@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
+# Local mirrors of the cheap CI gates, so the red appears before the push
+# rather than after it. Deliberately excludes the slow gates (race
+# detector, full suite, goreleaser) — a pre-commit hook people disable
+# because it takes a minute is worse than no hook.
+#
+#   pip install pre-commit && pre-commit install
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-yaml
+        exclude: ^docs-site/
+      - id: check-json
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        args: [--ignore-words-list=intoto,statuss,confg,repositor,unparseable]
+        exclude: ^(docs-site/|public/|go\.sum$)
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.18.1
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -l -w
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      # Licence coverage is a property of the whole tree, so it runs once
+      # rather than per file.
+      - id: spdx
+        name: SPDX headers
+        entry: go run scripts/spdx_sweep.go -check
+        language: system
+        pass_filenames: false
+
+      # The version appears in CHANGELOG.md, server.json and the container
+      # tag. Catching a disagreement here beats catching it in a release.
+      - id: manifest
+        name: manifest drift
+        entry: go run scripts/manifest_check.go
+        language: system
+        pass_filenames: false
+        files: ^(go\.mod|SBOM\.md|server\.json|CHANGELOG\.md|Dockerfile)$
