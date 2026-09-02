@@ -59,7 +59,7 @@ appointed representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behaviour may be
-reported to the project maintainer at **sebastian.rousseau@gmail.com**. All
+reported to the project maintainer at **<sebastian.rousseau@gmail.com>**. All
 complaints will be reviewed and investigated promptly and fairly.
 
 All project maintainers are obligated to respect the privacy and security of

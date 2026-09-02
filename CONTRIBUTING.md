@@ -11,10 +11,13 @@ Corral is a compiled Go application with a Bubble Tea terminal user interface th
    - **Git**
 
 3. Set up the project hooks (optional but recommended):
+
    ```bash
    git config core.hooksPath .githooks
    ```
+
 4. Create a branch **from `main`**:
+
    ```bash
    git checkout main && git pull
    git checkout -b feat/my-change
@@ -29,11 +32,13 @@ Corral is a compiled Go application with a Bubble Tea terminal user interface th
    for it to merge or fold the two into one pull request.
 5. Make changes.
 6. Verify everything passes:
+
    ```bash
    make format
    make test
    make build
    ```
+
 7. Commit, push, and open a pull request.
 
 ## Commits

@@ -1,9 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
 name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  # Dry-run mode. Release machinery is the code least exercised before it
+  # matters most: a tag push is a one-shot, and a config error there means a
+  # broken or half-published release. This builds every artefact, runs every
+  # before-hook and packages every format, then stops short of publishing,
+  # signing and attesting — so new machinery can be proven before its first
+  # real use. Artefacts are uploaded for inspection.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and package without publishing"
+        type: boolean
+        default: true
 
 permissions: {}
 
@@ -11,6 +26,9 @@ jobs:
   release:
     name: Build & Release
     runs-on: ubuntu-latest
+    env:
+      # true for a manual dry run, false for a tag push.
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     permissions:
       contents: write
       id-token: write
@@ -79,7 +97,9 @@ jobs:
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          # A dry run builds and packages everything, then stops: --snapshot
+          # skips the publish, sign and announce pipes and does not need a tag.
+          args: ${{ env.DRY_RUN == 'true' && 'release --clean --snapshot --skip=publish,sign,announce' || 'release --clean' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -104,6 +124,7 @@ jobs:
       # the check reads.
       - name: Attest release artifacts
         id: attest
+        if: env.DRY_RUN != 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/checksums.txt
@@ -123,6 +144,7 @@ jobs:
       # provenance and is what tooling looks for; the file is the Sigstore
       # bundle the step above produced, unmodified.
       - name: Publish provenance alongside the release
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
@@ -150,6 +172,7 @@ jobs:
       # kind of tool that should not be executed unverified. Upstream publishes a
       # .sigstore.json per artifact, so verification costs one command.
       - name: Install mcp-publisher
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MCP_PUBLISHER_VERSION: v1.8.1
@@ -170,6 +193,7 @@ jobs:
           echo "${RUNNER_TEMP}/mcp-publisher-bin" >> "${GITHUB_PATH}"
 
       - name: Publish to the MCP registry
+        if: env.DRY_RUN != 'true'
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"

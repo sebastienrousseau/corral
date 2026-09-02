@@ -4,7 +4,7 @@
   <img src=".github/logo.svg" alt="Corral logo" width="128" />
 </p>
 
-<h1 align="center">Corral</h1>
+<h1 align="center"><a id="corral"></a>Corral</h1>
 
 <p align="center">
   Automatically clone and organise GitHub repositories using Finder-friendly collections, ecosystems, and metadata.
@@ -51,6 +51,14 @@
 - [Examples](#examples) — index of runnable programmatic examples
 - [Troubleshooting](#troubleshooting) — quick solutions to common errors
 - [Frequently Asked Questions](#frequently-asked-questions) — design decisions and Windows/WSL support
+
+**Project**
+
+- [Documentation](#documentation) — manual, API reference, developer docs
+- [When not to use Corral](#when-not-to-use-corral) — honest limits
+- [Requirements & toolchain policy](#requirements--toolchain-policy) — the Go floor and when it moves
+- [Stability guarantees](#stability-guarantees) — what a breaking change means here
+- [Security & hardening](#security--hardening) — reporting, posture, fuzzing
 - [License](#license)
 
 ---
@@ -113,6 +121,7 @@ make install            # installs ~/.local/bin/corralctl
 ```bash
 brew install go git gh
 ```
+
 </details>
 
 <details>
@@ -131,6 +140,7 @@ Install `gh` separately following the [GitHub CLI installation guide](https://gi
 ```bash
 sudo dnf install golang git gh
 ```
+
 </details>
 
 ---
@@ -149,7 +159,7 @@ gh auth login
 
 This converges your local directory structure into a structured mirror:
 
-```
+```text
 ~/Code/
 ├── Public/
 │   ├── Go/
@@ -271,12 +281,13 @@ By default, Corral uses the Apple-style layout `{{.Collection}}/{{.Bucket}}/{{.N
 ```
 
 Supported placeholders:
-* `{{.Owner}}` — GitHub owner name.
-* `{{.Name}}` — Repository name.
-* `{{.Collection}}` — Canonical root (`Public`, `Private`, or `Forks`).
-* `{{.Bucket}}` — Finder-facing ecosystem bucket (`Go`, `Rust`, `Web`, etc.).
-* `{{.Language}}` — Primary language normalized to lowercase.
-* `{{.Visibility}}` — Repository visibility normalized to lowercase.
+
+- `{{.Owner}}` — GitHub owner name.
+- `{{.Name}}` — Repository name.
+- `{{.Collection}}` — Canonical root (`Public`, `Private`, or `Forks`).
+- `{{.Bucket}}` — Finder-facing ecosystem bucket (`Go`, `Rust`, `Web`, etc.).
+- `{{.Language}}` — Primary language normalized to lowercase.
+- `{{.Visibility}}` — Repository visibility normalized to lowercase.
 
 ### Finder Tags on macOS
 
@@ -299,9 +310,10 @@ Finder can combine these tags in searches or saved Smart Folders.
 ## Smart Syncing
 
 Corral stores synchronization metadata next to each repository's `.git/` folder inside a `.corral-state.json` sidecar file:
-* **No Redundant Pulls:** If the remote repository has not received new pushes since the last sync, `git pull` is skipped completely.
-* **Overrides:** To bypass smart checks and force Corral to perform a full `git pull`, pass the `--force-sync` flag.
-* **Skip Syncing entirely:** Pass `--no-sync` to skip updates on all cloned repositories.
+
+- **No Redundant Pulls:** If the remote repository has not received new pushes since the last sync, `git pull` is skipped completely.
+- **Overrides:** To bypass smart checks and force Corral to perform a full `git pull`, pass the `--force-sync` flag.
+- **Skip Syncing entirely:** Pass `--no-sync` to skip updates on all cloned repositories.
 
 ---
 
@@ -554,6 +566,137 @@ To inspect the package layout and programmatically run Corral modules, see the s
 
 **THE ARCHITECT** ᛫ [Sebastien Rousseau](https://sebastienrousseau.com)  
 **THE ENGINE** ᛞ [EUXIS](https://euxis.co) ᛫ Enterprise Unified Execution Intelligence System
+
+---
+
+## Documentation
+
+| Resource | Where |
+|---|---|
+| **User manual** | <https://doc.corrallib.com> |
+| **API reference** | <https://pkg.go.dev/github.com/sebastienrousseau/corral> |
+| **Developer docs** | [DEVELOPMENT.md](DEVELOPMENT.md) — toolchain and every CI gate reproduced locally |
+| **Architecture** | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Decision records** | [docs/adr/](docs/adr/) |
+| **Security model** | [docs/security-model.md](docs/security-model.md) |
+| **Packaging** | [docs/packaging.md](docs/packaging.md) — for distribution maintainers |
+| **Support** | [SUPPORT.md](SUPPORT.md) |
+
+Once installed, `man corralctl` works offline, and every subcommand has its
+own page (`man corralctl-mcp`).
+
+---
+
+## When not to use Corral
+
+Corral is opinionated, and the opinions do not suit everyone.
+
+- **You want a full mirror or backup.** Corral clones working copies to be
+  read and edited. For archival mirroring use `git clone --mirror` or a
+  purpose-built tool; Corral will not preserve every ref or hold a
+  guaranteed-complete copy.
+- **You need a forge other than GitHub.** GitLab, Gitea, Codeberg and
+  Forgejo are not supported today. `git.CanonicalRemote` is already
+  forge-neutral, but repository listing is GitHub-only.
+- **Your repositories must stay where they are.** Corral's value is a
+  consistent layout, and the default reorganises clones into
+  `Collection/Bucket/Name`. If a fixed path matters, use `--layout` to
+  match your existing tree — or a different tool.
+- **You want a code-search index.** The MCP server indexes repository
+  metadata: names, paths, languages, sync state. It does not index symbols
+  or file contents, so it answers "which repository" and not "where is this
+  function defined".
+- **You need Windows without WSL.** Binaries are published for Windows, but
+  macOS Finder tags are a no-op there and the experience is less tested
+  than on macOS and Linux.
+
+---
+
+## Requirements & toolchain policy
+
+| | |
+|---|---|
+| **Go** | The `go` directive in [`go.mod`](go.mod) — currently **1.26.6** |
+| **git** | 2.30 or newer, on `PATH` |
+| **gh** | Optional; only for `--auth gh` |
+
+The Go floor is stated in exactly one place, `go.mod`, and CI sets
+`GOTOOLCHAIN=auto` so it cannot disagree with a workflow input.
+
+**Policy for raising it.** The floor may rise in any release when a
+standard-library fix or language feature justifies it, and the reason is
+recorded in that release's CHANGELOG entry. Corral makes **no distro-LTS
+compatibility promise** — an aspirational claim without a table mapping
+distro toolchains to the floor would be worse than none. Packagers should
+check `go.mod` on every version bump rather than assume the floor held.
+
+---
+
+## Stability guarantees
+
+Corral is pre-1.0 and follows SemVer, with the patch digit moving for
+everything until 1.0.
+
+**The breaking axis is behaviour, not signatures.** For a tool that moves
+and deletes directories, a change to what it *does* to a workspace is
+breaking even when no flag or function signature moves. Specifically, these
+are treated as breaking:
+
+- A change to the default layout, or to how a repository maps onto a path
+- A change to what `--output json` / `ndjson` emits, beyond added fields
+- A change to an exit code
+- A refusal becoming permissive: any case where Corral used to decline to
+  delete, prune or migrate and now proceeds
+- A change to the MCP tool or resource surface that an existing client
+  would notice
+
+Added fields, new flags with inert defaults, and new refusals are **not**
+breaking.
+
+**Deprecation window.** A deprecated flag or tool keeps working for at
+least one minor release after the release that announces it, and warns on
+stderr — never on stdout, which carries the selected output format.
+
+---
+
+## Security & hardening
+
+**Reporting.** Do not open a public issue. Follow the private process in
+[SECURITY.md](SECURITY.md); the response SLA is stated there.
+
+**Posture.** Corral runs with the user's own credentials against the user's
+own machine, so the threat model is about *limiting blast radius*, not
+crossing a privilege boundary. Full detail in
+[docs/security-model.md](docs/security-model.md).
+
+- **Credentials never reach `argv` or `.git/config`.** The GitHub token is
+  handed to git as an `http.extraheader` scoped to `https://github.com/`,
+  so a submodule on another host cannot see it. Clone errors deliberately
+  omit their arguments so a URL-embedded credential cannot reach a log.
+- **Git runs non-interactively, always.** `GIT_TERMINAL_PROMPT=0` and
+  friends, so an unattended run fails rather than hanging on a prompt.
+- **Destructive operations refuse without evidence.** `prune` and
+  `corral_delete_repo` decline when a clone holds uncommitted, unpushed,
+  stashed, submodule or *gitignored* work — the last because `git status`
+  hides exactly the files no remote has a copy of.
+- **The MCP server is sandboxed and gated.** Path resolution canonicalises
+  symlinks on both sides and compares path segments, not string prefixes.
+  Write tools require `--enable-mutations`; deletion requires a second
+  flag. Every mutation is written to an audit log before it is attempted.
+- **Memory safety** comes from Go; there is no CGO anywhere
+  (`CGO_ENABLED=0`), so released binaries are static and free of libc
+  coupling.
+
+**Fuzzing.** Fuzz targets cover the parsing and path-resolution boundaries —
+layout evaluation, language normalisation, remote-URL parsing, and the
+sandbox check that must never let a path escape its root. They run on every
+push for a fixed duration. Corral is not enrolled in OSS-Fuzz.
+
+**Supply chain.** Releases are signed with keyless cosign, carry SLSA build
+provenance and a CycloneDX SBOM, and are built with `-trimpath` and a
+commit-pinned timestamp so two builds of a commit are byte-identical. Every
+GitHub Action is pinned by commit SHA and the container base by digest.
+`govulncheck` runs on every push.
 
 ---
 

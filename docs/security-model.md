@@ -60,6 +60,7 @@ URLs accepted by the opt-in MCP mutation API may target other hosts, but their
 userinfo and query strings are redacted before audit logging.
 
 **Evidence.**
+
 - `internal/git/git.go` supplies the GitHub authorization header through
   `GIT_CONFIG_*` environment variables scoped to `https://github.com/`.
 - Mutation tests assert credential-bearing URLs are redacted in audit records.
@@ -76,6 +77,7 @@ additionally confined to the selected repository. Mutation targets are checked
 with the same root sandbox before any filesystem operation.
 
 **Evidence.**
+
 - Preflight (`cmd/preflight.go`) prints the absolute target path before
   any network call and requires a TTY confirmation when the directory
   doesn't exist and `--yes`/`--dry-run` isn't set.
@@ -115,6 +117,7 @@ cosign verify \
 ```
 
 **Evidence.**
+
 - `.github/workflows/release.yml` shows the full pipeline; every action
   is SHA-pinned per OpenSSF Scorecard `Pinned-Dependencies`.
 - The release workflow runs `go test ./...` before GoReleaser and attests the
@@ -132,6 +135,7 @@ unpublished commits; it refuses a target that is not a git repository, and the
 workspace root itself. It fails closed when verification is unavailable.
 
 **Evidence.**
+
 - `internal/mcp/mutations_test.go` covers capability gates, audit failures,
   credential redaction, and delete refusal paths.
 - `internal/mcp/coverage_paths_test.go` covers the audit-failure arm of every
@@ -154,6 +158,7 @@ error with "couldn't find remote ref HEAD"). No further work is
 attempted on that repo.
 
 **Evidence.**
+
 - `internal/engine/engine_empty_test.go` asserts SKIP + no pull.
 
 ## 4. Threats considered and out of scope

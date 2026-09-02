@@ -60,6 +60,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ssh` and `git`, rejecting remote-helper syntax (`transport::address`),
   `file://`, and anything beginning with `-`.
 
+### Added
+
+- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
+  internal consistency: every justification in the tables must be
+  byte-identical to the one carried in the prefilled form link for the same
+  criterion, in both directions. The tables are what a reviewer reads; the
+  links are what actually reaches bestpractices.dev. Nothing but discipline
+  kept them in step, and discipline is what failed when `SECURITY.md` was
+  rewritten. Verified against a diverging justification, an orphaned table row
+  and an orphaned link.
+
+- **Manpages and shell completions**, generated from the cobra command tree
+  by `scripts/gen_docs.go` and packaged into every archive, `.deb`, `.rpm`
+  and `make install`. Eight section-1 pages (`man corralctl`,
+  `man corralctl-mcp`, one per subcommand) plus bash, zsh, fish and
+  PowerShell completions. Generated, never committed: a hand-written `.1`
+  drifts from `--help` the first time a flag changes and nothing catches
+  it. CI renders every page with `groff -ww`.
+
+- **The Unix install contract.** `PREFIX` now defaults to `/usr/local` (was
+  `$HOME/.local`) with `DESTDIR` staging, and `make uninstall` removes
+  exactly what `make install` placed. Binaries, manpages, completions and
+  docs land at FHS paths. `make install-smoke` stages the tree on a clean
+  runner and asserts its shape, as a CI gate.
+
+- **Windows binaries.** `windows/amd64` and `windows/arm64` are built and
+  published as `.zip` archives alongside the existing Linux and macOS
+  targets.
+
+- **A release dry-run.** The Release workflow accepts `workflow_dispatch`
+  with `dry_run: true`, building and packaging every artefact but stopping
+  before publish, sign and attest — so new release machinery can be proven
+  before its first real use rather than during it.
+
+- **Docs Lint workflow** — markdownlint, codespell and an offline link
+  check with fragment resolution, plus an SPDX licence-header gate over the
+  whole tree.
+
+- **Documentation the repository was missing**: `DEVELOPMENT.md` (toolchain
+  and the local equivalent of every CI gate), `docs/ARCHITECTURE.md`,
+  `docs/packaging.md` for distribution maintainers, `SUPPORT.md`,
+  `AGENTS.md` (invariants for AI-assisted contributors), `CITATION.cff`,
+  and five architecture decision records under `docs/adr/`.
+
+- **`.pre-commit-config.yaml` and `.devcontainer/`**, mirroring the cheap CI
+  gates locally and booting a Codespace to a working `make`.
+
+- **README sections** the project had no home for: a unified documentation
+  link block, an honest "when not to use Corral", the minimum-toolchain
+  *policy* rather than just the number, stability guarantees stating the
+  breaking axis as behaviour rather than signatures, and a security and
+  hardening section.
+
 ### Changed
 
 - **doc.corrallib.com is now built by `ssg` through the Lucid theme.** The site
@@ -71,6 +124,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vendored at `docs-site/_layouts`, which holds every WCAG 2.2 AAA criterion a
   theme can determine on its own. Measured across the five pages in both
   colour schemes: AAA contrast, 44px targets, heading order, one `h1` per page.
+
+- **The OSPS self-assessment is rewritten against criteria v2026.02.19.** The
+  criterion *identifiers* were reused when the standard moved, but several of
+  the *questions* changed underneath them — so roughly half the Level 1
+  answers argued for something the criterion no longer asked.
+  `OSPS-BR-01.01` had become "sanitize untrusted CI metadata" while the answer
+  still described commit signing; `OSPS-QA-02.01` had become "provide a
+  dependency list" while the answer quoted test coverage; `OSPS-QA-01.01` had
+  become "is the repository publicly readable" while the answer described the
+  CI test suite.
+
+  Nothing had been submitted, so no false attestation was ever published. All
+  64 criteria across the three levels are now answered against the current
+  questions, each linking to the file or setting that backs it: 55 Met, 2 N/A,
+  6 Unmet, 1 left unanswered.
+
+  `OSPS-AC-01.01` is deliberately unanswered. It asks whether MFA guards
+  sensitive resources, which is a property of the maintainer's GitHub account
+  that nothing in this repository can establish.
+
+  Five of the six Unmet criteria are the same shape — the practice exists but
+  is not written down: a secrets policy covering rotation (`BR-07.02`), a VEX
+  document (`VM-04.02`), and stated remediation thresholds for dependency and
+  static-analysis findings (`VM-05.01`, `VM-05.02`, `VM-06.01`). The sixth,
+  `QA-07.01`, requires a non-author reviewer and needs a second maintainer
+  rather than a document.
+
+- **Release notes are a descriptive log again.** GoReleaser was emitting a
+  list of merge-commit subjects and SHAs, which names branches rather than
+  changes — so `OSPS-BR-04.01` could not honestly be claimed. Merge commits
+  are now filtered out, the remainder grouped into Features, Fixes, and
+  Security and dependencies, and the release header links to the changelog
+  entry and gives the one command that verifies the download.
+
+- **GitHub Discussions enabled.** The issue-template chooser added in v0.0.26
+  linked to Discussions for anything that is not a defect or a feature
+  request. Discussions were not enabled, so that link 404'd.
 
 - **Release builds are reproducible and no longer carry the build
   machine's paths.** The goreleaser build set `-s -w` but not `-trimpath`,
@@ -146,6 +236,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caught before it merges. The job additionally fails if any package
   `go list` reports is absent from the page, or if an unexported declaration
   reaches it. Both failure modes were verified by reintroducing them.
+
+- **Five OSPS baseline justifications asserted things `SECURITY.md` does not
+  say.** Found while preparing the bestpractices.dev submission, which is the
+  point at which these stop being documentation and become a public
+  self-attestation:
+
+  | Criterion | Claimed | Actual |
+  |---|---|---|
+  | `OSPS-VM-02.01` | 90-day coordinated disclosure timeline | not in SECURITY.md |
+  | `OSPS-VM-01.01` | private disclosure channel *(email)* | GitHub private vulnerability reporting |
+  | `OSPS-DO-04.01` | disclosure email + 90-day timeline | neither present |
+  | `OSPS-VM-05.02` | follow-up PR within 7 days | not in SECURITY.md |
+  | `OSPS-BR-07.02` | secrets rotated on personnel change | not in SECURITY.md |
+
+  Two of these predate the v0.0.26 rewrite of `SECURITY.md`; the rest became
+  false when it was rewritten. Each criterion is still genuinely met — there
+  *is* a private reporting channel, a supported-versions policy and a secrets
+  practice — so the fix is to describe what the file says rather than what
+  someone hoped it said.
+
+  The 90-day disclosure timeline and the 7-day dependency SLA are not
+  documented anywhere, and adding them would be committing the maintainer to
+  a promise rather than recording a fact, so they are left out.
+
+- **`spdx_sweep` only ever covered `.go` files**, so twenty-one workflow and
+  configuration files carried no licence header — the tree was not
+  machine-readable for REUSE-style tooling. It now handles `#`-comment file
+  types (preserving shebangs), gained a `-check` mode, and that mode is a
+  CI gate. All 113 covered files now carry a header.
+
+- **The README's "Back to Top" link had never worked.** It targeted
+  `#corral`, and GitHub does not generate anchors for raw HTML headings.
+
+- **Two duplicated subsections in the `[0.0.28]` changelog entry**, `###
+  Changed` and `### Fixed` each appearing twice from a merge, now merged.
 
 ## [0.0.27] — 2026-08-30
 
@@ -351,7 +476,7 @@ itself true and mechanically checked.
   and `"//<flag>"` notes beside each setting — but the config decoder runs with
   `DisallowUnknownFields`, so loading it failed immediately:
 
-  ```
+  ```console
   corralctl: decode config ~/.config/corral/config.json: json: unknown field "//"
   ```
 
@@ -484,7 +609,6 @@ itself true and mechanically checked.
   assertion rather than an end-to-end smoke test. Confirmed to fail against a
   simulated mapping regression.
 
-
 ## [0.0.22] — 2026-08-18
 
 ### Fixed
@@ -497,7 +621,6 @@ itself true and mechanically checked.
   entry stayed at 0.0.13 through v0.0.21 — including the release where the
   publisher itself was finally working. Gate removed.
 
-
 ## [0.0.21] — 2026-08-18
 
 Usability release. The v0.0.20 work made corral safe; this makes it
@@ -509,14 +632,17 @@ configurable.
   `plan`, `prune` and `profile` all build their options from the same variables
   as the root command, but the flags were registered on the root command only:
 
-      $ corralctl plan acme --limit 5
-      unknown flag: --limit
+```console
+$ corralctl plan acme --limit 5
+unknown flag: --limit
+```
 
   So `corralctl plan` always ran at limit=1000, concurrency=1, visibility=all —
   unconfigurable and unstated. The fetch/filter and clone/sync groups are now
   shared flag sets registered on each command that acts on them. `prune`
   deliberately gets only the fetch group, since it removes clones and never
   creates one.
+
 - **The config file covered 5 settings of 31, and only `corralctl profile` read
   it.** Settings are now keyed by flag name — `"concurrency": 8` is exactly
   `--concurrency 8` — so the file covers the whole surface and picks up new
@@ -572,7 +698,6 @@ configurable.
 - `corralctl config --explain` reports each effective setting and where it came
   from. A layered config is only debuggable if you can ask it why a value is
   what it is.
-
 
 ## [0.0.20] — 2026-08-17
 

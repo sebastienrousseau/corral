@@ -1,0 +1,60 @@
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// Markdown rules for corral's prose.
+//
+// The rules kept are the ones that catch defects a reader would hit: a
+// broken heading hierarchy, a duplicate heading (which breaks anchor links),
+// a fenced block with no language (which loses syntax highlighting on the
+// docs site), a bare URL, a missing final newline.
+//
+// The rules disabled are typographic preferences, not defects. Enforcing
+// them would mean reflowing every existing document to satisfy a linter,
+// which is churn that buries the changes worth reviewing — and a gate that
+// forces unrelated diffs is a gate people learn to bypass.
+{
+  "globs": ["**/*.md"],
+  "ignores": [
+    "docs-site/**",
+    "public/**",
+    "node_modules/**",
+    "dist/**",
+    "build/**",
+    ".github/ISSUE_TEMPLATE/**",
+
+    // The OSPS baseline assessment mirrors an upstream form, and
+    // scripts/manifest_check.go cross-checks each answer against the
+    // prefilled submission link character for character. Auto-formatting it
+    // (wrapping bare URLs, say) desynchronises the two and fails that gate,
+    // so the form is left exactly as the upstream template expects.
+    "docs/osps-baseline-fillable.md"
+  ],
+  "config": {
+    "default": true,
+
+    // Line length: the prose here is hard-wrapped at varying widths and
+    // tables legitimately exceed any column limit.
+    "MD013": false,
+
+    // Table pipe alignment: cosmetic, and reflowing every table to satisfy
+    // it would touch documents this change has no business rewriting.
+    "MD060": false,
+
+    // Duplicate headings are allowed only when nested under different
+    // parents — the CHANGELOG repeats "### Fixed" under each release, which
+    // is the Keep a Changelog format working correctly.
+    "MD024": { "siblings_only": true },
+
+    // Inline HTML is used deliberately in the README for the centred logo
+    // and badge row, which Markdown cannot express.
+    "MD033": false,
+
+    // The first line of every file is an SPDX comment, so the top-level
+    // heading is not on line 1.
+    "MD041": false,
+
+    // Emphasis used as a heading: the CHANGELOG's bold lead sentences are a
+    // deliberate house style, not a mis-levelled heading.
+    "MD036": false
+  }
+}
