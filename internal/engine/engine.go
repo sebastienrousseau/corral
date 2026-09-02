@@ -1186,7 +1186,7 @@ func syncExistingClone(
 		result.Message = "git pull"
 		return result
 	}
-	if reason, skip := syncSkipReason(repo, targetDir, syncOpts); skip {
+	if reason, skip := syncSkipReason(ctx, repo, targetDir, syncOpts); skip {
 		result.Action = "SKIP"
 		result.Message = reason
 		return result
@@ -1208,15 +1208,15 @@ func syncExistingClone(
 
 // syncSkipReason reports why a pull should be skipped, if it should. Each
 // case is a state where pulling is either impossible or provably pointless.
-func syncSkipReason(repo github.Repo, targetDir string, syncOpts SyncOptions) (string, bool) {
+func syncSkipReason(ctx context.Context, repo github.Repo, targetDir string, syncOpts SyncOptions) (string, bool) {
 	// An empty upstream repo (created but never pushed to) results in an
 	// unborn HEAD locally, and `git pull` would fail with "no such ref was
 	// fetched". Detect that state cheaply and SKIP with a specific reason
 	// instead of surfacing the git error as a sync failure.
-	if gitIsEmpty(targetDir) {
+	if gitIsEmpty(ctx, targetDir) {
 		return "empty repository (no commits yet)", true
 	}
-	if branch, err := gitCurrentBranch(targetDir); err == nil && branch != repo.DefaultBranch {
+	if branch, err := gitCurrentBranch(ctx, targetDir); err == nil && branch != repo.DefaultBranch {
 		return fmt.Sprintf("on branch %s", branch), true
 	}
 	// Skip the network round-trip when the upstream pushed_at is unchanged
@@ -1299,9 +1299,14 @@ func repoNameFromURL(url string) string {
 
 func findOrphans(owner, baseDir string, repos []github.Repo) []string {
 	repoMap := make(map[string]bool)
+	identities := make(map[string]bool, len(repos))
 	for _, r := range repos {
 		repoMap[r.Name] = true
+		if id := repoRemoteIdentity(r); id != "" {
+			identities[id] = true
+		}
 	}
+	ownerPrefix := strings.ToLower("github.com/" + owner + "/")
 
 	var orphans []string
 	// Per-entry walk errors are deliberately ignored inside the callback; the
@@ -1314,13 +1319,23 @@ func findOrphans(owner, baseDir string, repos []github.Repo) []string {
 		if d.IsDir() && path != baseDir && git.IsRepository(path) {
 			repoDir := path
 			url, err := gitRemoteOrigin(repoDir)
-			if err == nil && (strings.Contains(url, "/"+owner+"/") || strings.Contains(url, ":"+owner+"/")) {
-				// Match against both the directory name and the name encoded in
-				// the remote URL, so a locally-renamed directory whose remote
-				// still points at a known repository is not flagged as an orphan.
-				if !repoMap[filepath.Base(repoDir)] && !repoMap[repoNameFromURL(url)] {
-					orphans = append(orphans, repoDir)
-				}
+			if err != nil {
+				return filepath.SkipDir
+			}
+			// Ownership by canonical identity, not by substring. The old
+			// strings.Contains test matched any host — a gitlab.com clone
+			// under the same owner name counted as a GitHub orphan — and
+			// matched unrelated path segments. git.CanonicalRemote is the
+			// same identity migrateLegacy, originMismatch and prune use.
+			identity := git.CanonicalRemote(url)
+			if !strings.HasPrefix(identity, ownerPrefix) {
+				return filepath.SkipDir
+			}
+			// Identity first; fall back to names so a locally-renamed
+			// directory whose remote still points at a known repository
+			// is not flagged.
+			if !identities[identity] && !repoMap[filepath.Base(repoDir)] && !repoMap[repoNameFromURL(url)] {
+				orphans = append(orphans, repoDir)
 			}
 			return filepath.SkipDir
 		}

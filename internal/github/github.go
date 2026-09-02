@@ -740,9 +740,12 @@ func matchesFilters(repo Repo, includeLang, excludeLang map[string]struct{}, opt
 				return false
 			}
 		case "can be sponsored", "sponsored":
-			if !repo.CanBeSponsored {
-				return false
-			}
+			// Unreachable: rejected by cmd.validateCommonFlags before a
+			// fetch is issued, because CanBeSponsored is not carried by
+			// the REST listing endpoints. Kept as a guard so a future
+			// caller bypassing the CLI still filters nothing in rather
+			// than filtering everything out.
+			return repo.CanBeSponsored
 		case "mirrors":
 			if !repo.IsMirror {
 				return false
@@ -780,7 +783,15 @@ func mapRepository(r *gh.Repository) Repo {
 		lang = *r.Language
 	}
 
+	// Private is authoritative and Visibility refines it. Reading only
+	// Visibility meant a nil pointer — which some endpoints and older API
+	// versions return — fell through to "Public", and visibility decides
+	// the on-disk Collection. A private repository was therefore filed
+	// under Public/ and reported as public by the MCP tools.
 	visibility := "Public"
+	if r.GetPrivate() {
+		visibility = "Private"
+	}
 	if r.Visibility != nil && (*r.Visibility == "private" || *r.Visibility == "internal") {
 		visibility = "Private"
 	}
@@ -800,21 +811,25 @@ func mapRepository(r *gh.Repository) Repo {
 	}
 
 	return Repo{
-		ID:             r.GetID(),
-		Owner:          owner,
-		FullName:       fullName,
-		Name:           r.GetName(),
-		Language:       lang,
-		Visibility:     visibility,
-		DefaultBranch:  defaultBranch,
-		CloneURL:       cloneURL,
-		SSHURL:         sshURL,
-		Fork:           r.GetFork(),
-		Archived:       r.GetArchived(),
-		PushedAt:       r.GetPushedAt().Time,
-		Stars:          r.GetStargazersCount(),
-		IsTemplate:     r.GetIsTemplate(),
-		IsMirror:       r.GetMirrorURL() != "",
+		ID:            r.GetID(),
+		Owner:         owner,
+		FullName:      fullName,
+		Name:          r.GetName(),
+		Language:      lang,
+		Visibility:    visibility,
+		DefaultBranch: defaultBranch,
+		CloneURL:      cloneURL,
+		SSHURL:        sshURL,
+		Fork:          r.GetFork(),
+		Archived:      r.GetArchived(),
+		PushedAt:      r.GetPushedAt().Time,
+		Stars:         r.GetStargazersCount(),
+		IsTemplate:    r.GetIsTemplate(),
+		IsMirror:      r.GetMirrorURL() != "",
+		// Not exposed by the REST listing endpoints; populating it needs a
+		// per-repository GraphQL query. Left false deliberately, and the
+		// --type value that depended on it is refused at flag validation
+		// rather than silently returning an empty result.
 		CanBeSponsored: false,
 	}
 }
