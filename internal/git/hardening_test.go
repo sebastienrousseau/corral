@@ -13,7 +13,15 @@ import (
 // helpers are exported, so an embedder can reach them with a nil context,
 // and context.WithTimeout panics on nil.
 func TestWithMetadataTimeoutNilContext(t *testing.T) {
-	//nolint:staticcheck // SA1012: passing nil is exactly what this guards.
+	// SA1012 forbids a literal nil Context, which is the entire point of
+	// this test: withMetadataTimeout is reached from exported functions an
+	// embedder can call with nil, and context.WithTimeout panics on one.
+	//
+	// The directive is staticcheck's own `//lint:ignore`, not golangci-lint's
+	// `//nolint`. CI runs staticcheck standalone, which does not honour
+	// //nolint — so a //nolint here passes golangci-lint locally and fails
+	// CI, which is exactly what happened.
+	//lint:ignore SA1012 passing nil is the behaviour under test
 	ctx, cancel := withMetadataTimeout(nil)
 	defer cancel()
 	if ctx == nil {
