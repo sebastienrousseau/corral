@@ -26,6 +26,16 @@ release:
 builds:
   - env:
       - CGO_ENABLED=0
+    # -trimpath removes the build machine's absolute paths from the
+    # binary. Without it a release shipped 1,142 strings rooted at the
+    # maintainer's home directory, and the build was not reproducible —
+    # which sits oddly beside SLSA provenance, since reproducibility is
+    # what lets a third party check provenance rather than trust it.
+    flags:
+      - -trimpath
+    # Pin the archive/binary timestamp to the commit so two builds of the
+    # same commit are byte-identical.
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
       - darwin

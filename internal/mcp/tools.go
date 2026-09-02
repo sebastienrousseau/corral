@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/sebastienrousseau/corral/internal/diag"
+	"github.com/sebastienrousseau/corral/internal/sanitize"
 )
 
 // Read-only tool set.
@@ -136,7 +137,7 @@ func (s *Server) handleFindRepo(ctx context.Context, _ *mcp.CallToolRequest, in 
 	if err != nil {
 		return toolError("%v", err), nil, nil
 	}
-	return jsonResult(match), nil, nil
+	return jsonResult(match.Redacted()), nil, nil
 }
 
 func (s *Server) handleRepoMetadata(ctx context.Context, _ *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
@@ -148,9 +149,13 @@ func (s *Server) handleRepoMetadata(ctx context.Context, _ *mcp.CallToolRequest,
 	if err != nil {
 		return toolError("%v", err), nil, nil
 	}
+	// match.Path (not the redacted copy) is what git is run against; only
+	// the reported value is sanitised. The branch name is attacker-
+	// controlled too — a branch may be named anything a ref allows.
+	branch := sanitize.Untrusted(currentBranch(ctx, match.Path), maxEntryField)
 	return jsonResult(map[string]any{
-		"repo":           match,
-		"current_branch": currentBranch(ctx, match.Path),
+		"repo":           match.Redacted(),
+		"current_branch": branch,
 	}), nil, nil
 }
 
@@ -163,6 +168,9 @@ func (s *Server) handleStatusSummary(ctx context.Context, _ *mcp.CallToolRequest
 	byLang := map[string]int{}
 	synced := 0
 	for _, r := range idx.Repos {
+		// Both are directory names under the workspace root, so both are
+		// chosen by whoever created the directory.
+		r = r.Redacted()
 		if r.Visibility != "" {
 			byVis[r.Visibility]++
 		}

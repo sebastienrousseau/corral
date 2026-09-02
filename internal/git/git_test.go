@@ -81,12 +81,12 @@ func TestGitCommands(t *testing.T) {
 		t.Errorf("Failed to clone: %v", err)
 	}
 
-	branch, err := CurrentBranch(targetDir)
+	branch, err := CurrentBranch(context.Background(), targetDir)
 	if err != nil || branch == "" {
 		t.Errorf("Expected non-empty branch, got %q (err: %v)", branch, err)
 	}
 
-	remote, err := RemoteOrigin(targetDir)
+	remote, err := RemoteOrigin(context.Background(), targetDir)
 	if err != nil || remote != upstream {
 		t.Errorf("Expected remote %s, got %s (err: %v)", upstream, remote, err)
 	}
@@ -115,12 +115,12 @@ func TestGitCommands(t *testing.T) {
 		t.Errorf("Expected pull to fail")
 	}
 
-	_, err = CurrentBranch("/invalid/target/dir")
+	_, err = CurrentBranch(context.Background(), "/invalid/target/dir")
 	if err == nil {
 		t.Errorf("Expected current branch to fail")
 	}
 
-	_, err = RemoteOrigin("/invalid/target/dir")
+	_, err = RemoteOrigin(context.Background(), "/invalid/target/dir")
 	if err == nil {
 		t.Errorf("Expected remote origin to fail")
 	}
@@ -716,7 +716,7 @@ func TestIsEmptyOnFreshRepo(t *testing.T) {
 	defer cleanup(t, dir)
 	run(t, "git", "-C", dir, "init")
 
-	if !IsEmpty(dir) {
+	if !IsEmpty(context.Background(), dir) {
 		t.Error("expected fresh git init to report empty")
 	}
 }
@@ -739,7 +739,7 @@ func TestIsEmptyOnCommittedRepo(t *testing.T) {
 	run(t, "git", "-C", dir, "add", "file.txt")
 	run(t, "git", "-C", dir, "commit", "-m", "init")
 
-	if IsEmpty(dir) {
+	if IsEmpty(context.Background(), dir) {
 		t.Error("committed repo should not report empty")
 	}
 }
@@ -755,7 +755,7 @@ func TestIsEmptyOnNonRepo(t *testing.T) {
 	}
 	defer cleanup(t, dir)
 
-	if !IsEmpty(dir) {
+	if !IsEmpty(context.Background(), dir) {
 		t.Error("non-repo directory should report empty (defence-in-depth)")
 	}
 }

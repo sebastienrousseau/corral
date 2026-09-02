@@ -35,12 +35,12 @@ func main() {
 		log.Fatalf("Git clone failed: %v", err)
 	}
 
-	branch, err := git.CurrentBranch(targetDir)
+	branch, err := git.CurrentBranch(ctx, targetDir)
 	if err != nil {
 		log.Fatalf("Failed to query branch: %v", err)
 	}
 
-	remote, err := git.RemoteOrigin(targetDir)
+	remote, err := git.RemoteOrigin(ctx, targetDir)
 	if err != nil {
 		log.Fatalf("Failed to query remote: %v", err)
 	}

@@ -80,12 +80,16 @@ type conciseRepo struct {
 // projectRepos renders entries in the requested shape. Any value other than
 // "detailed" is treated as concise, so a model that invents a format name gets
 // the cheap response rather than an error.
+// Both shapes are redacted: every string below is chosen by whoever owns
+// the repository, and this is the boundary where it stops being data on
+// disk and becomes text in a model's context.
 func projectRepos(entries []RepoEntry, format string) any {
 	if format == formatDetailed {
-		return entries
+		return RedactedEntries(entries)
 	}
 	out := make([]conciseRepo, 0, len(entries))
 	for _, r := range entries {
+		r = r.Redacted()
 		out = append(out, conciseRepo{
 			RelPath:    r.RelPath,
 			Name:       r.Name,

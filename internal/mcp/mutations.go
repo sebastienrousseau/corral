@@ -223,6 +223,10 @@ func (s *Server) handleCloneRepo(ctx context.Context, _ *mcp.CallToolRequest, in
 	depth := in.Depth
 	blobless := in.Blobless
 
+	if err := validateCloneURL(url); err != nil {
+		return toolError("%v", err), nil, nil
+	}
+
 	idx := &Index{Root: s.opts.Root}
 	safeTarget, err := idx.SafeMutationPath(target)
 	if err != nil {
