@@ -35,6 +35,17 @@ Optional, only needed for the gate that uses them:
 | `groff` | manpage rendering check |
 | `markdownlint-cli2`, `codespell`, `lychee` | `make docs-lint` and the Docs Lint workflow |
 
+The prose tools are not installed by the devcontainer — pip and npm cannot
+be pinned by hash without a hash-locked requirements file and a lockfile,
+and an unpinned installer runs with your credentials. `make docs-lint`
+skips whichever is absent, and the Docs Lint workflow is authoritative:
+
+```sh
+pip install codespell pre-commit
+npm install -g markdownlint-cli2
+brew install lychee          # or: cargo install lychee
+```
+
 Nothing else is required. There is no code generation step, no vendored
 dependency tree, and no CGO — `CGO_ENABLED=0` everywhere, which is what
 makes the released binaries static and the cross-compilation trivial.

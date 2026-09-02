@@ -24,20 +24,30 @@ go mod download
 # read the same database with the same scanner.
 GOLANGCI_LINT_VERSION=v2.13.2
 GOVULNCHECK_VERSION=v1.7.0
-CODESPELL_VERSION=2.4.3
-PRE_COMMIT_VERSION=4.6.2
-MARKDOWNLINT_CLI2_VERSION=0.23.2
 
 echo "==> Tools for the local gates"
 go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
 go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
 
-echo "==> Prose tooling (best effort; the CI job is authoritative)"
+# groff renders the generated manpages, which the Install Contract job
+# checks. It comes from the distribution, at the version the base image
+# pins.
+echo "==> Manpage rendering"
 sudo apt-get update -qq
-sudo apt-get install -y -qq groff python3-pip
-pip3 install --quiet --break-system-packages \
-  "codespell==${CODESPELL_VERSION}" "pre-commit==${PRE_COMMIT_VERSION}" || true
-npm install -g "markdownlint-cli2@${MARKDOWNLINT_CLI2_VERSION}" >/dev/null 2>&1 || true
+sudo apt-get install -y -qq groff
+
+# The prose tools (markdownlint, codespell, pre-commit) are deliberately
+# NOT installed here.
+#
+# pip and npm cannot be pinned by hash without a hash-locked requirements
+# file and a lockfile, and Scorecard's Pinned-Dependencies check is right
+# to flag the unpinned form: it resolves at container-build time and then
+# executes with the developer's credentials. Carrying that machinery for
+# three convenience tools is not a trade worth making.
+#
+# Nothing is lost. The Docs Lint workflow is authoritative for all three,
+# `make docs-lint` skips whichever is absent rather than failing, and
+# DEVELOPMENT.md lists them as optional with install instructions.
 
 echo "==> Verifying the build"
 make build
