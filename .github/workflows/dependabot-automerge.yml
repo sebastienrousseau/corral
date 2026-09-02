@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
 name: Dependabot Auto-merge
 
 # Enables GitHub's auto-merge on Dependabot pull requests that fall inside a

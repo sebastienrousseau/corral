@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Give rendered headings stable ids, and verify every in-page link resolves.
 
 ssg renders Markdown with pulldown-cmark configured for HTML output only.
