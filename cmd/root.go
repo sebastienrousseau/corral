@@ -502,3 +502,11 @@ func validateCommonFlags() error {
 	}
 	return nil
 }
+
+// RootCommand returns the fully configured root command.
+//
+// Exposed so build-time tooling can walk the command tree — scripts/gen_docs.go
+// renders manpages and shell completions from it, which is what keeps both in
+// step with `--help` instead of drifting as hand-written files do. Callers must
+// treat the result as read-only; mutating it changes what the CLI does.
+func RootCommand() *cobra.Command { return rootCmd }

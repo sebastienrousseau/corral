@@ -31,3 +31,6 @@ dist/
 public/
 public.build-tmp/
 docs-site/content/reference.md
+
+# Generated manpages and completions (see scripts/gen_docs.go)
+build/

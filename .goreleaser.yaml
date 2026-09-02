@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
 version: 2
 
 project_name: corralctl
@@ -23,15 +26,27 @@ release:
     (`checksums.txt.sigstore.json`), and SLSA build provenance ships as
     `checksums.txt.intoto.jsonl`.
 
+# Manpages and shell completions are rendered from the cobra command tree
+# before anything is packaged. Generated, never committed: a checked-in .1
+# drifts from `--help` the first time a flag changes, and nothing catches it.
+before:
+  hooks:
+    - go run scripts/gen_docs.go build
+
 builds:
   - env:
       - CGO_ENABLED=0
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    # -trimpath keeps the build machine's absolute paths out of the binary and
+    # is what makes two builds of the same commit byte-identical.
+    flags:
+      - -trimpath
     main: ./cmd/corralctl
     binary: corralctl
     ldflags:
@@ -41,6 +56,18 @@ builds:
 
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - SECURITY.md
+      - src: build/man/*.1
+        dst: man
+      - src: build/completions/*
+        dst: completions
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -133,6 +160,22 @@ nfpms:
       - deb
       - rpm
     bindir: /usr/bin
+    contents:
+      - src: build/man/*.1
+        dst: /usr/share/man/man1
+        file_info: {mode: 0644}
+      - src: build/completions/corralctl.bash
+        dst: /usr/share/bash-completion/completions/corralctl
+        file_info: {mode: 0644}
+      - src: build/completions/corralctl.zsh
+        dst: /usr/share/zsh/site-functions/_corralctl
+        file_info: {mode: 0644}
+      - src: build/completions/corralctl.fish
+        dst: /usr/share/fish/vendor_completions.d/corralctl.fish
+        file_info: {mode: 0644}
+      - src: LICENSE
+        dst: /usr/share/doc/corral/LICENSE
+        file_info: {mode: 0644}
 
 # 2. macOS & Linux Homebrew Tap
 # Homebrew cask. goreleaser deprecated `brews:` in favour of casks, so a cask
