@@ -6,7 +6,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.28] — 2026-09-02
+
+### Security
+
+- **The MCP file resource served eight classes of credential file.** The
+  content policy was a denylist, which put the burden on the list to have
+  anticipated every credential filename in advance. An audit drove the
+  compiled binary over real MCP stdio JSON-RPC and read back, in full:
+  `.kube/config`, `kubeconfig`, `credentials.json`, `.pgpass`,
+  `terraform.tfvars`, `.htpasswd`, `.yarnrc.yml` and `deploy.ppk`. The
+  near-misses show the shape of the gap — `credentials` was refused but
+  `credentials.json` was not, `terraform.tfstate` was refused but the
+  `.tfvars` where the secrets are actually typed was not, `.npmrc` was
+  refused but `.yarnrc.yml` and its `npmAuthToken` was not.
+
+  The policy is now an allowlist with the denylist kept behind it. Source,
+  documentation and non-secret configuration are served by extension, plus
+  the conventional project files (`Makefile`, `Dockerfile`, `LICENSE`,
+  `go.mod`); everything else is refused with a message naming
+  `--allow-file-ext`, which widens the allowlist and cannot re-enable a
+  denylisted file. The denylist still matters, because some credential
+  stores wear an allowed extension. All eight paths are pinned as
+  regression tests.
+
+- **Repository names and origin URLs reached agent context verbatim.** The
+  MCP server's job is reporting what is on disk, and nearly every string it
+  reports is chosen by someone else — a directory name comes from the
+  repository's owner, and `corralctl topic:…` clones repositories the user
+  never named. A repository called
+  `SYSTEM-ignore-prior-instructions-…` is a legal GitHub name, and was
+  reproduced reaching a client's context in full, with no bound and no
+  framing. This is the runtime half of the trust gap in the 2026 MCP
+  security work: tool descriptions are reviewed once at connect time, tool
+  responses never are.
+
+  New `internal/sanitize` strips the mechanisms that make injected text
+  invisible or unbounded — C0/C1 controls including the ESC that begins
+  every ANSI sequence, bidirectional overrides and isolates, zero-width
+  characters, the BOM, and invalid UTF-8 — and bounds each field. It is
+  applied on the way out, never at construction: `RepoEntry.Path` is what
+  `SafeMutationPath` resolves and what git is handed, so the stored value
+  stays byte-exact. Sanitising cannot remove plain-language injection
+  without breaking the tool, so the server instructions now tell the model
+  that every returned value is untrusted data describing the workspace,
+  never an instruction.
+
+- **`corral_clone_repo` accepted any URL the agent supplied.** Not
+  exploitable today — git refuses `ext::` by default, verified against git
+  2.55 — but that guarantee lived in configuration corral does not own, on
+  a machine corral does not control, for a parameter an agent chooses. The
+  tool now validates the transport itself against an allowlist of `https`,
+  `ssh` and `git`, rejecting remote-helper syntax (`transport::address`),
+  `file://`, and anything beginning with `-`.
+
 ### Added
+
+- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
+  internal consistency: every justification in the tables must be
+  byte-identical to the one carried in the prefilled form link for the same
+  criterion, in both directions. The tables are what a reviewer reads; the
+  links are what actually reaches bestpractices.dev. Nothing but discipline
+  kept them in step, and discipline is what failed when `SECURITY.md` was
+  rewritten. Verified against a diverging justification, an orphaned table row
+  and an orphaned link.
 
 - **Manpages and shell completions**, generated from the cobra command tree
   by `scripts/gen_docs.go` and packaged into every archive, `.deb`, `.rpm`
@@ -49,33 +112,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *policy* rather than just the number, stability guarantees stating the
   breaking axis as behaviour rather than signatures, and a security and
   hardening section.
-
-### Fixed
-
-- **`spdx_sweep` only ever covered `.go` files**, so twenty-one workflow and
-  configuration files carried no licence header — the tree was not
-  machine-readable for REUSE-style tooling. It now handles `#`-comment file
-  types (preserving shebangs), gained a `-check` mode, and that mode is a
-  CI gate. All 113 covered files now carry a header.
-
-- **The README's "Back to Top" link had never worked.** It targeted
-  `#corral`, and GitHub does not generate anchors for raw HTML headings.
-
-- **Two duplicated subsections in the `[0.0.28]` changelog entry**, `###
-  Changed` and `### Fixed` each appearing twice from a merge, now merged.
-
-## [0.0.28] — 2026-08-30
-
-### Added
-
-- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
-  internal consistency: every justification in the tables must be
-  byte-identical to the one carried in the prefilled form link for the same
-  criterion, in both directions. The tables are what a reviewer reads; the
-  links are what actually reaches bestpractices.dev. Nothing but discipline
-  kept them in step, and discipline is what failed when `SECURITY.md` was
-  rewritten. Verified against a diverging justification, an orphaned table row
-  and an orphaned link.
 
 ### Changed
 
@@ -126,7 +162,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   linked to Discussions for anything that is not a defect or a feature
   request. Discussions were not enabled, so that link 404'd.
 
+- **Release builds are reproducible and no longer carry the build
+  machine's paths.** The goreleaser build set `-s -w` but not `-trimpath`,
+  so a release shipped 1,142 strings rooted at the maintainer's home
+  directory and two builds of the same commit were not byte-identical —
+  which sits oddly beside SLSA provenance, since reproducibility is what
+  lets a third party check provenance rather than trust it. Added
+  `-trimpath` and a commit-pinned `mod_timestamp`.
+
 ### Fixed
+
+- **A private repository could be filed under `Public/`.** `mapRepository`
+  read only the API's `visibility` field, so a response carrying `private`
+  but omitting `visibility` — which some endpoints and older API versions
+  do — fell through to `Public`. Visibility decides the on-disk Collection
+  and the value the MCP tools report, so the mistake was durable and
+  visible. `private` is now authoritative and `visibility` refines it.
+
+- **`--type sponsored` could never match anything.** `CanBeSponsored` is
+  hardcoded `false`, because sponsorship status is not carried by the REST
+  listing endpoints, and the filter required it to be true. The flag
+  validated, ran, hit the API and returned nothing — indistinguishable from
+  a correct empty result. It is now refused at flag validation with the
+  reason and the list of values that do work. A filter that cannot be
+  honoured is an error, never silence.
+
+- **Orphan detection matched the owner by substring.** `findOrphans` used
+  `strings.Contains(url, "/"+owner+"/")`, which matched any host — a
+  `gitlab.com` clone under a same-named owner counted as a GitHub orphan —
+  and matched unrelated path segments. It now uses `git.CanonicalRemote`,
+  the same identity `migrateLegacy`, `originMismatch` and `prune` already
+  agree on.
+
+- **Three git subprocesses could block forever.** `CurrentBranch`,
+  `IsEmpty` and `RemoteOrigin` used `exec.Command` with no context and no
+  deadline, so a stale NFS mount, an unresponsive FUSE filesystem or a
+  wedged index lock hung them indefinitely — and `CurrentBranch` sits on
+  the sync decision path for every repository in a run. All three now take
+  a context, bounded at 30s, and unwind on cancellation like the rest of
+  the run.
 
 - **Every "on this page" link pointed at nothing.** `ssg` renders Markdown with
   pulldown-cmark configured for HTML output only, which emits no heading ids,
@@ -185,6 +259,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The 90-day disclosure timeline and the 7-day dependency SLA are not
   documented anywhere, and adding them would be committing the maintainer to
   a promise rather than recording a fact, so they are left out.
+
+- **`spdx_sweep` only ever covered `.go` files**, so twenty-one workflow and
+  configuration files carried no licence header — the tree was not
+  machine-readable for REUSE-style tooling. It now handles `#`-comment file
+  types (preserving shebangs), gained a `-check` mode, and that mode is a
+  CI gate. All 113 covered files now carry a header.
+
+- **The README's "Back to Top" link had never worked.** It targeted
+  `#corral`, and GitHub does not generate anchors for raw HTML headings.
+
+- **Two duplicated subsections in the `[0.0.28]` changelog entry**, `###
+  Changed` and `### Fixed` each appearing twice from a merge, now merged.
 
 ## [0.0.27] — 2026-08-30
 

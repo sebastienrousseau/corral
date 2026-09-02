@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sebastienrousseau/corral/internal/diag"
 )
@@ -199,10 +200,30 @@ func updateSubmodules(ctx context.Context, targetDir string) error {
 	return nil
 }
 
+// metadataTimeout bounds the quick, local metadata reads below.
+//
+// These used to run with no context and no deadline, so a stale NFS
+// mount, a FUSE filesystem that stops responding, or a repository with a
+// wedged index lock blocked them forever — and CurrentBranch sits on the
+// sync decision path for every repository in a run. 30s is far beyond
+// what `git rev-parse` needs locally while still bounding the hang.
+const metadataTimeout = 30 * time.Second
+
+// withMetadataTimeout derives a bounded context for a local metadata read,
+// preserving cancellation from the caller's context.
+func withMetadataTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, metadataTimeout)
+}
+
 // CurrentBranch retrieves the name of the currently checked-out branch.
-func CurrentBranch(targetDir string) (string, error) {
+func CurrentBranch(ctx context.Context, targetDir string) (string, error) {
+	ctx, cancel := withMetadataTimeout(ctx)
+	defer cancel()
 	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
-	cmd := exec.Command(gitBinary, "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
+	cmd := exec.CommandContext(ctx, gitBinary, "-C", targetDir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -225,9 +246,11 @@ func CurrentBranch(targetDir string) (string, error) {
 // this returns true. Callers should have already established that
 // targetDir *is* a git repo (via a .git-directory check) before
 // calling; the "not a git repo" case is defence-in-depth.
-func IsEmpty(targetDir string) bool {
+func IsEmpty(ctx context.Context, targetDir string) bool {
+	ctx, cancel := withMetadataTimeout(ctx)
+	defer cancel()
 	// #nosec G204 -- fixed binary; targetDir is a local path.
-	cmd := exec.Command(gitBinary, "-C", targetDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	cmd := exec.CommandContext(ctx, gitBinary, "-C", targetDir, "rev-parse", "--verify", "-q", "HEAD^{commit}")
 	return cmd.Run() != nil
 }
 
@@ -425,9 +448,11 @@ func refMap(ctx context.Context, targetDir string, args ...string) (map[string]s
 // invoking `git remote get-url origin`. Prefer RemoteOriginFromConfig on hot
 // paths (e.g. orphan detection over hundreds of clones) to avoid the
 // per-call cost of spawning a subprocess.
-func RemoteOrigin(targetDir string) (string, error) {
+func RemoteOrigin(ctx context.Context, targetDir string) (string, error) {
+	ctx, cancel := withMetadataTimeout(ctx)
+	defer cancel()
 	// #nosec G204 -- fixed "git" binary; targetDir is a local path, not shell input.
-	cmd := exec.Command(gitBinary, "-C", targetDir, "remote", "get-url", "origin")
+	cmd := exec.CommandContext(ctx, gitBinary, "-C", targetDir, "remote", "get-url", "origin")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

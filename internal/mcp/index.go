@@ -27,6 +27,7 @@ import (
 
 	"github.com/sebastienrousseau/corral/internal/diag"
 	"github.com/sebastienrousseau/corral/internal/git"
+	"github.com/sebastienrousseau/corral/internal/sanitize"
 )
 
 // RepoEntry is one row in the workspace index. It captures the information
@@ -343,7 +344,9 @@ func (i *Index) Find(query string) (*RepoEntry, error) {
 	default:
 		names := make([]string, 0, len(matches))
 		for _, m := range matches {
-			names = append(names, m.RelPath)
+			// This error text reaches the model, so the paths in it are
+			// an output boundary like any other.
+			names = append(names, sanitize.Untrusted(m.RelPath, maxEntryPath))
 		}
 		return nil, fmt.Errorf("%w: %s", ErrAmbiguous, strings.Join(names, ", "))
 	}
@@ -451,4 +454,57 @@ func canonicalizeExistingPrefix(abs string) string {
 		suffixParts = append([]string{filepath.Base(dir)}, suffixParts...)
 		dir = parent
 	}
+}
+
+// Field bounds for untrusted values on their way to a model. Generous
+// enough that no real repository is truncated — GitHub caps a repository
+// name at 100 characters — and small enough that a hostile name cannot
+// flood a context window.
+const (
+	maxEntryName   = 128
+	maxEntryPath   = 1024
+	maxEntryField  = 64
+	maxEntryRemote = 512
+)
+
+// Redacted returns a copy of the entry with every attacker-controlled
+// string bounded and stripped of characters that could hide or
+// misrepresent it.
+//
+// Applied on the way out, never at construction: Path is what
+// SafeMutationPath resolves and what git is handed, so the stored value
+// must stay byte-exact. Sanitising in buildEntry would have made the
+// index disagree with the filesystem — a worse bug than the one it fixes.
+//
+// Every field here is chosen by someone else. A repository's directory
+// name is its owner's, and `corralctl topic:…` clones repositories the
+// user never named; RemoteURL is read from .git/config; Visibility and
+// Language are path segments under the workspace root.
+func (r RepoEntry) Redacted() RepoEntry {
+	r.Name = sanitize.Untrusted(r.Name, maxEntryName)
+	r.RelPath = sanitize.Untrusted(r.RelPath, maxEntryPath)
+	r.Path = sanitize.Untrusted(r.Path, maxEntryPath)
+	r.RemoteURL = sanitize.Untrusted(r.RemoteURL, maxEntryRemote)
+	r.Visibility = sanitize.Untrusted(r.Visibility, maxEntryField)
+	r.Language = sanitize.Untrusted(r.Language, maxEntryField)
+	if r.State != nil {
+		state := *r.State
+		state.LastSyncedAt = sanitize.Untrusted(state.LastSyncedAt, maxEntryField)
+		state.LastSyncedPushedAt = sanitize.Untrusted(state.LastSyncedPushedAt, maxEntryField)
+		r.State = &state
+	}
+	return r
+}
+
+// RedactedEntries returns entries with Redacted applied to each. The
+// index itself is never mutated: callers keep querying the exact values.
+func RedactedEntries(entries []RepoEntry) []RepoEntry {
+	if entries == nil {
+		return nil
+	}
+	out := make([]RepoEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Redacted())
+	}
+	return out
 }

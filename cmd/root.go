@@ -295,7 +295,20 @@ func init() {
 var (
 	repoTypeValues = []string{
 		"all", "public", "private", "sources", "forks", "archived",
-		"can be sponsored", "sponsored", "mirrors", "templates",
+		"mirrors", "templates",
+	}
+
+	// unsupportedRepoTypes are --type values corral accepted and could
+	// never satisfy, because the field they filter on is not carried by
+	// the REST listing endpoints. They validated, ran, hit the API and
+	// returned nothing — indistinguishable from a correct empty result.
+	//
+	// A filter that cannot be honoured is refused, never answered with
+	// silence: a wrong answer the user cannot detect is worse than an
+	// error that names the limitation.
+	unsupportedRepoTypes = map[string]string{
+		"can be sponsored": "sponsorship status is not returned by the GitHub repository listing API",
+		"sponsored":        "sponsorship status is not returned by the GitHub repository listing API",
 	}
 	repoSortValues = []string{"last updated", "updated", "name", "stars"}
 )
@@ -487,6 +500,10 @@ func validateCommonFlags() error {
 	}
 	repoType = strings.ToLower(strings.TrimSpace(repoType))
 	repoSort = strings.ToLower(strings.TrimSpace(repoSort))
+	if reason, unsupported := unsupportedRepoTypes[repoType]; unsupported {
+		return fmt.Errorf("--type %q is not supported: %s\n\nSupported values: %s",
+			repoType, reason, strings.Join(repoTypeValues, ", "))
+	}
 	if repoType != "" && !slices.Contains(repoTypeValues, repoType) {
 		return fmt.Errorf("--type must be one of: %s", strings.Join(repoTypeValues, ", "))
 	}

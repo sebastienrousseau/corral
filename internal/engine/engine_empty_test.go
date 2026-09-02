@@ -34,13 +34,13 @@ func TestProcessRepoSkipsEmptyRemote(t *testing.T) {
 		gitCurrentBranch = oldGitCurrentBranch
 	}()
 
-	gitIsEmpty = func(targetDir string) bool { return true }
+	gitIsEmpty = func(_ context.Context, targetDir string) bool { return true }
 	pullCalls := 0
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error {
 		pullCalls++
 		return nil
 	}
-	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "main", nil }
 
 	baseDir, err := os.MkdirTemp("", "engine_empty_test")
 	if err != nil {
@@ -86,13 +86,13 @@ func TestProcessRepoStillSyncsNonEmpty(t *testing.T) {
 		gitCurrentBranch = oldGitCurrentBranch
 	}()
 
-	gitIsEmpty = func(targetDir string) bool { return false }
+	gitIsEmpty = func(_ context.Context, targetDir string) bool { return false }
 	pullCalls := 0
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error {
 		pullCalls++
 		return nil
 	}
-	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "main", nil }
 
 	baseDir, err := os.MkdirTemp("", "engine_nonempty_test")
 	if err != nil {

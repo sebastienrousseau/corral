@@ -229,12 +229,12 @@ func TestProcessRepoFull(t *testing.T) {
 
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return nil }
-	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "main", nil }
 	gitRemoteOrigin = func(targetDir string) (string, error) { return "https://github.com/owner/repo1.git", nil }
 	// Assume the fake .git directory in this test is populated;
 	// gitIsEmpty is a v0.0.13 addition that would otherwise SKIP the
 	// SYNC path before gitPull is exercised.
-	gitIsEmpty = func(targetDir string) bool { return false }
+	gitIsEmpty = func(_ context.Context, targetDir string) bool { return false }
 
 	repo := github.Repo{
 		Name:          "repo1",
@@ -273,7 +273,7 @@ func TestProcessRepoFull(t *testing.T) {
 		t.Errorf("Expected ERROR, got %v", msg)
 	}
 
-	gitCurrentBranch = func(targetDir string) (string, error) { return "feat", nil }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "feat", nil }
 	msg = processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "SKIP" {
 		t.Errorf("Expected SKIP, got %v", msg)
@@ -690,7 +690,7 @@ func TestEngineRunJSON(t *testing.T) {
 	}
 	gitClone = func(ctx context.Context, url, targetDir string, opts git.CloneOptions) error { return nil }
 	gitPull = func(ctx context.Context, targetDir string, opts git.PullOptions) error { return nil }
-	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "main", nil }
 
 	oldIsTerminal := isTerminal
 	defer func() { isTerminal = oldIsTerminal }()
@@ -1468,8 +1468,8 @@ func withGitPullStub(t *testing.T) (called *int, restore func()) {
 		n++
 		return nil
 	}
-	gitCurrentBranch = func(targetDir string) (string, error) { return "main", nil }
-	gitIsEmpty = func(targetDir string) bool { return false }
+	gitCurrentBranch = func(_ context.Context, targetDir string) (string, error) { return "main", nil }
+	gitIsEmpty = func(_ context.Context, targetDir string) bool { return false }
 	return &n, func() {
 		gitPull = oldPull
 		gitCurrentBranch = oldBranch
