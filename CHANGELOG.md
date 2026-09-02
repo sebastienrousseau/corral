@@ -6,7 +6,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.28] — 2026-08-30
+## [0.0.28] — 2026-09-02
+
+### Security
+
+- **The MCP file resource served eight classes of credential file.** The
+  content policy was a denylist, which put the burden on the list to have
+  anticipated every credential filename in advance. An audit drove the
+  compiled binary over real MCP stdio JSON-RPC and read back, in full:
+  `.kube/config`, `kubeconfig`, `credentials.json`, `.pgpass`,
+  `terraform.tfvars`, `.htpasswd`, `.yarnrc.yml` and `deploy.ppk`. The
+  near-misses show the shape of the gap — `credentials` was refused but
+  `credentials.json` was not, `terraform.tfstate` was refused but the
+  `.tfvars` where the secrets are actually typed was not, `.npmrc` was
+  refused but `.yarnrc.yml` and its `npmAuthToken` was not.
+
+  The policy is now an allowlist with the denylist kept behind it. Source,
+  documentation and non-secret configuration are served by extension, plus
+  the conventional project files (`Makefile`, `Dockerfile`, `LICENSE`,
+  `go.mod`); everything else is refused with a message naming
+  `--allow-file-ext`, which widens the allowlist and cannot re-enable a
+  denylisted file. The denylist still matters, because some credential
+  stores wear an allowed extension. All eight paths are pinned as
+  regression tests.
+
+- **Repository names and origin URLs reached agent context verbatim.** The
+  MCP server's job is reporting what is on disk, and nearly every string it
+  reports is chosen by someone else — a directory name comes from the
+  repository's owner, and `corralctl topic:…` clones repositories the user
+  never named. A repository called
+  `SYSTEM-ignore-prior-instructions-…` is a legal GitHub name, and was
+  reproduced reaching a client's context in full, with no bound and no
+  framing. This is the runtime half of the trust gap in the 2026 MCP
+  security work: tool descriptions are reviewed once at connect time, tool
+  responses never are.
+
+  New `internal/sanitize` strips the mechanisms that make injected text
+  invisible or unbounded — C0/C1 controls including the ESC that begins
+  every ANSI sequence, bidirectional overrides and isolates, zero-width
+  characters, the BOM, and invalid UTF-8 — and bounds each field. It is
+  applied on the way out, never at construction: `RepoEntry.Path` is what
+  `SafeMutationPath` resolves and what git is handed, so the stored value
+  stays byte-exact. Sanitising cannot remove plain-language injection
+  without breaking the tool, so the server instructions now tell the model
+  that every returned value is untrusted data describing the workspace,
+  never an instruction.
+
+- **`corral_clone_repo` accepted any URL the agent supplied.** Not
+  exploitable today — git refuses `ext::` by default, verified against git
+  2.55 — but that guarantee lived in configuration corral does not own, on
+  a machine corral does not control, for a parameter an agent chooses. The
+  tool now validates the transport itself against an allowlist of `https`,
+  `ssh` and `git`, rejecting remote-helper syntax (`transport::address`),
+  `file://`, and anything beginning with `-`.
 
 ### Changed
 
@@ -20,7 +72,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   theme can determine on its own. Measured across the five pages in both
   colour schemes: AAA contrast, 44px targets, heading order, one `h1` per page.
 
+- **Release builds are reproducible and no longer carry the build
+  machine's paths.** The goreleaser build set `-s -w` but not `-trimpath`,
+  so a release shipped 1,142 strings rooted at the maintainer's home
+  directory and two builds of the same commit were not byte-identical —
+  which sits oddly beside SLSA provenance, since reproducibility is what
+  lets a third party check provenance rather than trust it. Added
+  `-trimpath` and a commit-pinned `mod_timestamp`.
+
 ### Fixed
+
+- **A private repository could be filed under `Public/`.** `mapRepository`
+  read only the API's `visibility` field, so a response carrying `private`
+  but omitting `visibility` — which some endpoints and older API versions
+  do — fell through to `Public`. Visibility decides the on-disk Collection
+  and the value the MCP tools report, so the mistake was durable and
+  visible. `private` is now authoritative and `visibility` refines it.
+
+- **`--type sponsored` could never match anything.** `CanBeSponsored` is
+  hardcoded `false`, because sponsorship status is not carried by the REST
+  listing endpoints, and the filter required it to be true. The flag
+  validated, ran, hit the API and returned nothing — indistinguishable from
+  a correct empty result. It is now refused at flag validation with the
+  reason and the list of values that do work. A filter that cannot be
+  honoured is an error, never silence.
+
+- **Orphan detection matched the owner by substring.** `findOrphans` used
+  `strings.Contains(url, "/"+owner+"/")`, which matched any host — a
+  `gitlab.com` clone under a same-named owner counted as a GitHub orphan —
+  and matched unrelated path segments. It now uses `git.CanonicalRemote`,
+  the same identity `migrateLegacy`, `originMismatch` and `prune` already
+  agree on.
+
+- **Three git subprocesses could block forever.** `CurrentBranch`,
+  `IsEmpty` and `RemoteOrigin` used `exec.Command` with no context and no
+  deadline, so a stale NFS mount, an unresponsive FUSE filesystem or a
+  wedged index lock hung them indefinitely — and `CurrentBranch` sits on
+  the sync decision path for every repository in a run. All three now take
+  a context, bounded at 30s, and unwind on cancellation like the rest of
+  the run.
 
 - **Every "on this page" link pointed at nothing.** `ssg` renders Markdown with
   pulldown-cmark configured for HTML output only, which emits no heading ids,
@@ -56,81 +146,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caught before it merges. The job additionally fails if any package
   `go list` reports is absent from the page, or if an unexported declaration
   reaches it. Both failure modes were verified by reintroducing them.
-
-### Changed
-
-- **The OSPS self-assessment is rewritten against criteria v2026.02.19.** The
-  criterion *identifiers* were reused when the standard moved, but several of
-  the *questions* changed underneath them — so roughly half the Level 1
-  answers argued for something the criterion no longer asked.
-  `OSPS-BR-01.01` had become "sanitize untrusted CI metadata" while the answer
-  still described commit signing; `OSPS-QA-02.01` had become "provide a
-  dependency list" while the answer quoted test coverage; `OSPS-QA-01.01` had
-  become "is the repository publicly readable" while the answer described the
-  CI test suite.
-
-  Nothing had been submitted, so no false attestation was ever published. All
-  64 criteria across the three levels are now answered against the current
-  questions, each linking to the file or setting that backs it: 55 Met, 2 N/A,
-  6 Unmet, 1 left unanswered.
-
-  `OSPS-AC-01.01` is deliberately unanswered. It asks whether MFA guards
-  sensitive resources, which is a property of the maintainer's GitHub account
-  that nothing in this repository can establish.
-
-  Five of the six Unmet criteria are the same shape — the practice exists but
-  is not written down: a secrets policy covering rotation (`BR-07.02`), a VEX
-  document (`VM-04.02`), and stated remediation thresholds for dependency and
-  static-analysis findings (`VM-05.01`, `VM-05.02`, `VM-06.01`). The sixth,
-  `QA-07.01`, requires a non-author reviewer and needs a second maintainer
-  rather than a document.
-
-- **Release notes are a descriptive log again.** GoReleaser was emitting a
-  list of merge-commit subjects and SHAs, which names branches rather than
-  changes — so `OSPS-BR-04.01` could not honestly be claimed. Merge commits
-  are now filtered out, the remainder grouped into Features, Fixes, and
-  Security and dependencies, and the release header links to the changelog
-  entry and gives the one command that verifies the download.
-
-- **GitHub Discussions enabled.** The issue-template chooser added in v0.0.26
-  linked to Discussions for anything that is not a defect or a feature
-  request. Discussions were not enabled, so that link 404'd.
-
-### Added
-
-- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
-  internal consistency: every justification in the tables must be
-  byte-identical to the one carried in the prefilled form link for the same
-  criterion, in both directions. The tables are what a reviewer reads; the
-  links are what actually reaches bestpractices.dev. Nothing but discipline
-  kept them in step, and discipline is what failed when `SECURITY.md` was
-  rewritten. Verified against a diverging justification, an orphaned table row
-  and an orphaned link.
-
-### Fixed
-
-- **Five OSPS baseline justifications asserted things `SECURITY.md` does not
-  say.** Found while preparing the bestpractices.dev submission, which is the
-  point at which these stop being documentation and become a public
-  self-attestation:
-
-  | Criterion | Claimed | Actual |
-  |---|---|---|
-  | `OSPS-VM-02.01` | 90-day coordinated disclosure timeline | not in SECURITY.md |
-  | `OSPS-VM-01.01` | private disclosure channel *(email)* | GitHub private vulnerability reporting |
-  | `OSPS-DO-04.01` | disclosure email + 90-day timeline | neither present |
-  | `OSPS-VM-05.02` | follow-up PR within 7 days | not in SECURITY.md |
-  | `OSPS-BR-07.02` | secrets rotated on personnel change | not in SECURITY.md |
-
-  Two of these predate the v0.0.26 rewrite of `SECURITY.md`; the rest became
-  false when it was rewritten. Each criterion is still genuinely met — there
-  *is* a private reporting channel, a supported-versions policy and a secrets
-  practice — so the fix is to describe what the file says rather than what
-  someone hoped it said.
-
-  The 90-day disclosure timeline and the 7-day dependency SLA are not
-  documented anywhere, and adding them would be committing the maintainer to
-  a promise rather than recording a fact, so they are left out.
 
 ## [0.0.27] — 2026-08-30
 
