@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
 
       - name: markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20.0.0
+        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
         with:
           globs: |
             **/*.md
@@ -57,7 +57,7 @@ jobs:
             !public/**
 
       - name: codespell
-        uses: codespell-project/actions-codespell@406322ec52dd7b488e48c1c4b82e2a8b3a1bf630 # v2.1
+        uses: codespell-project/actions-codespell@8f01853be192eb0f849a5c7d721450e7a467c579 # v2.2
         with:
           skip: ./.git,./docs-site,./public,./go.sum,./dist,./build,./node_modules
           # intoto  - the in-toto attestation format, spelled correctly
@@ -86,7 +86,7 @@ jobs:
       # fail for reasons outside this repository's control, so they are
       # reported without failing the build.
       - name: lychee
-        uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332 # v2.4.1
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
           args: >-
             --offline
