@@ -6,7 +6,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Manpages and shell completions**, generated from the cobra command tree
+  by `scripts/gen_docs.go` and packaged into every archive, `.deb`, `.rpm`
+  and `make install`. Eight section-1 pages (`man corralctl`,
+  `man corralctl-mcp`, one per subcommand) plus bash, zsh, fish and
+  PowerShell completions. Generated, never committed: a hand-written `.1`
+  drifts from `--help` the first time a flag changes and nothing catches
+  it. CI renders every page with `groff -ww`.
+
+- **The Unix install contract.** `PREFIX` now defaults to `/usr/local` (was
+  `$HOME/.local`) with `DESTDIR` staging, and `make uninstall` removes
+  exactly what `make install` placed. Binaries, manpages, completions and
+  docs land at FHS paths. `make install-smoke` stages the tree on a clean
+  runner and asserts its shape, as a CI gate.
+
+- **Windows binaries.** `windows/amd64` and `windows/arm64` are built and
+  published as `.zip` archives alongside the existing Linux and macOS
+  targets.
+
+- **A release dry-run.** The Release workflow accepts `workflow_dispatch`
+  with `dry_run: true`, building and packaging every artefact but stopping
+  before publish, sign and attest — so new release machinery can be proven
+  before its first real use rather than during it.
+
+- **Docs Lint workflow** — markdownlint, codespell and an offline link
+  check with fragment resolution, plus an SPDX licence-header gate over the
+  whole tree.
+
+- **Documentation the repository was missing**: `DEVELOPMENT.md` (toolchain
+  and the local equivalent of every CI gate), `docs/ARCHITECTURE.md`,
+  `docs/packaging.md` for distribution maintainers, `SUPPORT.md`,
+  `AGENTS.md` (invariants for AI-assisted contributors), `CITATION.cff`,
+  and five architecture decision records under `docs/adr/`.
+
+- **`.pre-commit-config.yaml` and `.devcontainer/`**, mirroring the cheap CI
+  gates locally and booting a Codespace to a working `make`.
+
+- **README sections** the project had no home for: a unified documentation
+  link block, an honest "when not to use Corral", the minimum-toolchain
+  *policy* rather than just the number, stability guarantees stating the
+  breaking axis as behaviour rather than signatures, and a security and
+  hardening section.
+
+### Fixed
+
+- **`spdx_sweep` only ever covered `.go` files**, so twenty-one workflow and
+  configuration files carried no licence header — the tree was not
+  machine-readable for REUSE-style tooling. It now handles `#`-comment file
+  types (preserving shebangs), gained a `-check` mode, and that mode is a
+  CI gate. All 113 covered files now carry a header.
+
+- **The README's "Back to Top" link had never worked.** It targeted
+  `#corral`, and GitHub does not generate anchors for raw HTML headings.
+
+- **Two duplicated subsections in the `[0.0.28]` changelog entry**, `###
+  Changed` and `### Fixed` each appearing twice from a merge, now merged.
+
 ## [0.0.28] — 2026-08-30
+
+### Added
+
+- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
+  internal consistency: every justification in the tables must be
+  byte-identical to the one carried in the prefilled form link for the same
+  criterion, in both directions. The tables are what a reviewer reads; the
+  links are what actually reaches bestpractices.dev. Nothing but discipline
+  kept them in step, and discipline is what failed when `SECURITY.md` was
+  rewritten. Verified against a diverging justification, an orphaned table row
+  and an orphaned link.
 
 ### Changed
 
@@ -19,45 +88,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vendored at `docs-site/_layouts`, which holds every WCAG 2.2 AAA criterion a
   theme can determine on its own. Measured across the five pages in both
   colour schemes: AAA contrast, 44px targets, heading order, one `h1` per page.
-
-### Fixed
-
-- **Every "on this page" link pointed at nothing.** `ssg` renders Markdown with
-  pulldown-cmark configured for HTML output only, which emits no heading ids,
-  and its `{#id}` attribute syntax is not enabled either — it renders as
-  literal text. Nothing catches that on its own: a link checker reads
-  `/page/#thing` as a request for `/page/`, which is a 200, and axe has no rule
-  for it. `scripts/anchor_headings.py` now derives ids from the heading text
-  after the build and fails on a dangling fragment, verified by breaking one.
-
-- **Two duplicated changelog headings**, `## [Unreleased]` and `## [0.0.25]`,
-  each present twice from an earlier merge.
-
-- **The documentation site at doc.corrallib.com documented the wrong things.**
-  Four defects, all visible on the published page:
-
-  | Defect | Detail |
-  |---|---|
-  | Uncompilable imports | Every package card printed `import ".../internal/github"`. Go forbids importing an `internal/` path across module boundaries, so each of the five import statements on the page was something no reader could use. |
-  | Mostly private | `doc.AllDecls` published **173 of 233** declarations that were unexported helpers — `levenshtein`, `envToken`, `acquirePageSlot` — several with no doc comment, rendering as empty paragraphs. |
-  | Stale package list | The generator hardcoded five paths. The module has eight. `internal/diag` shipped in v0.0.26 and never reached the site, while the documentation-coverage gate counted it — the gate checked eight packages and the site showed five. |
-  | Unnavigable | 233 entries on one page with **zero** links: no contents, no anchors, no way back to the source. |
-
-  The site now discovers packages instead of listing them, so it cannot go
-  stale; publishes only exported declarations (66, down from 233); replaces
-  the uncompilable import lines with a note saying why the package cannot be
-  imported and a link to its source; and carries a package index with an
-  anchor on every declaration. It is retitled **Corral Package Reference**,
-  because it documents packages that are deliberately not an API — the
-  interfaces Corral actually offers are its command line and its MCP server.
-
-- **The site is now built in CI on every pull request**, not only on push to
-  main by the deploy workflow — so a change that breaks the generator is
-  caught before it merges. The job additionally fails if any package
-  `go list` reports is absent from the page, or if an unexported declaration
-  reaches it. Both failure modes were verified by reintroducing them.
-
-### Changed
 
 - **The OSPS self-assessment is rewritten against criteria v2026.02.19.** The
   criterion *identifiers* were reused when the standard moved, but several of
@@ -96,18 +126,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   linked to Discussions for anything that is not a defect or a feature
   request. Discussions were not enabled, so that link 404'd.
 
-### Added
-
-- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
-  internal consistency: every justification in the tables must be
-  byte-identical to the one carried in the prefilled form link for the same
-  criterion, in both directions. The tables are what a reviewer reads; the
-  links are what actually reaches bestpractices.dev. Nothing but discipline
-  kept them in step, and discipline is what failed when `SECURITY.md` was
-  rewritten. Verified against a diverging justification, an orphaned table row
-  and an orphaned link.
-
 ### Fixed
+
+- **Every "on this page" link pointed at nothing.** `ssg` renders Markdown with
+  pulldown-cmark configured for HTML output only, which emits no heading ids,
+  and its `{#id}` attribute syntax is not enabled either — it renders as
+  literal text. Nothing catches that on its own: a link checker reads
+  `/page/#thing` as a request for `/page/`, which is a 200, and axe has no rule
+  for it. `scripts/anchor_headings.py` now derives ids from the heading text
+  after the build and fails on a dangling fragment, verified by breaking one.
+
+- **Two duplicated changelog headings**, `## [Unreleased]` and `## [0.0.25]`,
+  each present twice from an earlier merge.
+
+- **The documentation site at doc.corrallib.com documented the wrong things.**
+  Four defects, all visible on the published page:
+
+  | Defect | Detail |
+  |---|---|
+  | Uncompilable imports | Every package card printed `import ".../internal/github"`. Go forbids importing an `internal/` path across module boundaries, so each of the five import statements on the page was something no reader could use. |
+  | Mostly private | `doc.AllDecls` published **173 of 233** declarations that were unexported helpers — `levenshtein`, `envToken`, `acquirePageSlot` — several with no doc comment, rendering as empty paragraphs. |
+  | Stale package list | The generator hardcoded five paths. The module has eight. `internal/diag` shipped in v0.0.26 and never reached the site, while the documentation-coverage gate counted it — the gate checked eight packages and the site showed five. |
+  | Unnavigable | 233 entries on one page with **zero** links: no contents, no anchors, no way back to the source. |
+
+  The site now discovers packages instead of listing them, so it cannot go
+  stale; publishes only exported declarations (66, down from 233); replaces
+  the uncompilable import lines with a note saying why the package cannot be
+  imported and a link to its source; and carries a package index with an
+  anchor on every declaration. It is retitled **Corral Package Reference**,
+  because it documents packages that are deliberately not an API — the
+  interfaces Corral actually offers are its command line and its MCP server.
+
+- **The site is now built in CI on every pull request**, not only on push to
+  main by the deploy workflow — so a change that breaks the generator is
+  caught before it merges. The job additionally fails if any package
+  `go list` reports is absent from the page, or if an unexported declaration
+  reaches it. Both failure modes were verified by reintroducing them.
 
 - **Five OSPS baseline justifications asserted things `SECURITY.md` does not
   say.** Found while preparing the bestpractices.dev submission, which is the
@@ -336,7 +390,7 @@ itself true and mechanically checked.
   and `"//<flag>"` notes beside each setting — but the config decoder runs with
   `DisallowUnknownFields`, so loading it failed immediately:
 
-  ```
+  ```console
   corralctl: decode config ~/.config/corral/config.json: json: unknown field "//"
   ```
 
@@ -469,7 +523,6 @@ itself true and mechanically checked.
   assertion rather than an end-to-end smoke test. Confirmed to fail against a
   simulated mapping regression.
 
-
 ## [0.0.22] — 2026-08-18
 
 ### Fixed
@@ -482,7 +535,6 @@ itself true and mechanically checked.
   entry stayed at 0.0.13 through v0.0.21 — including the release where the
   publisher itself was finally working. Gate removed.
 
-
 ## [0.0.21] — 2026-08-18
 
 Usability release. The v0.0.20 work made corral safe; this makes it
@@ -494,14 +546,17 @@ configurable.
   `plan`, `prune` and `profile` all build their options from the same variables
   as the root command, but the flags were registered on the root command only:
 
-      $ corralctl plan acme --limit 5
-      unknown flag: --limit
+```console
+$ corralctl plan acme --limit 5
+unknown flag: --limit
+```
 
   So `corralctl plan` always ran at limit=1000, concurrency=1, visibility=all —
   unconfigurable and unstated. The fetch/filter and clone/sync groups are now
   shared flag sets registered on each command that acts on them. `prune`
   deliberately gets only the fetch group, since it removes clones and never
   creates one.
+
 - **The config file covered 5 settings of 31, and only `corralctl profile` read
   it.** Settings are now keyed by flag name — `"concurrency": 8` is exactly
   `--concurrency 8` — so the file covers the whole surface and picks up new
@@ -557,7 +612,6 @@ configurable.
 - `corralctl config --explain` reports each effective setting and where it came
   from. A layered config is only debuggable if you can ask it why a value is
   what it is.
-
 
 ## [0.0.20] — 2026-08-17
 
