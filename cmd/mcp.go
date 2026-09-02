@@ -17,6 +17,7 @@ var (
 	mcpEnableMutations            bool
 	mcpEnableDestructiveMutations bool
 	mcpAuditLog                   string
+	mcpAllowFileExts              string
 )
 
 // mcpCmd registers the `corralctl mcp` subcommand. It runs a Model
@@ -114,6 +115,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		EnableMutations:            mcpEnableMutations,
 		EnableDestructiveMutations: mcpEnableDestructiveMutations,
 		AuditLogPath:               mcpAuditLog,
+		AllowFileExts:              parseCSV(mcpAllowFileExts),
 	})
 	if err != nil {
 		return fmt.Errorf("constructing mcp server: %w", err)
@@ -139,6 +141,8 @@ func init() {
 	mcpCmd.Flags().StringVar(&mcpRoot, "root", "", "absolute path the server sandboxes itself to (defaults to --base-dir, then $HOME/Code)")
 	mcpCmd.Flags().BoolVar(&mcpEnableMutations, "enable-mutations", false, "unlock write tools (corral_sync_repo, corral_clone_repo). Every mutation is logged to the audit trail")
 	mcpCmd.Flags().BoolVar(&mcpEnableDestructiveMutations, "enable-destructive-mutations", false, "additionally unlock corral_delete_repo. Refuses when uncommitted or unpushed changes exist. Requires --enable-mutations")
+	mcpCmd.Flags().StringVar(&mcpAllowFileExts, "allow-file-ext", "",
+		"comma-separated extra file extensions the file resource may serve (e.g. \"tpl,hbs\"). Cannot re-enable credential files")
 	mcpCmd.Flags().StringVar(&mcpAuditLog, "audit-log", "", "path to the mutation audit log (defaults to $XDG_STATE_HOME/corral/mutations.log or ~/.local/state/corral/mutations.log)")
 	rootCmd.AddCommand(mcpCmd)
 }

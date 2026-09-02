@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/sebastienrousseau/corral/internal/sanitize"
 )
 
 // MIME types the corral resources advertise. Pinned constants keep the
@@ -75,7 +77,7 @@ func (s *Server) registerResources() {
 	s.mcp.AddResourceTemplate(&mcp.ResourceTemplate{
 		URITemplate: "corral://repo/{owner}/{name}/file/{+path}",
 		Name:        "Repository file contents",
-		Description: "Read a single file from a clone, bounded at 1 MiB. The path segment is relative to the repository root, may contain subdirectories, and is validated against the configured server root to prevent directory traversal. Git internals and common credential files are not readable.",
+		Description: "Read a single file from a clone, bounded at 1 MiB. The path segment is relative to the repository root, may contain subdirectories, and is validated against the configured server root to prevent directory traversal. Only source, documentation and non-secret configuration files are served, by extension allowlist: " + allowedExtensionList() + ", plus conventional project files such as Makefile, Dockerfile, LICENSE and go.mod. Git internals, credential directories and credential files are refused.",
 		MIMEType:    mimePlain,
 	}, s.handleRepoFileResource)
 }
@@ -88,7 +90,10 @@ func (s *Server) handleWorkspaceIndexResource(ctx context.Context, req *mcp.Read
 	if err != nil {
 		return nil, fmt.Errorf("scan workspace: %w", err)
 	}
-	b, err := marshalResource(idx, "", "  ")
+	// Mirror of the corral_workspace_index tool, so it gets the same
+	// output-boundary redaction the tool path applies.
+	redacted := Index{Root: idx.Root, Repos: RedactedEntries(idx.Repos), Truncated: idx.Truncated}
+	b, err := marshalResource(redacted, "", "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +161,10 @@ func (s *Server) handleRepoTreeResource(ctx context.Context, req *mcp.ReadResour
 		if d.IsDir() {
 			suffix = "/"
 		}
-		lines = append(lines, filepath.ToSlash(rel)+suffix)
+		// Filenames inside a cloned repository are entirely the remote's
+		// choice, so the listing is an untrusted channel just as the
+		// repository name is.
+		lines = append(lines, sanitize.Untrusted(filepath.ToSlash(rel)+suffix, maxEntryPath))
 		return nil
 	})
 	if err != nil {
@@ -194,7 +202,15 @@ func (s *Server) handleRepoFileResource(ctx context.Context, req *mcp.ReadResour
 	// token in the URL. The tree listing already hides .git; the file
 	// reader did not, so fixing the {+path} routing above without this
 	// would have turned an unreachable resource into a token leak.
+	//
+	// Denylist first, then allowlist, because the denylist produces the
+	// more specific message: "git credential store" tells the caller why
+	// this particular file is refused, where the allowlist can only say
+	// the extension is not served.
 	if reason, blocked := blockedRepoFile(path); blocked {
+		return nil, fmt.Errorf("refusing to read %s: %s", path, reason)
+	}
+	if reason, ok := fileAllowed(path, s.extraFileExts); !ok {
 		return nil, fmt.Errorf("refusing to read %s: %s", path, reason)
 	}
 
@@ -253,6 +269,16 @@ var blockedRepoFileNames = map[string]string{
 	"secrets.yml":          "named secrets file",
 	"secrets.yaml":         "named secrets file",
 	"service-account.json": "service-account key",
+	// Found served by an audit of the pre-allowlist policy. Most are now
+	// also refused by the extension allowlist, but they are named here so
+	// the caller gets "kubeconfig holds cluster credentials" rather than
+	// "no extension and not a recognised project file" — and so the policy
+	// still refuses them if their extension is ever allowlisted.
+	".htpasswd":         "htpasswd holds password hashes",
+	".pgpass":           "pgpass holds database credentials",
+	".terraformrc":      "terraform CLI config may hold tokens",
+	"kubeconfig":        "kubeconfig holds cluster credentials",
+	".dockerconfigjson": "docker registry credentials",
 }
 
 // blockedRepoFileSuffixes are extensions never served, matched case-insensitively.
@@ -264,6 +290,10 @@ var blockedRepoFileSuffixes = map[string]string{
 	".jks":      "keystore",
 	".keystore": "keystore",
 	".kdbx":     "password database",
+	".ppk":      "PuTTY private key",
+	".asc":      "PGP key or signature",
+	".gpg":      "PGP encrypted data",
+	".tfvars":   "terraform variables commonly hold secrets",
 }
 
 // blockedRepoFile reports whether the file resource must refuse rel, and why.
@@ -286,13 +316,19 @@ func blockedRepoFile(rel string) (string, bool) {
 			return "git internals are not readable", true
 		}
 		if strings.EqualFold(seg, ".ssh") || strings.EqualFold(seg, ".aws") ||
-			strings.EqualFold(seg, ".gnupg") {
+			strings.EqualFold(seg, ".gnupg") || strings.EqualFold(seg, ".kube") ||
+			strings.EqualFold(seg, ".gcloud") || strings.EqualFold(seg, ".docker") {
 			return "credential directory", true
 		}
 	}
 
 	base := strings.ToLower(filepath.Base(clean))
 	if reason, ok := blockedRepoFileNames[base]; ok {
+		return reason, true
+	}
+	// Credential stores wearing an extension the allowlist serves, so the
+	// allowlist alone cannot refuse them.
+	if reason, ok := deniedAllowedExtNames[base]; ok {
 		return reason, true
 	}
 	// .env.local, .env.production and friends.
