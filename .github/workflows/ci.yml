@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
 name: CI
 
 on:
@@ -123,6 +126,46 @@ jobs:
           "${GOBIN}/govulncheck" -version
           "${GOBIN}/govulncheck" ./...
 
+  # The Unix install contract is the thing packagers rely on and the thing
+  # nothing else exercises: `make install` can rot into a broken tree and
+  # every other job stays green. Staging it on a clean runner is the only
+  # check that catches it.
+  install-contract:
+    name: Install Contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Stage an install and assert the tree
+        env:
+          GOTOOLCHAIN: auto
+        run: make install-smoke
+
+      # Manpages are generated from the cobra command tree, so a page that
+      # fails to render means the tree changed in a way the generator cannot
+      # express. groff -ww surfaces that; without it the break only shows up
+      # in a released tarball.
+      - name: Manpages render without warnings
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq groff
+          make docs
+          for page in build/man/*.1; do
+            echo "checking ${page}"
+            groff -man -Tutf8 -ww "${page}" >/dev/null 2>groff.err
+            if [ -s groff.err ]; then
+              echo "::error::${page} produced groff warnings"; cat groff.err; exit 1
+            fi
+          done
+          echo "all manpages render cleanly"
+
   docs-check:
     name: Documentation Coverage Check
     runs-on: ubuntu-latest
@@ -153,6 +196,14 @@ jobs:
           set -euo pipefail
           go version
           go run scripts/doc_coverage.go
+
+      # REUSE-style licence coverage over the whole tree, not just the files
+      # someone remembered. Twenty-one workflow and config files had drifted
+      # uncovered before this became a gate.
+      - name: Every source file carries an SPDX header
+        env:
+          GOTOOLCHAIN: auto
+        run: go run scripts/spdx_sweep.go -check
 
       # SBOM.md and server.json are hand-maintained and have both drifted
       # silently before — SBOM.md carried go-github v74 for six releases after
