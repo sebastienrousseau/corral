@@ -53,10 +53,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    # -trimpath keeps the build machine's absolute paths out of the binary and
-    # is what makes two builds of the same commit byte-identical.
-    flags:
-      - -trimpath
     main: ./cmd/corralctl
     binary: corralctl
     ldflags:
