@@ -32,7 +32,7 @@
 
 **Getting started**
 
-- [Install](#install) — mise, Homebrew, Arch, Go, or from source
+- [Install](#install) — mise, Homebrew, Arch, Nix, Go, or from source
 - [Quick Start](#quick-start) — clone and organise in one command
 
 **Features & Capabilities**
@@ -92,6 +92,17 @@ or install with [mise](#mise-macos--linux) or the
 ```bash
 yay -S corralctl-bin    # or: paru -S corralctl-bin
 ```
+
+### Nix (any platform)
+
+```sh
+nix run github:sebastienrousseau/corral -- --help   # run without installing
+nix profile install github:sebastienrousseau/corral # install
+```
+
+The flake ships the binary with its manpages and shell completions, and
+`nix develop` gives a shell with every tool the project's CI gates need,
+pinned by `flake.lock`.
 
 ### Go toolchain
 

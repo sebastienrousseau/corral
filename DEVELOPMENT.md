@@ -34,11 +34,28 @@ Optional, only needed for the gate that uses them:
 | `goreleaser` | release dry runs |
 | `groff` | manpage rendering check |
 | `markdownlint-cli2`, `codespell`, `lychee` | `make docs-lint` and the Docs Lint workflow |
+| `nix` | optional; `nix develop` provides every row above, pinned |
 
-The prose tools are not installed by the devcontainer — pip and npm cannot
-be pinned by hash without a hash-locked requirements file and a lockfile,
-and an unpinned installer runs with your credentials. `make docs-lint`
-skips whichever is absent, and the Docs Lint workflow is authoritative:
+### Nix (every tool, pinned)
+
+```sh
+nix develop        # Go, linters, prose tools, release tooling — all pinned
+nix build          # the package, with manpages and completions
+nix run . -- --help
+```
+
+`nix develop` is the shortest path to a machine that can run every gate in
+this file, because `flake.lock` pins each tool by hash.
+
+That matters beyond convenience. The devcontainer deliberately does **not**
+install the prose tools: `pip install` and `npm install -g` cannot be
+pinned by hash without a hash-locked requirements file and a lockfile, and
+OpenSSF Scorecard is right to flag an installer that resolves at build time
+and then runs with your credentials. Nix pins them by construction, so the
+dev shell has them and the devcontainer does not.
+
+Without Nix, install them yourself — `make docs-lint` skips whichever is
+absent, and the Docs Lint workflow is authoritative:
 
 ```sh
 pip install codespell pre-commit
