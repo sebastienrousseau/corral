@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The MCP workspace scan is roughly three times faster.** A CPU profile
+  put 97% of its samples in syscalls and essentially none in user code:
+  every repository cost two file opens, taken one after another. Discovery
+  and enrichment are now separate phases, and the enrichment fans out
+  across a bounded worker pool — oversubscribed deliberately, because the
+  work is waiting rather than computing.
+
+  Measured with `benchstat`, 20 runs against the previous implementation:
+  1,000 repositories go from **103ms to 33ms (-67%)**, 100 from 8.1ms to
+  5.7ms (-29%), and the spread collapses from ±19% with a tail to 3.1ms
+  down to ±3%. Below 16 repositories enrichment stays serial, which costs
+  a very small workspace about 0.4ms of walk-time locality — a trade
+  recorded in the code with its numbers.
+
+- **Repository lookup no longer allocates per repository.** `Index.Find` is
+  case-insensitive and lowercased every entry inside the loop: 999
+  allocations to answer one query on a 1,000-repository workspace, on a
+  path three of the eight tools reach. The keys are computed once during
+  the scan that already touches every repository. **-92% time, 999
+  allocations to 1.**
+
+- **A small `--limit` no longer fetches every page.** `corralctl bigorg
+  --limit 10` against a 5,000-repository organisation issued all 50 page
+  requests to keep 10 repositories, on every run — 49 wasted round-trips
+  against a rate limit. The concurrent fetch now stops once the limit can
+  no longer consume another page, and maps each page to corral's trimmed
+  `Repo` inside the worker rather than holding every page of go-github's
+  ~100-field `Repository` live at once.
+
 - **`--api-timeout` is split into `--api-request-timeout` and
   `--api-total-timeout`.** It was documented as "GitHub API request
   deadline" and applied as *both* the per-request deadline and the deadline
