@@ -65,6 +65,12 @@ type Server struct {
 	// hot path does no string work.
 	extraFileExts map[string]struct{}
 
+	// symbolCache holds per-repository symbol extractions. Parsing is far
+	// more expensive than the workspace scan, and source changes far less
+	// often than the set of repositories does, so it gets its own cache
+	// with its own TTL.
+	symbolCache *symbolCache
+
 	// scanMu guards the in-memory workspace-index cache below.
 	// Every tool and resource handler goes through Server.scan(),
 	// which walks the filesystem at most once every scanTTL and
@@ -156,11 +162,17 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		},
 	)
 
-	s := &Server{mcp: mcpSrv, opts: opts, extraFileExts: normalizeExtraExts(opts.AllowFileExts)}
+	s := &Server{
+		mcp:           mcpSrv,
+		opts:          opts,
+		extraFileExts: normalizeExtraExts(opts.AllowFileExts),
+		symbolCache:   newSymbolCache(),
+	}
 	if opts.EnableMutations || opts.EnableDestructiveMutations {
 		s.auditor = NewAuditor(opts.AuditLogPath)
 	}
 	s.registerTools()
+	s.registerSymbolTools()
 	s.registerResources()
 	s.registerPrompts()
 	if s.opts.EnableMutations {
@@ -302,6 +314,10 @@ func serverInstructions(opts ServerOptions) string {
 	b.WriteString("then corral_list_repos to filter, or corral_find_repo when you already know the name. ")
 	b.WriteString("Prefer corral_list_repos over corral_workspace_index: the index returns every ")
 	b.WriteString("repository and is expensive on a large workspace.\n\n")
+	b.WriteString("When you know a symbol name but not which repository defines it, use corral_find_symbol: ")
+	b.WriteString("it searches declarations across every clone at once, which is the thing this server can ")
+	b.WriteString("do that a single-repository code index cannot. corral_repo_overview summarises one ")
+	b.WriteString("repository's shape in a single call — reach for it before reading files.\n\n")
 	b.WriteString("All read operations are local and make no network calls; nothing here queries the GitHub API. ")
 	b.WriteString("Only source, documentation and non-secret configuration files are readable; ")
 	b.WriteString("git internals, credential directories and credential files are refused.\n\n")

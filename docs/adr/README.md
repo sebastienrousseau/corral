@@ -22,3 +22,4 @@ record superseding the old one, not an edit.
 | [0003](0003-sanitize-on-output-not-construction.md) | Untrusted strings are sanitised on output, not at construction | Accepted |
 | [0004](0004-file-resource-allowlist.md) | The MCP file resource serves by allowlist | Accepted |
 | [0005](0005-generated-manpages-and-completions.md) | Manpages and completions are generated, never committed | Accepted |
+| [0006](0006-symbol-extraction-without-cgo.md) | Symbol extraction uses `go/ast`, not tree-sitter | Accepted |

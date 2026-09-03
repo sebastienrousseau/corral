@@ -44,6 +44,7 @@
 - [Smart Syncing](#smart-syncing) — network-optimised incremental updates
 - [Exec Mode](#exec-mode) — concurrent batch execution of Git commands
 - [MCP Server](#mcp-server-for-ai-agents) — expose your local workspace to AI coding agents
+- [Cross-repository symbol lookup](#cross-repository-symbol-lookup) — find where anything is defined, across every clone
 
 **Reference & Operational**
 
@@ -435,6 +436,51 @@ corralctl mcp --root /custom/workspace
   audit log.
 - **Path-traversal protected.** File-resource lookups canonicalise the selected repository root and candidate path, blocking `..` and symlink escapes into sibling repositories or outside the workspace.
 - **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
+
+---
+
+## Cross-repository symbol lookup
+
+Every code-context server can tell an agent where a symbol is defined **in
+the repository it has open**. Corral is the only one that can answer across
+**every clone on the machine**, because it is the only one that knows they
+are all there.
+
+```jsonc
+// corral_find_symbol { "name": "CanonicalRemote" }
+{
+  "query": "CanonicalRemote",
+  "repositories_search": 2,
+  "total_matched": 1,
+  "symbols": [
+    {
+      "repo": "Public/go/corral",
+      "symbol": "CanonicalRemote",
+      "kind": "func",
+      "file": "internal/git/git.go",
+      "line": 266,
+      "exported": true,
+      "language": "go"
+    }
+  ]
+}
+```
+
+Filter by `kind` (func, method, type, interface, const, var), scope to one
+`repo`, match by `substring`, or restrict to the `exported_only` surface.
+Methods are found by their bare name or as `Receiver.Name`. Test
+declarations are excluded by default — on a well-tested repository they
+outnumber everything else — and `include_tests` brings them back.
+
+`corral_repo_overview` summarises one repository in a single call: its
+origin, file count, declaration counts by kind, and its most significant
+exported types and functions. Reach for it before reading files.
+
+**Only Go is indexed today.** Symbol extraction uses `go/ast` from the
+standard library rather than tree-sitter, because tree-sitter's Go binding
+requires CGO and corral builds `CGO_ENABLED=0` — three of its four release
+targets fail to cross-compile with it. The reasoning, and what would change
+it, is in [ADR-0006](docs/adr/0006-symbol-extraction-without-cgo.md).
 
 ---
 
