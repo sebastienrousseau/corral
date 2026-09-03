@@ -38,6 +38,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The workspace scan no longer trades small workspaces for large ones.**
+  The previous change split discovery from enrichment into two passes,
+  which threw away walk-time locality: a ten-repository workspace got
+  ~0.4ms slower even with the fan-out disabled, and that was shipped as an
+  accepted trade. It should not have been.
+
+  Enrichment is now pipelined into the walk — each repository is handed to
+  the pool the moment it is found, so a worker opens its `.git/config`
+  while the directory is still hot from the walk that just stat'd it. The
+  pool seeds at four workers and grows only under queue backpressure:
+  starting at the full two dozen made a small workspace pay for goroutines
+  it could not use, and starting at one left it enriching serially.
+
+  Measured with `benchstat`, 12 runs against the pre-optimisation
+  implementation. **Every size is now faster than it has ever been:**
+
+  | Workspace | before any of this | now | |
+  |---|---|---|---|
+  | 10 repos | 543.8 µs | **462.7 µs** | **-14.9%** |
+  | 100 repos | 4.674 ms | **2.502 ms** | **-46.5%** |
+  | 1,000 repos | 55.11 ms | **23.93 ms** | **-56.6%** |
+
+  The cost is memory: +5% to +8% bytes and +4% to +8% allocations, from the
+  queue and the workers' result slices. At 1,000 repositories that is
+  ~525 KB against 31 ms saved.
+
 - **The MCP workspace scan is roughly three times faster.** A CPU profile
   put 97% of its samples in syscalls and essentially none in user code:
   every repository cost two file opens, taken one after another. Discovery

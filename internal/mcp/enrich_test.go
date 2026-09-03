@@ -10,12 +10,10 @@ import (
 	"testing"
 )
 
-// enrichWorkspace lays out n repositories and returns the root plus their
-// discovered paths in walk order.
-func enrichWorkspace(t *testing.T, n int) (string, []string) {
+// enrichWorkspace lays out n repositories under a Corral-shaped tree.
+func enrichWorkspace(t *testing.T, n int) string {
 	t.Helper()
 	root := t.TempDir()
-	paths := make([]string, 0, n)
 	for i := 0; i < n; i++ {
 		name := fmt.Sprintf("repo-%04d", i)
 		dir := filepath.Join(root, "Public", "go", name)
@@ -26,126 +24,167 @@ func enrichWorkspace(t *testing.T, n int) (string, []string) {
 		if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		paths = append(paths, dir)
 	}
-	return root, paths
+	return root
 }
 
-// TestEnrichEntriesIsOrderStable is the property the concurrent enrichment
-// must not break: the output must follow discovery order, not completion
-// order, or the index would shuffle between identical scans.
-func TestEnrichEntriesIsOrderStable(t *testing.T) {
-	// Above minParallelScan, so this exercises the concurrent path.
-	root, paths := enrichWorkspace(t, 64)
+// TestScanIsOrderStable is the property the pipeline must not break.
+//
+// Workers append in whatever order they finish, so determinism comes from
+// the sort rather than from arrival order. If that sort were ever removed,
+// two identical scans would disagree and an agent paging through results
+// would see them shuffle.
+func TestScanIsOrderStable(t *testing.T) {
+	root := enrichWorkspace(t, 64)
 
-	first := enrichEntries(root, paths)
-	if len(first) != len(paths) {
-		t.Fatalf("got %d entries, want %d", len(first), len(paths))
+	first, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i, e := range first {
-		if e.Path != paths[i] {
-			t.Fatalf("entry %d is %s, want %s: output order does not follow input", i, e.Path, paths[i])
-		}
+	if len(first.Repos) != 64 {
+		t.Fatalf("found %d repositories, want 64", len(first.Repos))
+	}
+	for i, e := range first.Repos {
 		if e.RemoteURL == "" {
 			t.Errorf("entry %d was not enriched: no remote URL", i)
 		}
+		if i > 0 && first.Repos[i-1].RelPath >= e.RelPath {
+			t.Fatalf("entries are not sorted by RelPath at %d: %q then %q",
+				i, first.Repos[i-1].RelPath, e.RelPath)
+		}
 	}
 
-	// Repeated runs must agree exactly.
-	for run := 0; run < 5; run++ {
-		again := enrichEntries(root, paths)
-		for i := range again {
-			if again[i].Path != first[i].Path || again[i].RemoteURL != first[i].RemoteURL {
-				t.Fatalf("run %d differs at %d: %+v vs %+v", run, i, again[i], first[i])
+	for run := 0; run < 8; run++ {
+		again, err := Scan(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(again.Repos) != len(first.Repos) {
+			t.Fatalf("run %d found %d, first found %d", run, len(again.Repos), len(first.Repos))
+		}
+		for i := range again.Repos {
+			if again.Repos[i].Path != first.Repos[i].Path ||
+				again.Repos[i].RemoteURL != first.Repos[i].RemoteURL {
+				t.Fatalf("run %d differs at %d: %+v vs %+v", run, i, again.Repos[i], first.Repos[i])
 			}
 		}
 	}
 }
 
-// TestEnrichEntriesSerialAndConcurrentAgree pins that the threshold is an
+// TestScanSingleWorkerAgreesWithPool pins that the pool size is an
 // optimisation and not a behaviour switch.
-func TestEnrichEntriesSerialAndConcurrentAgree(t *testing.T) {
-	root, paths := enrichWorkspace(t, minParallelScan+8)
+func TestScanSingleWorkerAgreesWithPool(t *testing.T) {
+	root := enrichWorkspace(t, 40)
 
-	concurrent := enrichEntries(root, paths)
+	pooled, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// Force the serial path by shrinking the worker count to 1 and using a
-	// slice below the threshold, then compare entry by entry.
-	oldWorkers := scanWorkers
+	old := scanWorkers
 	scanWorkers = func() int { return 1 }
-	t.Cleanup(func() { scanWorkers = oldWorkers })
+	t.Cleanup(func() { scanWorkers = old })
 
-	serial := make([]RepoEntry, 0, len(paths))
-	for _, p := range paths {
-		serial = append(serial, buildEntry(root, p))
+	serial, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if len(concurrent) != len(serial) {
-		t.Fatalf("length differs: %d vs %d", len(concurrent), len(serial))
+	if len(pooled.Repos) != len(serial.Repos) {
+		t.Fatalf("pooled found %d, serial found %d", len(pooled.Repos), len(serial.Repos))
 	}
-	for i := range serial {
-		if concurrent[i].Path != serial[i].Path ||
-			concurrent[i].RelPath != serial[i].RelPath ||
-			concurrent[i].RemoteURL != serial[i].RemoteURL ||
-			concurrent[i].Name != serial[i].Name {
-			t.Errorf("entry %d differs:\n concurrent %+v\n serial     %+v", i, concurrent[i], serial[i])
+	for i := range serial.Repos {
+		if pooled.Repos[i] != serial.Repos[i] {
+			t.Errorf("entry %d differs:\n pooled %+v\n serial %+v", i, pooled.Repos[i], serial.Repos[i])
 		}
 	}
 }
 
-func TestEnrichEntriesEdgeCases(t *testing.T) {
-	root, paths := enrichWorkspace(t, 1)
+// TestScanMoreWorkersThanRepos covers the case where the pool outnumbers
+// the work: every worker must still exit cleanly when the queue closes.
+func TestScanMoreWorkersThanRepos(t *testing.T) {
+	old := scanWorkers
+	scanWorkers = func() int { return maxScanWorkers }
+	t.Cleanup(func() { scanWorkers = old })
 
-	if got := enrichEntries(root, nil); got != nil {
-		t.Errorf("enrichEntries(nil) = %v, want nil", got)
+	root := enrichWorkspace(t, 1)
+	idx, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := enrichEntries(root, []string{}); got != nil {
-		t.Errorf("enrichEntries(empty) = %v, want nil", got)
-	}
-	single := enrichEntries(root, paths)
-	if len(single) != 1 || single[0].Path != paths[0] {
-		t.Errorf("single-entry enrichment = %+v", single)
+	if len(idx.Repos) != 1 {
+		t.Fatalf("found %d repositories, want 1", len(idx.Repos))
 	}
 }
 
-// TestEnrichEntriesMoreWorkersThanRepos covers the clamp: the pool must not
-// spawn more goroutines than there is work for them.
-func TestEnrichEntriesMoreWorkersThanRepos(t *testing.T) {
-	oldWorkers := scanWorkers
-	scanWorkers = func() int { return 1000 }
-	t.Cleanup(func() { scanWorkers = oldWorkers })
-
-	root, paths := enrichWorkspace(t, minParallelScan+1)
-	got := enrichEntries(root, paths)
-	if len(got) != len(paths) {
-		t.Fatalf("got %d entries, want %d", len(got), len(paths))
+// TestScanEmptyWorkspace: the pool must shut down cleanly when the walk
+// hands it nothing at all.
+func TestScanEmptyWorkspace(t *testing.T) {
+	idx, err := Scan(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for i := range got {
-		if got[i].Path != paths[i] {
-			t.Errorf("entry %d out of order", i)
-		}
+	if len(idx.Repos) != 0 {
+		t.Errorf("empty workspace yielded %d repositories", len(idx.Repos))
+	}
+	if idx.Truncated {
+		t.Error("empty workspace should not report truncation")
+	}
+}
+
+// TestScanTruncatesAtTheCap covers the bound, and that the queue still
+// drains cleanly after the walk aborts early.
+func TestScanTruncatesAtTheCap(t *testing.T) {
+	old := maxIndexRepos
+	maxIndexRepos = 5
+	t.Cleanup(func() { maxIndexRepos = old })
+
+	root := enrichWorkspace(t, 20)
+	idx, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !idx.Truncated {
+		t.Error("hitting the repository cap must be reported")
+	}
+	if len(idx.Repos) > 5 {
+		t.Errorf("kept %d repositories, want at most the cap of 5", len(idx.Repos))
 	}
 }
 
 func TestScanWorkersIsBounded(t *testing.T) {
 	n := scanWorkers()
-	if n < 1 {
-		t.Errorf("scanWorkers = %d, must be at least 1", n)
+	if n < 1 || n > maxScanWorkers {
+		t.Errorf("scanWorkers = %d, want within [1, %d]", n, maxScanWorkers)
 	}
-	if n > 32 {
-		t.Errorf("scanWorkers = %d, must be capped at 32", n)
+}
+
+func TestClampWorkers(t *testing.T) {
+	// The bounds depend on the host's core count, so they are asserted
+	// against the pure function rather than left to whatever this machine
+	// happens to have.
+	for _, tc := range []struct{ in, want int }{
+		{-8, 1}, {0, 1}, {1, 1}, {24, 24},
+		{maxScanWorkers, maxScanWorkers},
+		{maxScanWorkers + 1, maxScanWorkers},
+		{4096, maxScanWorkers},
+	} {
+		if got := clampWorkers(tc.in); got != tc.want {
+			t.Errorf("clampWorkers(%d) = %d, want %d", tc.in, got, tc.want)
+		}
 	}
 }
 
 // TestFindUsesPrecomputedKeysAndHandWrittenEntries covers both sides of the
-// PERF-2 fast path: entries built by buildEntry carry lowercase keys, and
+// lookup fast path: entries built by buildEntry carry lowercase keys, and
 // entries constructed by hand (as tests and embedders do) do not, so the
 // fallback must still find them.
 func TestFindUsesPrecomputedKeysAndHandWrittenEntries(t *testing.T) {
-	root, paths := enrichWorkspace(t, 2)
-	built := enrichEntries(root, paths)
-
-	idx := &Index{Root: root, Repos: built}
+	root := enrichWorkspace(t, 2)
+	idx, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := idx.Find("repo-0000"); err != nil {
 		t.Errorf("built entry not found by name: %v", err)
 	}
@@ -171,21 +210,5 @@ func TestFindUsesPrecomputedKeysAndHandWrittenEntries(t *testing.T) {
 	}
 	if _, err := manual.Find("nothing"); err == nil {
 		t.Error("expected a miss for an unknown query")
-	}
-}
-
-func TestClampWorkers(t *testing.T) {
-	// The bounds depend on the host's core count, so they are asserted
-	// against the pure function rather than left to whatever this machine
-	// happens to have.
-	for _, tc := range []struct{ in, want int }{
-		{-8, 1}, {0, 1}, {1, 1}, {24, 24},
-		{maxScanWorkers, maxScanWorkers},
-		{maxScanWorkers + 1, maxScanWorkers},
-		{4096, maxScanWorkers},
-	} {
-		if got := clampWorkers(tc.in); got != tc.want {
-			t.Errorf("clampWorkers(%d) = %d, want %d", tc.in, got, tc.want)
-		}
 	}
 }
