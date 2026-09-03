@@ -166,6 +166,34 @@ jobs:
           done
           echo "all manpages render cleanly"
 
+  # The release config is validated with the same goreleaser the release
+  # runs, at the same pinned version.
+  #
+  # A duplicate `flags:` key sat in .goreleaser.yaml across two merges. The
+  # local goreleaser (2.17.1) accepted it and `goreleaser check` passed;
+  # the version the action pins (2.18.0) rejects it outright, so the first
+  # dry run died at "Run GoReleaser" with a yaml unmarshal error. Checking
+  # the config on every push, with the version that will actually build the
+  # release, is what turns that into a pull-request failure instead of a
+  # tag-push failure.
+  release-config:
+    name: Release Config
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate .goreleaser.yaml
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: check
+
   docs-check:
     name: Documentation Coverage Check
     runs-on: ubuntu-latest
