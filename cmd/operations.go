@@ -97,7 +97,7 @@ var planCmd = &cobra.Command{
 		if !validOperationalOutput(planOutput) {
 			return errors.New("--output must be text, json, or ndjson")
 		}
-		return validateCommonFlags()
+		return validateCommonFlags(cmd)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		engineRun(cmdContext(cmd), operationalRunOptions(args[0], true, engine.OutputFormat(planOutput)))
@@ -112,7 +112,7 @@ var pruneCmd = &cobra.Command{
 		if pruneOutput != "text" && pruneOutput != "json" {
 			return errors.New("--output must be text or json")
 		}
-		return validateCommonFlags()
+		return validateCommonFlags(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !dryRun && !assumeYes {
@@ -120,7 +120,8 @@ var pruneCmd = &cobra.Command{
 		}
 		owner := strings.ToLower(strings.TrimSpace(args[0]))
 		repos, err := opsFetchRepos(cmdContext(cmd), owner, github.FetchOptions{
-			Limit: limit, AuthMode: github.AuthMode(authMode), Timeout: apiTimeout,
+			Limit: limit, AuthMode: github.AuthMode(authMode),
+			RequestTimeout: apiRequestTimeout, TotalTimeout: apiTotalTimeout,
 			RetryMax: retryMax, RetryMinBackoff: retryMinBackoff, RetryMaxBackoff: retryMaxBackoff,
 			IncludeArchived: true, IncludeForks: true,
 		})
@@ -217,7 +218,7 @@ var profileCmd = &cobra.Command{
 		if !validOperationalOutput(output) {
 			return errors.New("--output must be text, json, or ndjson")
 		}
-		return validateCommonFlags()
+		return validateCommonFlags(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := loadConfig(configPath)
@@ -302,7 +303,8 @@ func operationalRunOptions(owner string, preview bool, format engine.OutputForma
 			IncludeArchived: includeArchived, IncludeLanguages: parseCSV(includeLanguagesCSV),
 			ExcludeLanguages: parseCSV(excludeLanguagesCSV), AuthMode: github.AuthMode(authMode),
 			RetryMax: retryMax, RetryMinBackoff: retryMinBackoff,
-			RetryMaxBackoff: retryMaxBackoff, Timeout: apiTimeout,
+			RetryMaxBackoff: retryMaxBackoff,
+			RequestTimeout:  apiRequestTimeout, TotalTimeout: apiTotalTimeout,
 		},
 		Clone: gitutil.CloneOptions{
 			RecurseSubmodules: recurseSubmodules, SingleBranch: cloneSingleBranch,

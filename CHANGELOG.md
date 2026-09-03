@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`--api-timeout` is split into `--api-request-timeout` and
+  `--api-total-timeout`.** It was documented as "GitHub API request
+  deadline" and applied as *both* the per-request deadline and the deadline
+  for the entire paginated fetch. An organisation large enough to need 50
+  pages could not be listed at all, and the help text gave nobody a reason
+  to raise the value, because they believed it governed one request.
+
+  The two are now separate, defaulting to 30s per request and 10 minutes
+  for the whole fetch. `--api-timeout` keeps working for at least one minor
+  release, supplying both halves so behaviour is unchanged for anyone who
+  set it deliberately, and warns on stderr — never stdout, which carries
+  the selected output format.
+
+### Fixed
+
+- **The rate-limit retry could never complete a wait.** On a 403 with
+  `X-RateLimit-Remaining: 0`, the transport computes the wait from
+  `X-RateLimit-Reset` — which GitHub sets up to an hour out — and then
+  raced it against a context that descended from the same 30s budget. Any
+  reset further out than the remaining time was guaranteed to lose, so the
+  most carefully written branch in the retry logic was unreachable in
+  production, and secondary rate limits failed rather than backing off.
+
+  With the budget split it is reachable. A wait that still cannot fit now
+  reports immediately as a `RetryBudgetError` naming the delay, the
+  remaining budget and the flag to raise, instead of sleeping until the
+  deadline and surfacing a bare "context deadline exceeded" that named no
+  cause.
+
 ## [0.0.28] — 2026-09-02
 
 ### Security

@@ -73,7 +73,17 @@ func newFetchFlags() *pflag.FlagSet {
 	fs.IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
 	fs.DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	fs.DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
-	fs.DurationVar(&apiTimeout, "api-timeout", 30*time.Second, "GitHub API request deadline")
+	fs.DurationVar(&apiRequestTimeout, "api-request-timeout", 30*time.Second,
+		"deadline for a single GitHub API request")
+	fs.DurationVar(&apiTotalTimeout, "api-total-timeout", 10*time.Minute,
+		"deadline for the whole paginated fetch, including retries and backoff")
+	// Deprecated in v0.0.29. It was documented as a per-request deadline and
+	// applied as both, which capped a whole paginated listing at 30s. Kept
+	// working for at least one minor release per the stability guarantees in
+	// the README, warning on stderr — never on stdout, which carries the
+	// selected output format.
+	fs.DurationVar(&apiTimeout, "api-timeout", 0,
+		"deprecated: use --api-request-timeout and --api-total-timeout")
 	return fs
 }
 

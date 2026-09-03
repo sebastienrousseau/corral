@@ -303,12 +303,12 @@ func TestConfigLoadFailuresAndFallbacks(t *testing.T) {
 }
 
 func TestOperationalRunOptionsIncludesAllSettings(t *testing.T) {
-	oldTimeout := apiTimeout
+	oldTimeout := apiRequestTimeout
 	oldOutput := output
-	t.Cleanup(func() { apiTimeout, output = oldTimeout, oldOutput })
-	apiTimeout = 17 * time.Second
+	t.Cleanup(func() { apiRequestTimeout, output = oldTimeout, oldOutput })
+	apiRequestTimeout = 17 * time.Second
 	opts := operationalRunOptions("acme", true, engine.OutputNDJSON)
-	if opts.Owner != "acme" || !opts.DryRun || opts.Output != engine.OutputNDJSON || opts.Fetch.Timeout != 17*time.Second {
+	if opts.Owner != "acme" || !opts.DryRun || opts.Output != engine.OutputNDJSON || opts.Fetch.RequestTimeout != 17*time.Second {
 		t.Fatalf("unexpected operational options: %+v", opts)
 	}
 	output = "xml"

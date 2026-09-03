@@ -99,12 +99,38 @@ type FetchOptions struct {
 	RetryMinBackoff time.Duration
 	// RetryMaxBackoff is the maximum delay between retry attempts.
 	RetryMaxBackoff time.Duration
-	// Timeout bounds the complete GitHub API operation and each HTTP request.
+	// RequestTimeout bounds a single HTTP request to the GitHub API,
+	// including its redirects and body read. It does not bound the
+	// operation as a whole: listing a large organisation is many requests.
+	RequestTimeout time.Duration
+	// TotalTimeout bounds the complete operation — every page, every retry
+	// and every backoff between them. It must be at least RequestTimeout,
+	// and wants to be far larger: an organisation with 5,000 repositories
+	// is 50 pages at 100 per page, and a rate-limited run spends most of
+	// its budget waiting rather than transferring.
+	TotalTimeout time.Duration
+	// Timeout is the pre-v0.0.29 single knob, which was applied as both of
+	// the above at once. Kept so an embedder compiled against the old
+	// field keeps working: when it is set and the two fields above are
+	// not, it supplies both.
+	//
+	// Deprecated: set RequestTimeout and TotalTimeout instead.
 	Timeout time.Duration
 }
 
 const (
-	fetchReposTimeout      = 30 * time.Second
+	// defaultRequestTimeout bounds one HTTP request. 30s is generous for a
+	// single GitHub API call and short enough that a hung connection is
+	// noticed rather than waited on.
+	defaultRequestTimeout = 30 * time.Second
+	// defaultTotalTimeout bounds the whole paginated operation.
+	//
+	// The previous single 30s budget covered every page *and* every
+	// backoff, so a large organisation could not be listed at all: 50
+	// pages plus retries do not fit, and the run died with a context
+	// error that named no cause. 10 minutes fits a listing of any
+	// plausible size with room for the retry schedule.
+	defaultTotalTimeout    = 10 * time.Minute
 	defaultRetryMax        = 4
 	defaultRetryMinBackoff = 500 * time.Millisecond
 	defaultRetryMaxBackoff = 8 * time.Second
@@ -145,11 +171,14 @@ func FetchReposWithOptions(ctx context.Context, owner string, opts FetchOptions)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	// The whole operation gets TotalTimeout; each request inside it gets
+	// RequestTimeout. Applying one value to both is what made the retry
+	// path below unreachable.
+	ctx, cancel := context.WithTimeout(ctx, opts.TotalTimeout)
 	defer cancel()
 
 	httpClient := &http.Client{
-		Timeout: opts.Timeout,
+		Timeout: opts.RequestTimeout,
 		Transport: &retryTransport{
 			base:       http.DefaultTransport,
 			maxRetries: opts.RetryMax,
@@ -476,6 +505,26 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if wait <= 0 {
 			wait = t.backoff(attempt)
 		}
+
+		// Sleeping past the operation's deadline helps nobody: the wait is
+		// guaranteed to lose the race below, and the caller then sees a bare
+		// "context deadline exceeded" that names neither the rate limit nor
+		// when it lifts. Report it now, while the reason is still known.
+		//
+		// This is the branch that could not previously be reached at all:
+		// with one 30s budget covering both the request and the whole
+		// operation, a reset further out than the remaining time always lost,
+		// so the rate-limit handling never completed a single wait.
+		if deadline, ok := req.Context().Deadline(); ok {
+			if remaining := time.Until(deadline); wait > remaining {
+				return nil, &RetryBudgetError{
+					Wait:      wait,
+					Remaining: remaining,
+					Status:    statusOf(resp),
+				}
+			}
+		}
+
 		timer := time.NewTimer(wait)
 		select {
 		case <-req.Context().Done():
@@ -484,6 +533,41 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		case <-timer.C:
 		}
 	}
+}
+
+// RetryBudgetError reports that a retry was required but could not be
+// waited out inside the operation's remaining time. It carries the numbers
+// so the message can tell the user what to raise, rather than leaving them
+// with a deadline error and no cause.
+type RetryBudgetError struct {
+	// Wait is how long the server asked us to wait.
+	Wait time.Duration
+	// Remaining is how much of --api-total-timeout was left.
+	Remaining time.Duration
+	// Status is the HTTP status that triggered the retry, or 0 for a
+	// transport error.
+	Status int
+}
+
+// Error implements the error interface.
+func (e *RetryBudgetError) Error() string {
+	reason := "the server asked us to back off"
+	if e.Status == http.StatusForbidden || e.Status == http.StatusTooManyRequests {
+		reason = "GitHub rate-limited this token"
+	}
+	return fmt.Sprintf(
+		"%s for %s, but only %s of the total budget remained; "+
+			"raise --api-total-timeout above %s to wait it out",
+		reason, e.Wait.Round(time.Second), e.Remaining.Round(time.Second),
+		e.Wait.Round(time.Second))
+}
+
+// statusOf returns resp's status code, or 0 when there is no response.
+func statusOf(resp *http.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.StatusCode
 }
 
 func (t *retryTransport) backoff(attempt int) time.Duration {
@@ -667,8 +751,28 @@ func normalizeFetchOptions(opts FetchOptions) FetchOptions {
 	if opts.RetryMaxBackoff < opts.RetryMinBackoff {
 		opts.RetryMaxBackoff = opts.RetryMinBackoff
 	}
-	if opts.Timeout <= 0 {
-		opts.Timeout = fetchReposTimeout
+	// The deprecated single knob supplies both halves when the caller set
+	// it and nothing else, so an embedder that has not migrated keeps the
+	// behaviour it had.
+	if opts.Timeout > 0 {
+		if opts.RequestTimeout <= 0 {
+			opts.RequestTimeout = opts.Timeout
+		}
+		if opts.TotalTimeout <= 0 {
+			opts.TotalTimeout = opts.Timeout
+		}
+	}
+	if opts.RequestTimeout <= 0 {
+		opts.RequestTimeout = defaultRequestTimeout
+	}
+	if opts.TotalTimeout <= 0 {
+		opts.TotalTimeout = defaultTotalTimeout
+	}
+	// A total smaller than a single request cannot be satisfied: the first
+	// request would outlive the operation. Raise it rather than fail, so a
+	// caller passing only RequestTimeout gets something coherent.
+	if opts.TotalTimeout < opts.RequestTimeout {
+		opts.TotalTimeout = opts.RequestTimeout
 	}
 	return opts
 }
