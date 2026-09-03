@@ -518,26 +518,22 @@ func TestExtractRepoTruncatesAtTheFileCap(t *testing.T) {
 	}
 }
 
-func TestExtractRepoUnreadableFile(t *testing.T) {
-	root := writeRepo(t, map[string]string{
-		"ok.go":  "package p\n\nfunc OK() {}\n",
-		"bad.go": "package p\n\nfunc Bad() {}\n",
-	})
-	// Make one file unreadable; it should contribute nothing without
-	// failing the extraction.
-	if err := os.Chmod(filepath.Join(root, "bad.go"), 0o000); err != nil {
-		t.Skipf("cannot chmod on this platform: %v", err)
+// TestParseOneSurvivesAnUnreadableFile covers the read-error branch.
+//
+// A directory named like a source file is the portable way to make
+// os.ReadFile fail while os.Stat succeeds: chmod(0o000) does not work on
+// Windows, which honours only a read-only bit and left the file perfectly
+// readable — this test failed there for exactly that reason.
+//
+// parseOne is called directly because the walk skips directories, so
+// ExtractRepo would never hand this path to it.
+func TestParseOneSurvivesAnUnreadableFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "directory.go"), 0o750); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "bad.go"), 0o600) })
-
-	res, err := ExtractRepo(context.Background(), root)
-	if err != nil {
-		t.Fatalf("an unreadable file must not fail the extraction: %v", err)
-	}
-	for _, s := range res.Symbols {
-		if s.Name == "Bad" {
-			t.Error("an unreadable file should contribute nothing")
-		}
+	if got := parseOne(root, "directory.go"); got != nil {
+		t.Errorf("an unreadable path should contribute nothing, got %v", names(got))
 	}
 }
 
@@ -624,6 +620,11 @@ func TestTypeNameExoticReceivers(t *testing.T) {
 
 // TestExtractRepoUnreadableSubtree covers the walk's error branch: an
 // unreadable directory is skipped, not fatal.
+//
+// Meaningful on Unix only. Windows honours a read-only bit rather than
+// POSIX permissions, so the chmod is a no-op there and the test degrades
+// to asserting the readable half still indexes — which is true either way.
+// Coverage is measured on Linux, where the branch is genuinely taken.
 func TestExtractRepoUnreadableSubtree(t *testing.T) {
 	root := writeRepo(t, map[string]string{
 		"ok.go":           "package p\n\nfunc OK() {}\n",
