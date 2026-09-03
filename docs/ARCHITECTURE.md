@@ -31,6 +31,7 @@ internal/tui         Bubble Tea progress view and interactive selector
 internal/mcp         the MCP server: index, tools, resources, audit
 internal/diag        levelled diagnostics, always to stderr
 internal/sanitize    bounds and de-fangs untrusted strings
+internal/symbols     declaration extraction: where a symbol is defined
 ```
 
 Dependencies run one way:
@@ -124,16 +125,44 @@ the base directory.
 
 ## The MCP server
 
-Stdio JSON-RPC. Five read tools and three write tools, the write side gated
+Stdio JSON-RPC. Seven read tools and three write tools, the write side gated
 behind `--enable-mutations` and deletion behind a second flag.
 
 ```text
 Scan(root)  ──►  Index{ Repos []RepoEntry }   cached for scanTTL
                     │
                     ├─ tools:     list, find, metadata, summary, index
+                    ├─ symbols:   find_symbol, repo_overview
                     ├─ resources: workspace index, repo state, tree, file
                     └─ mutations: sync, clone, delete   (audited, gated)
 ```
+
+## The symbol index
+
+`corral_find_symbol` is the one thing this server can do that a
+single-repository code index cannot: resolve a declaration across every
+clone on the machine at once.
+
+```text
+RepoEntry.Path ──► symbols.ExtractRepo ──► []Symbol   cached, 2-minute TTL
+                     │                                 bounded to 24 repos
+                     ├─ walk:    serial, skips vendor/node_modules/generated
+                     └─ parse:   concurrent, GOMAXPROCS workers
+```
+
+Three properties are load-bearing:
+
+- **Definitions only.** A symbol is a name, a kind and a location. The agent
+  reads the file; this tells it which file and which line. A call graph
+  would be an order of magnitude more to build and to keep correct.
+- **`go/ast`, not tree-sitter.** Its Go binding is CGO, and corral builds
+  `CGO_ENABLED=0` — three of four release targets fail to cross-compile
+  with it. See [ADR-0006](adr/0006-symbol-extraction-without-cgo.md). The
+  cost is that Go is the only language indexed; the `Extractor` interface
+  exists so a second is a new file rather than a rewrite.
+- **Truncation is reported, never silent.** A repository that exceeds the
+  file or symbol cap is named in the response, because a caller cannot
+  otherwise tell a missing symbol from an absent one.
 
 Three rules govern everything the server returns:
 

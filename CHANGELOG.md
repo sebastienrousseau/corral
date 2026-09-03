@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-repository symbol lookup.** `corral_find_symbol` resolves a
+  function, method, type, interface, constant or variable to its file and
+  line across **every** clone in the workspace, not just one. That is the
+  thing corral can do that a single-repository code index cannot, and it is
+  what the rest of the index exists to make possible.
+
+  Filter by kind, scope to a repository, match by substring, or restrict to
+  the exported surface. Methods are found by their bare name or as
+  `Receiver.Name`. Test declarations are excluded by default — on a
+  well-tested repository they outnumber everything else — and can be
+  included on request. Results are ranked exported-first and paginated, and
+  any repository whose index hit a bound is named in the response, because
+  a caller cannot otherwise tell a missing symbol from an absent one.
+
+- **`corral_repo_overview`** summarises one repository in a single call:
+  origin, file count, declaration counts by kind, and its most significant
+  exported types and functions. Cheaper and far smaller than listing the
+  tree and reading files.
+
+- **`internal/symbols`**, a declaration extractor behind an `Extractor`
+  interface. **Go only for now**: tree-sitter is the 2026 default for this
+  and was rejected, because its Go binding is CGO and corral builds
+  `CGO_ENABLED=0` — measured, three of four release targets fail to
+  cross-compile with it. `go/ast` costs no dependency, no CGO, and is the
+  same parser the compiler uses. Recorded as
+  [ADR-0006](docs/adr/0006-symbol-extraction-without-cgo.md) with what
+  would reopen it.
+
 ### Changed
 
 - **The MCP workspace scan is roughly three times faster.** A CPU profile
