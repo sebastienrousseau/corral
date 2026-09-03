@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/sebastienrousseau/corral/internal/diag"
@@ -183,16 +182,65 @@ func Scan(root string) (*Index, error) {
 
 	idx := &Index{Root: absRoot}
 
-	// Discovery collects paths; enrichment reads them. They are separate
-	// phases because they are bound by different things — see enrichEntries.
-	var found []string
+	// Discovery and enrichment run as a pipeline, not as two passes.
+	//
+	// The walk hands each repository to a pool the moment it finds one, so
+	// a worker opens that repository's .git/config while its directory is
+	// still hot from the walk that just stat'd it. Collecting every path
+	// first and enriching afterwards threw that locality away: it was
+	// measurably slower on a small workspace than doing the work inline,
+	// even with the fan-out disabled.
+	//
+	// Workers append in whatever order they finish. That is safe because
+	// the sort below — which this function has always done — is what
+	// establishes determinism, not the order of arrival.
+	work := make(chan string, scanQueueDepth)
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		maxPool = scanWorkers()
+		pool    int
+	)
+	spawn := func() {
+		pool++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Accumulate locally and merge once, so the lock is taken per
+			// worker rather than per repository.
+			var local []RepoEntry
+			for path := range work {
+				local = append(local, buildEntry(absRoot, path))
+			}
+			if len(local) == 0 {
+				return
+			}
+			mu.Lock()
+			idx.Repos = append(idx.Repos, local...)
+			mu.Unlock()
+		}()
+	}
+	// A small pool up front, grown under backpressure.
+	//
+	// Neither extreme is right. Starting at the full pool makes a
+	// ten-repository workspace pay for two dozen goroutines and their
+	// result slices, which showed up as +14% allocations. Starting at one
+	// leaves that same workspace enriching serially, which cost 7% in
+	// wall time — the walk is fast enough that even ten repositories
+	// benefit from overlap. Seeding a handful captures the overlap
+	// immediately and lets the queue ask for the rest.
+	for i := 0; i < initialScanWorkers && i < maxPool; i++ {
+		spawn()
+	}
+
+	found := 0
 
 	// Per-entry errors inside the walk are swallowed (logged or ignored)
 	// because the walk is best-effort discovery, not a transactional
 	// scan: surfacing every unreadable directory would force the agent
 	// into noise.
 	_ = walkIndex(absRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if len(found) >= maxIndexRepos {
+		if found >= maxIndexRepos {
 			idx.Truncated = true
 			return fs.SkipAll
 		}
@@ -229,13 +277,24 @@ func Scan(root string) (*Index, error) {
 		}
 		// Accept both regular clones and linked worktrees (.git is a file).
 		if git.IsRepository(path) {
-			found = append(found, path)
+			found++
+			// Grow the pool only when the queue is genuinely backed up,
+			// which is the signal that enrichment is behind the walk.
+			select {
+			case work <- path:
+			default:
+				if pool < maxPool {
+					spawn()
+				}
+				work <- path
+			}
 			return fs.SkipDir
 		}
 		return nil
 	})
 
-	idx.Repos = enrichEntries(absRoot, found)
+	close(work)
+	wg.Wait()
 
 	sort.Slice(idx.Repos, func(i, j int) bool {
 		return idx.Repos[i].RelPath < idx.Repos[j].RelPath
@@ -243,39 +302,35 @@ func Scan(root string) (*Index, error) {
 	return idx, nil
 }
 
-// minParallelScan is the repository count below which enrichment stays
-// serial. Spawning workers to read a handful of files costs more than the
-// overlap returns.
-//
-// A measured trade, stated rather than hidden. Splitting discovery from
-// enrichment costs a very small workspace some walk-time locality: on a
-// 10-repository tree the scan goes from a median 0.95ms to 1.36ms, about
-// 0.4ms, and preallocating the discovery slice does not recover it
-// (p=1.000), so it is the locality and not the allocation. Against that,
-// 1,000 repositories go from 103ms to 33ms, and the spread collapses from
-// ±19% — with a tail to 3.1ms — to ±3%.
-//
-// 0.4ms sits behind a 5-second scan cache and beneath anything a caller can
-// perceive. 70ms on every uncached tool call does not.
-const minParallelScan = 16
+// initialScanWorkers is the pool the walk starts with, before any
+// backpressure. Enough to overlap enrichment with the walk on a small
+// workspace without allocating a slice per idle worker.
+const initialScanWorkers = 4
 
-// scanWorkers bounds how many repositories are enriched at once.
+// scanQueueDepth buffers the walk's handoff to the pool.
 //
-// Deliberately a multiple of GOMAXPROCS rather than equal to it. A profile
-// of the previous serial scan put 97% of its samples in syscalls and
-// essentially none in user code: every worker spends its time waiting on
-// the filesystem, not computing, so oversubscribing the cores is what
-// actually overlaps the waiting. The cap keeps a workspace with thousands
-// of repositories from opening an unreasonable number of files at once.
-//
-// A var so a test can pin it and make the ordering assertions deterministic.
-var scanWorkers = func() int {
-	return clampWorkers(runtime.GOMAXPROCS(0) * 4)
-}
+// Deliberately shallow. The queue filling is the signal that enrichment has
+// fallen behind the walk, and it is what grows the pool — so a deep buffer
+// would absorb the backpressure and leave a single worker draining a large
+// workspace on its own.
+const scanQueueDepth = 16
 
 // maxScanWorkers caps the pool regardless of core count, so a machine with
 // many cores does not open an unreasonable number of files at once.
 const maxScanWorkers = 32
+
+// scanWorkers bounds how many repositories are enriched at once.
+//
+// Deliberately a multiple of GOMAXPROCS rather than equal to it. A profile
+// of the original serial scan put 97% of its samples in syscalls and
+// essentially none in user code: every worker spends its time waiting on
+// the filesystem, not computing, so oversubscribing the cores is what
+// actually overlaps the waiting.
+//
+// A var so a test can pin it.
+var scanWorkers = func() int {
+	return clampWorkers(runtime.GOMAXPROCS(0) * 4)
+}
 
 // clampWorkers bounds a proposed worker count to [1, maxScanWorkers].
 //
@@ -290,59 +345,6 @@ func clampWorkers(n int) int {
 		return 1
 	}
 	return n
-}
-
-// enrichEntries turns discovered repository paths into index entries,
-// reading each one's .git/config and sync sidecar concurrently.
-//
-// The walk that produced paths stays serial: it reads directory entries,
-// which the kernel already caches, and parallelising it buys nothing. The
-// enrichment is the expensive half — two file opens per repository, and on
-// a 1,000-repository workspace it was 48% of total scan time with
-// RemoteOriginFromConfig alone accounting for 35%.
-//
-// Results are written to a preallocated slice by index, so the output order
-// is the discovery order regardless of which worker finishes first, and no
-// mutex is needed.
-func enrichEntries(root string, paths []string) []RepoEntry {
-	if len(paths) == 0 {
-		return nil
-	}
-	out := make([]RepoEntry, len(paths))
-
-	// Below the threshold the goroutines cost more than the overlap saves.
-	// Measured on a 10-repository workspace, fanning out was consistently
-	// slower than not; the crossover sits well under 100, and most people
-	// have far more than that.
-	if len(paths) < minParallelScan {
-		for i, p := range paths {
-			out[i] = buildEntry(root, p)
-		}
-		return out
-	}
-
-	workers := scanWorkers()
-	if workers > len(paths) {
-		workers = len(paths)
-	}
-
-	var next atomic.Int64
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for w := 0; w < workers; w++ {
-		go func() {
-			defer wg.Done()
-			for {
-				i := int(next.Add(1)) - 1
-				if i >= len(paths) {
-					return
-				}
-				out[i] = buildEntry(root, paths[i])
-			}
-		}()
-	}
-	wg.Wait()
-	return out
 }
 
 // buildEntry constructs a RepoEntry from a discovered repository path,
