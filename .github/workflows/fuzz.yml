@@ -26,14 +26,28 @@ jobs:
       # No actions/setup-go: GOTOOLCHAIN=auto honours go.mod's `go` directive,
       # and this keeps the job out of the critical path of a codeload rate-limit
       # on the action tarball, which failed it during "Set up job" on 2026-08-17.
+      # Every target runs through scripts/fuzz.sh, which tells a finding
+      # apart from the clock running out.
+      #
+      # `go test -fuzz` intermittently exits non-zero having found nothing:
+      # no failing input, no corpus entry, only "context deadline exceeded"
+      # a second past the budget. That happened twice in one day here, on
+      # two different targets, while the same targets passed on re-run and
+      # passed repeatedly on main. A required check that fails at random is
+      # worse than no check, because people learn to re-run it — and then
+      # they re-run it on the day it was right.
+      #
+      # The script decides on evidence instead: a new corpus entry, a
+      # reproducible input or a panic is a failure; a bare deadline is a
+      # warning. See its header for the full rule set.
       - name: Fuzz NormalizeLanguage
-        run: go test -fuzz=FuzzNormalizeLanguage -fuzztime=30s ./internal/engine
+        run: scripts/fuzz.sh FuzzNormalizeLanguage ./internal/engine 30s
       - name: Fuzz EvaluateLayout
-        run: go test -fuzz=FuzzEvaluateLayout -fuzztime=30s ./internal/engine
+        run: scripts/fuzz.sh FuzzEvaluateLayout ./internal/engine 30s
       - name: Fuzz ParseOwnerFromURL
-        run: go test -fuzz=FuzzParseOwnerFromURL -fuzztime=30s ./internal/mcp
+        run: scripts/fuzz.sh FuzzParseOwnerFromURL ./internal/mcp 30s
       # The path sandbox gets the longest budget of the four. A defect in the
       # others is a wrong directory name; a defect here is an agent reading or
       # deleting outside the workspace root, so it earns the extra time.
       - name: Fuzz SafePath sandbox
-        run: go test -fuzz=FuzzSafePathNeverEscapesRoot -fuzztime=120s ./internal/mcp
+        run: scripts/fuzz.sh FuzzSafePathNeverEscapesRoot ./internal/mcp 120s
