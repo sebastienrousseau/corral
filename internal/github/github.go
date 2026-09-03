@@ -309,7 +309,7 @@ func resolveListingKind(ctx context.Context, client *gh.Client, owner string) (l
 // listing kind. Every endpoint is paged 100 at a time.
 func newPageFetcher(ctx context.Context, client *gh.Client, owner string, opts FetchOptions, kind listingKind) pageFetcher {
 	return func(p int) ([]*gh.Repository, *gh.Response, error) {
-		listOpts := gh.ListOptions{Page: p, PerPage: 100}
+		listOpts := gh.ListOptions{Page: p, PerPage: perPage}
 		switch {
 		case kind.search:
 			result, resp, err := client.Search.Repositories(ctx, owner, &gh.SearchOptions{
@@ -358,19 +358,52 @@ func (c *repoCollector) wants() bool {
 	return c.limit == 0 || len(c.repos) < c.limit
 }
 
+// remaining reports how many more repositories the collector can accept,
+// or 0 when it is unlimited. Used to decide how many pages are worth
+// fetching at all.
+func (c *repoCollector) remaining() int {
+	if c.limit == 0 {
+		return 0
+	}
+	if n := c.limit - len(c.repos); n > 0 {
+		return n
+	}
+	return 0
+}
+
 // absorb maps and filters one page of API results into the collection.
 func (c *repoCollector) absorb(page []*gh.Repository) {
 	for _, r := range page {
 		if !c.wants() {
 			return
 		}
-		repo := mapRepository(r)
-		if !matchesFilters(repo, c.includeLang, c.excludeLang, c.opts) {
-			continue
-		}
-		c.repos = append(c.repos, repo)
+		c.take(mapRepository(r))
 	}
 }
+
+// absorbMapped filters an already-mapped page into the collection. The
+// concurrent fetch maps inside its workers so it never holds a page of
+// go-github Repository values longer than it must.
+func (c *repoCollector) absorbMapped(page []Repo) {
+	for _, repo := range page {
+		if !c.wants() {
+			return
+		}
+		c.take(repo)
+	}
+}
+
+// take applies the filters and keeps the repository if it passes.
+func (c *repoCollector) take(repo Repo) {
+	if !matchesFilters(repo, c.includeLang, c.excludeLang, c.opts) {
+		return
+	}
+	c.repos = append(c.repos, repo)
+}
+
+// perPage is the listing page size. GitHub's maximum, so a large
+// organisation costs the fewest possible round-trips.
+const perPage = 100
 
 // maxConcurrentPageFetches bounds how many listing pages are requested at
 // once. Five keeps a large organisation responsive without tripping GitHub's
@@ -385,10 +418,36 @@ var maxConcurrentPageFetches = 5
 // in flight, and absorbs them in page order so the result stays
 // deterministic regardless of completion order.
 func collectConcurrently(ctx context.Context, owner string, fetchPage pageFetcher, lastPage int, collector *repoCollector) error {
+	// Only fetch as far as the limit can consume.
+	//
+	// Page 1 is already absorbed, so the collector needs at most
+	// ceil(remaining / perPage) more pages. Without this,
+	// `corralctl bigorg --limit 10` against a 5,000-repository
+	// organisation fetched all 50 pages to keep 10 repositories — 49
+	// wasted round-trips against a rate limit, on every run.
+	//
+	// The cap is deliberately generous: filters (forks, archived,
+	// language) are applied after mapping, so a page can contribute fewer
+	// repositories than it holds. Overshooting by a page costs one
+	// request; undershooting would silently truncate the result.
+	if collector.limit > 0 {
+		want := collector.remaining()
+		if want == 0 {
+			// Already full. The caller guards this with wants(), so this is
+			// belt-and-braces — but "fetch every page" is the wrong thing to
+			// do when the answer is "fetch none".
+			return nil
+		}
+		needed := (want+perPage-1)/perPage + 1
+		if capped := 1 + needed; capped < lastPage {
+			lastPage = capped
+		}
+	}
+
 	var (
 		mu         sync.Mutex
 		errs       []error
-		resultsMap = make(map[int][]*gh.Repository)
+		resultsMap = make(map[int][]Repo)
 		sem        = make(chan struct{}, maxConcurrentPageFetches)
 		wg         sync.WaitGroup
 	)
@@ -407,13 +466,27 @@ func collectConcurrently(ctx context.Context, owner string, fetchPage pageFetche
 
 			pRepos, _, pErr := fetchPage(pNum)
 
+			// Map to the trimmed Repo before storing. go-github's
+			// Repository carries ~100 fields, nearly all pointers, and
+			// holding every page of them live at once was the peak of the
+			// fetch: a 5,000-repository listing kept 50 pages of full API
+			// objects in memory simultaneously, to preserve an ordering
+			// that a []Repo preserves just as well.
+			var mapped []Repo
+			if pErr == nil {
+				mapped = make([]Repo, 0, len(pRepos))
+				for _, r := range pRepos {
+					mapped = append(mapped, mapRepository(r))
+				}
+			}
+
 			mu.Lock()
 			defer mu.Unlock()
 			if pErr != nil {
 				errs = append(errs, pErr)
 				return
 			}
-			resultsMap[pNum] = pRepos
+			resultsMap[pNum] = mapped
 		}(p)
 	}
 	wg.Wait()
@@ -422,8 +495,10 @@ func collectConcurrently(ctx context.Context, owner string, fetchPage pageFetche
 		return fmt.Errorf("failed listing repositories for '%s' (concurrent fetch failed): %w", owner, errs[0])
 	}
 
+	// Absorbed in page order, so the result is the same regardless of
+	// which worker finished first.
 	for p := 2; p <= lastPage; p++ {
-		collector.absorb(resultsMap[p])
+		collector.absorbMapped(resultsMap[p])
 	}
 	return nil
 }
