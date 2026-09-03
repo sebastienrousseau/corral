@@ -58,6 +58,8 @@ var (
 	retryMinBackoff     time.Duration
 	retryMaxBackoff     time.Duration
 	apiTimeout          time.Duration
+	apiRequestTimeout   time.Duration
+	apiTotalTimeout     time.Duration
 	logLevel            string
 	osExit              = os.Exit
 	engineRun           = engine.Run
@@ -69,7 +71,7 @@ var rootCmd = &cobra.Command{
 	Short: "Automatically clone and organise GitHub repositories by owner, topic, or language.",
 	Args:  validateRootArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
-		return validateCommonFlags()
+		return validateCommonFlags(cmd)
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		owner := args[0]
@@ -151,7 +153,8 @@ var rootCmd = &cobra.Command{
 				RetryMax:         retryMax,
 				RetryMinBackoff:  retryMinBackoff,
 				RetryMaxBackoff:  retryMaxBackoff,
-				Timeout:          apiTimeout,
+				RequestTimeout:   apiRequestTimeout,
+				TotalTimeout:     apiTotalTimeout,
 				Type:             filterType,
 				Sort:             filterSort,
 			},
@@ -455,7 +458,7 @@ func levenshtein(a, b string) int {
 // same checks. Those commands consume the same variables, but validated none of
 // them: a profile setting concurrency to -1 reached engine.Run, which printed
 // an error and terminated the process rather than failing the command cleanly.
-func validateCommonFlags() error {
+func validateCommonFlags(cmd *cobra.Command) error {
 
 	protocol = strings.ToLower(strings.TrimSpace(protocol))
 	output = strings.ToLower(strings.TrimSpace(output))
@@ -483,8 +486,8 @@ func validateCommonFlags() error {
 	if retryMaxBackoff < retryMinBackoff {
 		return fmt.Errorf("--retry-max-backoff must be >= --retry-min-backoff")
 	}
-	if apiTimeout <= 0 {
-		return fmt.Errorf("--api-timeout must be > 0")
+	if err := resolveAPITimeouts(cmd); err != nil {
+		return err
 	}
 	if protocol != "https" && protocol != "ssh" {
 		return fmt.Errorf("--protocol must be either ssh or https")
@@ -527,3 +530,65 @@ func validateCommonFlags() error {
 // step with `--help` instead of drifting as hand-written files do. Callers must
 // treat the result as read-only; mutating it changes what the CLI does.
 func RootCommand() *cobra.Command { return rootCmd }
+
+// deprecationWarning is indirected so tests can capture what a user would
+// see on stderr without racing the real stream.
+var deprecationWarning = func(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+}
+
+// resolveAPITimeouts validates the timeout flags and applies the deprecated
+// --api-timeout when it is the only one given.
+//
+// --api-timeout was documented as "GitHub API request deadline" and applied
+// as both the per-request deadline and the deadline for the entire
+// paginated fetch. An organisation large enough to need 50 pages could not
+// be listed at all, and the help text gave the user no reason to raise the
+// value, because they believed it governed one request. It also made the
+// rate-limit retry unreachable: a reset further out than the remaining
+// budget always lost the race.
+//
+// The two are now separate. --api-timeout still works for at least one
+// minor release, supplying both halves so behaviour is unchanged for anyone
+// who set it deliberately.
+// cmd is the command being validated, used only to ask which flags the
+// user actually typed. It may be nil, which is treated as "nothing typed".
+func resolveAPITimeouts(cmd *cobra.Command) error {
+	changed := func(name string) bool {
+		return cmd != nil && cmd.Flags().Changed(name)
+	}
+	requestSet := changed("api-request-timeout")
+	totalSet := changed("api-total-timeout")
+
+	if apiTimeout > 0 {
+		deprecationWarning(
+			"corralctl: --api-timeout is deprecated and will be removed in a future release.\n"+
+				"  It was applied to every request AND to the whole paginated fetch, so a large\n"+
+				"  organisation could not be listed at all. Use:\n"+
+				"    --api-request-timeout %s   (one request)\n"+
+				"    --api-total-timeout %s     (the whole fetch, including retries)",
+			apiTimeout, apiTimeout)
+		if !requestSet {
+			apiRequestTimeout = apiTimeout
+		}
+		if !totalSet {
+			apiTotalTimeout = apiTimeout
+		}
+	} else if apiTimeout < 0 {
+		return fmt.Errorf("--api-timeout must be > 0")
+	}
+
+	if apiRequestTimeout <= 0 {
+		return fmt.Errorf("--api-request-timeout must be > 0")
+	}
+	if apiTotalTimeout <= 0 {
+		return fmt.Errorf("--api-total-timeout must be > 0")
+	}
+	if apiTotalTimeout < apiRequestTimeout {
+		return fmt.Errorf(
+			"--api-total-timeout (%s) must be >= --api-request-timeout (%s): "+
+				"the whole fetch cannot be shorter than one request within it",
+			apiTotalTimeout, apiRequestTimeout)
+	}
+	return nil
+}

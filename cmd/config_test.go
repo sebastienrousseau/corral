@@ -222,7 +222,7 @@ func TestKnownFlagNamesSpansSubcommands(t *testing.T) {
 // TestProfileSettingsAreValidatedLikeFlags replaces the validation that used to
 // live in validateProfile as a hand-written allow-list covering five fields.
 // A value from a profile now goes through the flag's parser and then
-// validateCommonFlags(), i.e. the same path as a value typed on the command
+// validateCommonFlags(nil), i.e. the same path as a value typed on the command
 // line — so every setting is checked, not just the five that were mapped.
 func TestProfileSettingsAreValidatedLikeFlags(t *testing.T) {
 	cases := []struct {
@@ -243,7 +243,7 @@ func TestProfileSettingsAreValidatedLikeFlags(t *testing.T) {
 				// Some values are rejected by the parser itself, which is also correct.
 				return
 			}
-			err := validateCommonFlags()
+			err := validateCommonFlags(nil)
 			if err == nil {
 				t.Fatalf("%v should have been rejected", tc.settings)
 			}

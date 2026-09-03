@@ -180,11 +180,31 @@ func TestRootTypeSortValidation(t *testing.T) {
 }
 
 func TestRootAPITimeoutValidation(t *testing.T) {
-	old := apiTimeout
-	t.Cleanup(func() { apiTimeout = old })
+	oldReq, oldTotal, oldDep := apiRequestTimeout, apiTotalTimeout, apiTimeout
+	t.Cleanup(func() {
+		apiRequestTimeout, apiTotalTimeout, apiTimeout = oldReq, oldTotal, oldDep
+	})
+
+	// A non-positive request timeout is still rejected.
 	apiTimeout = 0
+	apiTotalTimeout = 10 * time.Minute
+	apiRequestTimeout = 0
 	if err := rootCmd.PreRunE(rootCmd, []string{"owner"}); err == nil {
-		t.Fatal("expected non-positive API timeout error")
+		t.Fatal("expected an error for a non-positive --api-request-timeout")
+	}
+
+	// So is a non-positive total.
+	apiRequestTimeout = 30 * time.Second
+	apiTotalTimeout = 0
+	if err := rootCmd.PreRunE(rootCmd, []string{"owner"}); err == nil {
+		t.Fatal("expected an error for a non-positive --api-total-timeout")
+	}
+
+	// A zero deprecated flag means "not set", not "invalid": it is the
+	// default now that the knob it replaced has been split in two.
+	apiRequestTimeout, apiTotalTimeout, apiTimeout = 30*time.Second, 10*time.Minute, 0
+	if err := rootCmd.PreRunE(rootCmd, []string{"owner"}); err != nil {
+		t.Fatalf("an unset --api-timeout must not be an error: %v", err)
 	}
 }
 

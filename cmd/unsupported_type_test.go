@@ -22,7 +22,7 @@ func TestUnsupportedRepoTypeIsRefused(t *testing.T) {
 		resetFlagState()
 		repoType = value
 
-		err := validateCommonFlags()
+		err := validateCommonFlags(nil)
 		if err == nil {
 			t.Errorf("--type %q was accepted; it can never match", value)
 			continue
@@ -50,7 +50,7 @@ func TestSupportedRepoTypesStillValidate(t *testing.T) {
 	for _, value := range append([]string{""}, repoTypeValues...) {
 		resetFlagState()
 		repoType = value
-		if err := validateCommonFlags(); err != nil {
+		if err := validateCommonFlags(nil); err != nil {
 			t.Errorf("--type %q was rejected: %v", value, err)
 		}
 	}

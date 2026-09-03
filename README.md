@@ -474,7 +474,9 @@ corralctl <owner> [base_dir] [limit]
 | `--languages` | — | — | Comma-separated language filter (e.g. `go,rust`) |
 | `--exclude-languages`| — | — | Comma-separated language exclude list |
 | `--clone-depth` | — | `0` | Shallow clone depth (`0` disables shallow clone) |
-| `--api-timeout` | — | `30s` | Deadline for GitHub API operations |
+| `--api-request-timeout` | — | `30s` | Deadline for a single GitHub API request |
+| `--api-total-timeout` | — | `10m` | Deadline for the whole paginated fetch, including retries and backoff |
+| `--api-timeout` | — | — | **Deprecated.** Was applied to both of the above at once, capping a whole listing at 30s. Sets both when given; warns on stderr |
 | `--log-level` | — | `info` | Diagnostic verbosity on stderr: `error`, `warn`, `info`, `debug` |
 
 ### Diagnostics
