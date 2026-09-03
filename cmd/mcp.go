@@ -34,15 +34,29 @@ var mcpCmd = &cobra.Command{
 
 The server exposes the local Corral-organised workspace (cloned
 repositories under the configured base directory) to AI coding agents
-through five read-only tools and four resources. No network calls are
+through seven read-only tools and four resources. No network calls are
 made and the GitHub API is not contacted.
 
 Tools:
+  corral_find_symbol       - where a symbol is defined, across EVERY clone
+  corral_repo_overview     - one repository's shape in a single call
   corral_list_repos        - filter clones by visibility/language/name
   corral_find_repo         - resolve a fuzzy name to one clone
   corral_get_repo_metadata - detailed info incl. current branch
   corral_status_summary    - aggregate counts by visibility + language
   corral_workspace_index   - full workspace index as JSON
+
+corral_find_symbol is the one a single-repository code index cannot
+offer: it resolves a function, method, type, interface, constant or
+variable across the whole workspace at once. Go sources are indexed.
+
+Write tools, registered only with --enable-mutations, and audited:
+  corral_sync_repo         - git pull one clone
+  corral_clone_repo        - clone into the workspace
+  corral_delete_repo       - remove one clone; additionally requires
+                             --enable-destructive-mutations, and refuses
+                             when the clone holds uncommitted, unpushed,
+                             stashed, gitignored or submodule work
 
 Resources:
   corral://workspace/index

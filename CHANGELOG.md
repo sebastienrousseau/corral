@@ -6,6 +6,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.28] — 2026-09-03
+
+### Security
+
+- **The MCP file resource served eight classes of credential file.** The
+  content policy was a denylist, which put the burden on the list to have
+  anticipated every credential filename in advance. An audit drove the
+  compiled binary over real MCP stdio JSON-RPC and read back, in full:
+  `.kube/config`, `kubeconfig`, `credentials.json`, `.pgpass`,
+  `terraform.tfvars`, `.htpasswd`, `.yarnrc.yml` and `deploy.ppk`. The
+  near-misses show the shape of the gap — `credentials` was refused but
+  `credentials.json` was not, `terraform.tfstate` was refused but the
+  `.tfvars` where the secrets are actually typed was not, `.npmrc` was
+  refused but `.yarnrc.yml` and its `npmAuthToken` was not.
+
+  The policy is now an allowlist with the denylist kept behind it. Source,
+  documentation and non-secret configuration are served by extension, plus
+  the conventional project files (`Makefile`, `Dockerfile`, `LICENSE`,
+  `go.mod`); everything else is refused with a message naming
+  `--allow-file-ext`, which widens the allowlist and cannot re-enable a
+  denylisted file. The denylist still matters, because some credential
+  stores wear an allowed extension. All eight paths are pinned as
+  regression tests.
+
+- **Repository names and origin URLs reached agent context verbatim.** The
+  MCP server's job is reporting what is on disk, and nearly every string it
+  reports is chosen by someone else — a directory name comes from the
+  repository's owner, and `corralctl topic:…` clones repositories the user
+  never named. A repository called
+  `SYSTEM-ignore-prior-instructions-…` is a legal GitHub name, and was
+  reproduced reaching a client's context in full, with no bound and no
+  framing. This is the runtime half of the trust gap in the 2026 MCP
+  security work: tool descriptions are reviewed once at connect time, tool
+  responses never are.
+
+  New `internal/sanitize` strips the mechanisms that make injected text
+  invisible or unbounded — C0/C1 controls including the ESC that begins
+  every ANSI sequence, bidirectional overrides and isolates, zero-width
+  characters, the BOM, and invalid UTF-8 — and bounds each field. It is
+  applied on the way out, never at construction: `RepoEntry.Path` is what
+  `SafeMutationPath` resolves and what git is handed, so the stored value
+  stays byte-exact. Sanitising cannot remove plain-language injection
+  without breaking the tool, so the server instructions now tell the model
+  that every returned value is untrusted data describing the workspace,
+  never an instruction.
+
+- **`corral_clone_repo` accepted any URL the agent supplied.** Not
+  exploitable today — git refuses `ext::` by default, verified against git
+  2.55 — but that guarantee lived in configuration corral does not own, on
+  a machine corral does not control, for a parameter an agent chooses. The
+  tool now validates the transport itself against an allowlist of `https`,
+  `ssh` and `git`, rejecting remote-helper syntax (`transport::address`),
+  `file://`, and anything beginning with `-`.
+
 ### Added
 
 - **A Nix flake**: `nix develop` for a shell with every tool the CI gates
@@ -53,6 +107,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same parser the compiler uses. Recorded as
   [ADR-0006](docs/adr/0006-symbol-extraction-without-cgo.md) with what
   would reopen it.
+
+- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
+  internal consistency: every justification in the tables must be
+  byte-identical to the one carried in the prefilled form link for the same
+  criterion, in both directions. The tables are what a reviewer reads; the
+  links are what actually reaches bestpractices.dev. Nothing but discipline
+  kept them in step, and discipline is what failed when `SECURITY.md` was
+  rewritten. Verified against a diverging justification, an orphaned table row
+  and an orphaned link.
+
+- **Manpages and shell completions**, generated from the cobra command tree
+  by `scripts/gen_docs.go` and packaged into every archive, `.deb`, `.rpm`
+  and `make install`. Eight section-1 pages (`man corralctl`,
+  `man corralctl-mcp`, one per subcommand) plus bash, zsh, fish and
+  PowerShell completions. Generated, never committed: a hand-written `.1`
+  drifts from `--help` the first time a flag changes and nothing catches
+  it. CI renders every page with `groff -ww`.
+
+- **The Unix install contract.** `PREFIX` now defaults to `/usr/local` (was
+  `$HOME/.local`) with `DESTDIR` staging, and `make uninstall` removes
+  exactly what `make install` placed. Binaries, manpages, completions and
+  docs land at FHS paths. `make install-smoke` stages the tree on a clean
+  runner and asserts its shape, as a CI gate.
+
+- **Windows binaries.** `windows/amd64` and `windows/arm64` are built and
+  published as `.zip` archives alongside the existing Linux and macOS
+  targets.
+
+- **A release dry-run.** The Release workflow accepts `workflow_dispatch`
+  with `dry_run: true`, building and packaging every artefact but stopping
+  before publish, sign and attest — so new release machinery can be proven
+  before its first real use rather than during it.
+
+- **Docs Lint workflow** — markdownlint, codespell and an offline link
+  check with fragment resolution, plus an SPDX licence-header gate over the
+  whole tree.
+
+- **Documentation the repository was missing**: `DEVELOPMENT.md` (toolchain
+  and the local equivalent of every CI gate), `docs/ARCHITECTURE.md`,
+  `docs/packaging.md` for distribution maintainers, `SUPPORT.md`,
+  `AGENTS.md` (invariants for AI-assisted contributors), `CITATION.cff`,
+  and five architecture decision records under `docs/adr/`.
+
+- **`.pre-commit-config.yaml` and `.devcontainer/`**, mirroring the cheap CI
+  gates locally and booting a Codespace to a working `make`.
+
+- **README sections** the project had no home for: a unified documentation
+  link block, an honest "when not to use Corral", the minimum-toolchain
+  *policy* rather than just the number, stability guarantees stating the
+  breaking axis as behaviour rather than signatures, and a security and
+  hardening section.
 
 ### Changed
 
@@ -124,131 +229,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set it deliberately, and warns on stderr — never stdout, which carries
   the selected output format.
 
-### Fixed
-
-- **The rate-limit retry could never complete a wait.** On a 403 with
-  `X-RateLimit-Remaining: 0`, the transport computes the wait from
-  `X-RateLimit-Reset` — which GitHub sets up to an hour out — and then
-  raced it against a context that descended from the same 30s budget. Any
-  reset further out than the remaining time was guaranteed to lose, so the
-  most carefully written branch in the retry logic was unreachable in
-  production, and secondary rate limits failed rather than backing off.
-
-  With the budget split it is reachable. A wait that still cannot fit now
-  reports immediately as a `RetryBudgetError` naming the delay, the
-  remaining budget and the flag to raise, instead of sleeping until the
-  deadline and surfacing a bare "context deadline exceeded" that named no
-  cause.
-
-## [0.0.28] — 2026-09-02
-
-### Security
-
-- **The MCP file resource served eight classes of credential file.** The
-  content policy was a denylist, which put the burden on the list to have
-  anticipated every credential filename in advance. An audit drove the
-  compiled binary over real MCP stdio JSON-RPC and read back, in full:
-  `.kube/config`, `kubeconfig`, `credentials.json`, `.pgpass`,
-  `terraform.tfvars`, `.htpasswd`, `.yarnrc.yml` and `deploy.ppk`. The
-  near-misses show the shape of the gap — `credentials` was refused but
-  `credentials.json` was not, `terraform.tfstate` was refused but the
-  `.tfvars` where the secrets are actually typed was not, `.npmrc` was
-  refused but `.yarnrc.yml` and its `npmAuthToken` was not.
-
-  The policy is now an allowlist with the denylist kept behind it. Source,
-  documentation and non-secret configuration are served by extension, plus
-  the conventional project files (`Makefile`, `Dockerfile`, `LICENSE`,
-  `go.mod`); everything else is refused with a message naming
-  `--allow-file-ext`, which widens the allowlist and cannot re-enable a
-  denylisted file. The denylist still matters, because some credential
-  stores wear an allowed extension. All eight paths are pinned as
-  regression tests.
-
-- **Repository names and origin URLs reached agent context verbatim.** The
-  MCP server's job is reporting what is on disk, and nearly every string it
-  reports is chosen by someone else — a directory name comes from the
-  repository's owner, and `corralctl topic:…` clones repositories the user
-  never named. A repository called
-  `SYSTEM-ignore-prior-instructions-…` is a legal GitHub name, and was
-  reproduced reaching a client's context in full, with no bound and no
-  framing. This is the runtime half of the trust gap in the 2026 MCP
-  security work: tool descriptions are reviewed once at connect time, tool
-  responses never are.
-
-  New `internal/sanitize` strips the mechanisms that make injected text
-  invisible or unbounded — C0/C1 controls including the ESC that begins
-  every ANSI sequence, bidirectional overrides and isolates, zero-width
-  characters, the BOM, and invalid UTF-8 — and bounds each field. It is
-  applied on the way out, never at construction: `RepoEntry.Path` is what
-  `SafeMutationPath` resolves and what git is handed, so the stored value
-  stays byte-exact. Sanitising cannot remove plain-language injection
-  without breaking the tool, so the server instructions now tell the model
-  that every returned value is untrusted data describing the workspace,
-  never an instruction.
-
-- **`corral_clone_repo` accepted any URL the agent supplied.** Not
-  exploitable today — git refuses `ext::` by default, verified against git
-  2.55 — but that guarantee lived in configuration corral does not own, on
-  a machine corral does not control, for a parameter an agent chooses. The
-  tool now validates the transport itself against an allowlist of `https`,
-  `ssh` and `git`, rejecting remote-helper syntax (`transport::address`),
-  `file://`, and anything beginning with `-`.
-
-### Added
-
-- **`manifest_check` gained a fourth rule**, guarding the OSPS document's
-  internal consistency: every justification in the tables must be
-  byte-identical to the one carried in the prefilled form link for the same
-  criterion, in both directions. The tables are what a reviewer reads; the
-  links are what actually reaches bestpractices.dev. Nothing but discipline
-  kept them in step, and discipline is what failed when `SECURITY.md` was
-  rewritten. Verified against a diverging justification, an orphaned table row
-  and an orphaned link.
-
-- **Manpages and shell completions**, generated from the cobra command tree
-  by `scripts/gen_docs.go` and packaged into every archive, `.deb`, `.rpm`
-  and `make install`. Eight section-1 pages (`man corralctl`,
-  `man corralctl-mcp`, one per subcommand) plus bash, zsh, fish and
-  PowerShell completions. Generated, never committed: a hand-written `.1`
-  drifts from `--help` the first time a flag changes and nothing catches
-  it. CI renders every page with `groff -ww`.
-
-- **The Unix install contract.** `PREFIX` now defaults to `/usr/local` (was
-  `$HOME/.local`) with `DESTDIR` staging, and `make uninstall` removes
-  exactly what `make install` placed. Binaries, manpages, completions and
-  docs land at FHS paths. `make install-smoke` stages the tree on a clean
-  runner and asserts its shape, as a CI gate.
-
-- **Windows binaries.** `windows/amd64` and `windows/arm64` are built and
-  published as `.zip` archives alongside the existing Linux and macOS
-  targets.
-
-- **A release dry-run.** The Release workflow accepts `workflow_dispatch`
-  with `dry_run: true`, building and packaging every artefact but stopping
-  before publish, sign and attest — so new release machinery can be proven
-  before its first real use rather than during it.
-
-- **Docs Lint workflow** — markdownlint, codespell and an offline link
-  check with fragment resolution, plus an SPDX licence-header gate over the
-  whole tree.
-
-- **Documentation the repository was missing**: `DEVELOPMENT.md` (toolchain
-  and the local equivalent of every CI gate), `docs/ARCHITECTURE.md`,
-  `docs/packaging.md` for distribution maintainers, `SUPPORT.md`,
-  `AGENTS.md` (invariants for AI-assisted contributors), `CITATION.cff`,
-  and five architecture decision records under `docs/adr/`.
-
-- **`.pre-commit-config.yaml` and `.devcontainer/`**, mirroring the cheap CI
-  gates locally and booting a Codespace to a working `make`.
-
-- **README sections** the project had no home for: a unified documentation
-  link block, an honest "when not to use Corral", the minimum-toolchain
-  *policy* rather than just the number, stability guarantees stating the
-  breaking axis as behaviour rather than signatures, and a security and
-  hardening section.
-
-### Changed
-
 - **doc.corrallib.com is now built by `ssg` through the Lucid theme.** The site
   was a single hand-written `public/index.html` emitted by
   `scripts/generate_docs.go`, carrying its own dark palette, its own layout and
@@ -305,6 +285,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-trimpath` and a commit-pinned `mod_timestamp`.
 
 ### Fixed
+
+- **The rate-limit retry could never complete a wait.** On a 403 with
+  `X-RateLimit-Remaining: 0`, the transport computes the wait from
+  `X-RateLimit-Reset` — which GitHub sets up to an hour out — and then
+  raced it against a context that descended from the same 30s budget. Any
+  reset further out than the remaining time was guaranteed to lose, so the
+  most carefully written branch in the retry logic was unreachable in
+  production, and secondary rate limits failed rather than backing off.
+
+  With the budget split it is reachable. A wait that still cannot fit now
+  reports immediately as a `RetryBudgetError` naming the delay, the
+  remaining budget and the flag to raise, instead of sleeping until the
+  deadline and surfacing a bare "context deadline exceeded" that named no
+  cause.
 
 - **A private repository could be filed under `Public/`.** `mapRepository`
   read only the API's `visibility` field, so a response carrying `private`
