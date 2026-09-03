@@ -15,6 +15,12 @@ an ADR documents a decision, not a diff.
 Records are immutable once merged. A decision that changes gets a new
 record superseding the old one, not an edit.
 
+A record whose *reasoning* turns out to be overstated is the one case that
+is corrected in place, in a dated section that leaves the original claim
+visible — 0006 carries one. Rewriting the argument silently would defeat
+the point of writing it down; removing the record would lose the fact that
+the decision was made on a weaker basis than it appeared.
+
 | # | Decision | Status |
 |---|---|---|
 | [0001](0001-sidecar-lives-in-the-git-directory.md) | The sync sidecar lives inside `.git/` | Accepted |
@@ -22,4 +28,4 @@ record superseding the old one, not an edit.
 | [0003](0003-sanitize-on-output-not-construction.md) | Untrusted strings are sanitised on output, not at construction | Accepted |
 | [0004](0004-file-resource-allowlist.md) | The MCP file resource serves by allowlist | Accepted |
 | [0005](0005-generated-manpages-and-completions.md) | Manpages and completions are generated, never committed | Accepted |
-| [0006](0006-symbol-extraction-without-cgo.md) | Symbol extraction uses `go/ast`, not tree-sitter | Accepted |
+| [0006](0006-symbol-extraction-without-cgo.md) | Symbol extraction uses `go/ast`, not tree-sitter | Accepted, corrected |

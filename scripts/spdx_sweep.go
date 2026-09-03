@@ -18,7 +18,8 @@
 // Comment syntax is chosen per extension, and the tool is deliberately
 // conservative about what must stay on the first line:
 //   - Go: `//`, after any `//go:build` / `// +build` constraint block.
-//   - YAML, shell, Python, Dockerfile, Makefile: `#`, after any `#!` shebang.
+//   - YAML, shell, Python, Nix, Dockerfile, Makefile: `#`, after any `#!`
+//     shebang.
 //   - Files already containing "SPDX-License-Identifier" are left alone.
 //   - vendor/, .git/, dist/, build/, node_modules/, docs-site/ and public/
 //     are skipped — the first four hold generated output, which carries the
@@ -47,7 +48,7 @@ func commentPrefix(path string) (string, bool) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
 		return "//", true
-	case ".yml", ".yaml", ".sh", ".bash", ".py", ".toml", ".cfg":
+	case ".yml", ".yaml", ".sh", ".bash", ".py", ".toml", ".cfg", ".nix":
 		return "#", true
 	}
 	switch strings.ToLower(filepath.Base(path)) {

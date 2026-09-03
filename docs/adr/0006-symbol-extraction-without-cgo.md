@@ -52,6 +52,38 @@ the same parser the compiler uses.
 The cost is real and should not be understated: **one language**. Corral
 indexes Go and nothing else until another extractor is written.
 
+## Correction — 2026-09-03
+
+The decision above stands. The argument for it was overstated, and this
+records that rather than quietly editing it, because an ADR whose
+reasoning cannot be trusted in part cannot be trusted at all.
+
+**"Three of four release targets fail without a per-target C
+cross-toolchain" framed a tooling inconvenience as though it were a
+barrier.** It is not. Supplying cross toolchains reproducibly is precisely
+what Nix does — `pkgsCross` for linux/arm64, mingw for Windows, musl for
+static linking — and this repository now ships a `flake.nix` that could
+host exactly that. More simply still: the ordinary answer to CGO
+cross-compilation is not to cross-compile at all, but to build natively on
+per-OS runners, which GitHub already provides and which sidesteps the one
+case Nix genuinely struggles with (a darwin SDK from Linux).
+
+So the honest cost of adopting tree-sitter is not "it cannot be built". It is:
+
+- **Static linking.** `CGO_ENABLED=0` is what makes the released binaries
+  fully static and the Alpine image work at all. CGO means glibc or musl
+  coupling, which is solvable and is work.
+- **Pipeline complexity.** One `goreleaser` invocation on one runner
+  becomes a matrix plus an artifact merge — on machinery this project had
+  just added a dry-run for, precisely because it is under-exercised.
+- **Dependency surface.** tree-sitter plus a grammar per language, against
+  a module that holds eleven direct dependencies and a hand-maintained
+  SBOM that CI checks.
+
+Those are real and they still point the same way for this change, because
+none of them had to be paid to ship the symbol index. But they are a
+weighing, not an impossibility, and the original text read as the latter.
+
 ## What would make this wrong
 
 Two things, either of which should reopen it:

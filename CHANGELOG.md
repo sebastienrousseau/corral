@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Nix flake**: `nix develop` for a shell with every tool the CI gates
+  need, `nix build` for the package with its manpages and completions, and
+  `nix run` to try it without installing.
+
+  The dev shell exists because of a specific failure. The devcontainer had
+  installed markdownlint, codespell and pre-commit with `pip install` and
+  `npm install -g`; Scorecard flagged those as unpinnable by hash, and the
+  resolution was to delete them — which removed capability rather than
+  securing it. Nix pins them by construction, so they are back without the
+  finding. `flake.lock` is committed.
+
+  Verified by building it in the `nixos/nix` container rather than by
+  inspection: the package installs the binary, all eight manpages and
+  bash/zsh/fish completions under the names their shells look up, and its
+  check phase runs the whole test suite — all ten packages — in a hermetic
+  sandbox. `.nix` files are now covered by the SPDX gate, proven by
+  removing the header and watching the gate fail.
+
 - **Cross-repository symbol lookup.** `corral_find_symbol` resolves a
   function, method, type, interface, constant or variable to its file and
   line across **every** clone in the workspace, not just one. That is the
