@@ -44,7 +44,7 @@ type format struct {
 var formats = []format{
 	{dir: "deb", file: ".goreleaser.yaml", marker: "nfpms:"},
 	{dir: "rpm", file: ".goreleaser.yaml", marker: "nfpms:"},
-	{dir: "aur", file: ".goreleaser.yaml", marker: "aurs:"},
+	{dir: "aur", file: "scripts/publish_aur.sh", marker: "aur.archlinux.org"},
 	{dir: "brew", file: ".goreleaser.yaml", marker: "homebrew_casks:"},
 	{dir: "nix", file: "flake.nix", marker: "buildGoModule"},
 	{dir: "docker", file: "Dockerfile", marker: "FROM"},

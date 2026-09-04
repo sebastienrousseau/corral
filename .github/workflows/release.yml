@@ -219,3 +219,49 @@ jobs:
           # even after the publisher itself was fixed.
           mcp-publisher login github-oidc
           mcp-publisher publish
+
+  # AUR is published in its own job, after the release has succeeded.
+  #
+  # It is deliberately not part of the release job: aur.archlinux.org
+  # being unreachable for an hour must not cost a release its artefacts,
+  # its signatures or its attestations. goreleaser's aur pipe therefore
+  # runs with skip_upload, and the push happens here.
+  #
+  # The previous arrangement stopped at "generated in dist for manual
+  # publishing", and manual publishing happened exactly once: the AUR
+  # package sat at 0.0.13 while the project shipped 0.0.32. A step nobody
+  # is scheduled to run is a step that does not happen.
+  #
+  # continue-on-error keeps the original guarantee — this cannot fail the
+  # release — while making the attempt automatic. A failure is visible on
+  # the run rather than silent.
+  aur:
+    name: Publish to the AUR
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          show-progress: false
+
+      - name: Publish
+        env:
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AUR_KEY}" ]]; then
+            # Said out loud rather than skipped quietly. A missing key is
+            # a configuration problem somebody has to fix, and reporting
+            # success without publishing is how the registry entry and
+            # this package both went stale for twenty releases.
+            echo "::warning::AUR_KEY is not set; the AUR package will not be updated" >&2
+            exit 1
+          fi
+          bash scripts/publish_aur.sh "${GITHUB_REF_NAME#v}"
