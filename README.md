@@ -353,12 +353,15 @@ Where GitHub's own MCP server covers the remote API surface (issues, PRs, search
 - `corral_get_repo_metadata` — Full metadata for one clone, including current branch
 - `corral_status_summary` — Workspace summary: counts by visibility and language
 - `corral_workspace_index` — Full structured index in a single call
+- `corral_find_symbol` — Where a symbol is declared, across *every* clone
+- `corral_search_code` — Where text appears, across *every* clone
+- `corral_repo_overview` — One repository's shape in a single call
 
 **Write tools (v0.0.12, opt-in via `--enable-mutations`):**
 
 - `corral_sync_repo` — Runs `git pull --rebase --autostash` against one clone
 - `corral_clone_repo` — Clones a URL into a sandboxed target path
-- `corral_delete_repo` — Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes
+- `corral_delete_repo` — Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes, and asks a person to approve each deletion
 
 Every mutation writes a JSONL audit record to
 `$XDG_STATE_HOME/corral/mutations.log` (or `~/.local/state/corral/mutations.log`),
@@ -434,6 +437,17 @@ Notes on the args:
 corralctl mcp --root /custom/workspace
 ```
 
+**Serve over HTTP** instead of stdio, for a client that connects to a running
+server rather than launching one:
+
+```bash
+corralctl mcp --http 127.0.0.1:7777
+```
+
+The address must be on loopback. `--http :7777` binds every interface and is
+refused, because this server has no authentication; pass `--allow-remote` if
+you have put your own in front of it.
+
 ### Safety
 
 - **Read-only by default.** `--enable-mutations` unlocks clone and sync. Deletion additionally requires `--enable-destructive-mutations`; every mutation writes intent and completion records to the audit log.
@@ -446,7 +460,64 @@ corralctl mcp --root /custom/workspace
   cannot verify. Each refusal names its specific reason and is written to the
   audit log.
 - **Path-traversal protected.** File-resource lookups canonicalise the selected repository root and candidate path, blocking `..` and symlink escapes into sibling repositories or outside the workspace.
-- **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
+- **Per-call approval for deletion.** With `--enable-destructive-mutations`,
+  each individual deletion is put to a person over MCP elicitation before it
+  runs. The refusal cascade above stops *mistakes*; this is what stops a
+  persuaded agent choosing the one clone that passes every check, which no
+  amount of prompt text can. Pass `--no-confirm-deletes` only for an
+  unattended workspace you are willing to lose.
+- **stdio by default; loopback when not.** Without `--http` the server has no
+  endpoint and no listening port, and only ever speaks to the parent process
+  that launched it. `--http` serves the Streamable HTTP transport, and
+  because the server has no authentication and exposes every repository under
+  its root, a non-loopback address is refused unless you also pass
+  `--allow-remote` — the accidental `--http :7777`, which binds every
+  interface, does not start.
+
+---
+
+## Forges
+
+Cloning works against five hosting services:
+
+```bash
+corralctl <owner>                                    # GitHub (default)
+corralctl <group> --forge gitlab                     # GitLab
+corralctl <owner> --forge codeberg                   # Codeberg
+corralctl <owner> --forge gitea --forge-url https://git.example.com
+corralctl <owner> --forge forgejo --forge-url https://forgejo.example.com
+```
+
+Gitea and Forgejo have no single public instance, so they need
+`--forge-url`. GitLab and Codeberg default to theirs. `--forge-url` alone
+is enough when the host is recognisable — `--forge-url
+https://codeberg.org` implies Codeberg.
+
+Credentials come from the environment, under the names each forge's own
+tooling already uses: `GITLAB_TOKEN` (or `CI_JOB_TOKEN`), and
+`GITEA_TOKEN` / `FORGEJO_TOKEN` / `CODEBERG_TOKEN`. A corral-specific
+`CORRAL_GITLAB_TOKEN` or `CORRAL_FORGE_TOKEN` wins where both are set.
+GitHub keeps its existing ladder — explicit token, then the environment,
+then the `gh` CLI.
+
+**Reading was never GitHub-specific.** The index, the MCP server, symbol
+lookup and content search work on clones, so a repository you cloned by
+hand from anywhere has always been a first-class citizen. This closes the
+asymmetry on the cloning side.
+
+---
+
+## Coming from another tool
+
+Migration guides live in [`docs/migrating/`](docs/migrating/README.md):
+from [ghq](docs/migrating/from-ghq.md), from
+[a hand-written clone script](docs/migrating/from-a-script.md), from
+[a single-repository code index](docs/migrating/from-a-code-index.md),
+or from [an unsorted `~/src`](docs/migrating/from-an-unsorted-directory.md).
+
+Each says what carries over, what is genuinely different, and what
+corral will not do — nothing there requires re-cloning, and `corralctl
+plan` shows you the outcome before anything changes.
 
 ---
 
@@ -487,11 +558,44 @@ outnumber everything else — and `include_tests` brings them back.
 origin, file count, declaration counts by kind, and its most significant
 exported types and functions. Reach for it before reading files.
 
-**Only Go is indexed today.** Symbol extraction uses `go/ast` from the
-standard library rather than tree-sitter, because tree-sitter's Go binding
-requires CGO and corral builds `CGO_ENABLED=0` — three of its four release
-targets fail to cross-compile with it. The reasoning, and what would change
-it, is in [ADR-0006](docs/adr/0006-symbol-extraction-without-cgo.md).
+`corral_search_code` is the counterpart to `corral_find_symbol`: find_symbol
+answers where something is *declared*, search_code answers where it is
+*written* — call sites, configuration keys, the error string from a ticket.
+Literal by default, `regex` for RE2, and narrowable by `repo`, `language` or
+`path_glob`.
+
+It searches only the files the file resource would serve, so a credential
+file can never match — otherwise search would be a way to read a refused
+file one line at a time. Test files are excluded unless `include_tests` is
+set, and the response says plainly when a bound was reached rather than
+presenting a partial answer as complete.
+
+**Indexed languages: Go, Python, TypeScript, JavaScript, Rust.**
+
+Go is parsed with `go/ast` — the compiler's own parser, so the index agrees
+with the language by construction. The rest are read by a line scanner, in
+the tradition of ctags: it recognises declaration syntax rather than
+building a syntax tree, because every mature parser for those languages is
+either CGO (tree-sitter), a port that lags the language, or larger than
+corral itself. ADR-0006 records why CGO is not available here.
+
+The scanner runs over source that has had comment and string *contents*
+blanked out, so a `class` inside a docstring or a `function` inside a
+template literal is invisible to it.
+
+Extracted symbols are cached under `$XDG_CACHE_HOME/corral/symbols` so the
+first lookup of a session is not the slow one. A cache hit still walks the
+repository — the walk is what produces the fingerprint the entry is keyed
+on — so an edited clone is never served stale. `--symbol-cache off`
+disables it; `--symbol-cache <dir>` moves it.
+
+On a real 187-repository workspace a cross-repository lookup went from
+**6.9 s to 1.3 s**: most of that from searching repositories concurrently
+rather than one after another, the rest from the cache. What it cannot do is resolve types,
+see through macros, or follow a declaration split across lines unusually —
+and it is wrong cheaply: a missed symbol falls back to reading files, and a
+spurious one is a wrong line in the right file. What it will not do is
+invent a symbol that does not exist.
 
 ---
 
@@ -654,17 +758,20 @@ Corral is opinionated, and the opinions do not suit everyone.
   read and edited. For archival mirroring use `git clone --mirror` or a
   purpose-built tool; Corral will not preserve every ref or hold a
   guaranteed-complete copy.
-- **You need a forge other than GitHub.** GitLab, Gitea, Codeberg and
-  Forgejo are not supported today. `git.CanonicalRemote` is already
-  forge-neutral, but repository listing is GitHub-only.
+- **You need a forge corral does not list from.** GitHub, GitLab, Gitea,
+  Forgejo and Codeberg are supported; anything else is not. Reading is
+  forge-neutral — a clone from any host is a first-class citizen in the
+  index, the MCP server and symbol lookup — but `corralctl <owner>` only
+  knows those five.
 - **Your repositories must stay where they are.** Corral's value is a
   consistent layout, and the default reorganises clones into
   `Collection/Bucket/Name`. If a fixed path matters, use `--layout` to
   match your existing tree — or a different tool.
-- **You want a code-search index.** The MCP server indexes repository
-  metadata: names, paths, languages, sync state. It does not index symbols
-  or file contents, so it answers "which repository" and not "where is this
-  function defined".
+- **You want code intelligence.** The MCP server does index symbols and
+  search file contents across every clone, but shallowly: a declaration
+  is a name, a kind, a file and a line. It does not resolve types, find
+  references, or rename — an LSP does those, one project at a time, and
+  corral is the layer that tells an agent which project to open.
 - **You need Windows without WSL.** Binaries are published for Windows, but
   macOS Finder tags are a no-op there and the experience is less tested
   than on macOS and Linux.

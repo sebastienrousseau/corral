@@ -239,8 +239,15 @@ func TestExtractorForAndLanguages(t *testing.T) {
 	if _, ok := ExtractorFor("script.rb"); ok {
 		t.Error("an unindexed extension should have no extractor")
 	}
-	if got := Languages(); len(got) != 1 || got[0] != "go" {
-		t.Errorf("Languages = %v, want [go]", got)
+	want := []string{"go", "javascript", "python", "rust", "typescript"}
+	got := Languages()
+	if len(got) != len(want) {
+		t.Fatalf("Languages = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Languages = %v, want %v (sorted)", got, want)
+		}
 	}
 }
 
@@ -552,7 +559,7 @@ func TestWalkWorkersIsAtLeastOne(t *testing.T) {
 	}
 }
 
-func TestSkipDirAndSkipGoFile(t *testing.T) {
+func TestSkipDirAndSkipSourceFile(t *testing.T) {
 	for _, d := range []string{".git", "node_modules", "vendor", "testdata", "dist", "target"} {
 		if !skipDir(d) {
 			t.Errorf("skipDir(%q) should be true", d)
@@ -561,13 +568,32 @@ func TestSkipDirAndSkipGoFile(t *testing.T) {
 	if skipDir("internal") {
 		t.Error("skipDir(internal) should be false")
 	}
-	for _, f := range []string{"vendor/x.go", "a/testdata/b.go", "x.pb.go", "y_string.go", "z.gen.go"} {
-		if !skipGoFile(f) {
-			t.Errorf("skipGoFile(%q) should be true", f)
+	skipped := []string{
+		// path segments, in every language
+		"vendor/x.go", "a/testdata/b.go", "__pycache__/m.py", "node_modules/lib/i.js",
+		// generated, per language
+		"x.pb.go", "y_string.go", "z.gen.go", "api.pb.gw.go", "m_generated.go",
+		"svc_pb2.py", "svc_pb2_grpc.py", "svc_pb2.pyi",
+		"app.min.js", "app.bundle.js", "t.generated.ts", "t.gen.ts", "m.min.mjs",
+		"proto.pb.rs",
+		// and the check is case-insensitive, because filesystems are
+		"VENDOR/X.GO", "App.Min.JS",
+	}
+	for _, f := range skipped {
+		if !skipSourceFile(f) {
+			t.Errorf("skipSourceFile(%q) should be true", f)
 		}
 	}
-	if skipGoFile("internal/mcp/index.go") {
-		t.Error("a normal source file should not be skipped")
+	kept := []string{
+		"internal/mcp/index.go", "src/app/main.py", "src/index.ts",
+		"src/lib.rs", "packages/ui/Button.tsx",
+		// near-misses: these are hand-written despite looking generated
+		"stringer.go", "generated_docs.md.go", "minify.js",
+	}
+	for _, f := range kept {
+		if skipSourceFile(f) {
+			t.Errorf("skipSourceFile(%q) should be false", f)
+		}
 	}
 }
 

@@ -23,6 +23,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -77,7 +79,7 @@ func redactCloneURL(raw string) string {
 func (s *Server) registerMutationTools() {
 	f := false
 	t := true
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_sync_repo",
 		Title: "Sync one repository",
 		Annotations: &mcp.ToolAnnotations{
@@ -89,7 +91,7 @@ func (s *Server) registerMutationTools() {
 		Description: "Run `git pull --rebase --autostash` against one clone in the Corral workspace. Requires --enable-mutations. Reuses corral's non-interactive git environment (no credential prompts, no signing pinentry) and honours smart-sync via the sync sidecar. Refuses when the repo isn't in the index or resolves outside the configured sandbox root.",
 	}, s.handleSyncRepo)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_clone_repo",
 		Title: "Clone a repository into the workspace",
 		Annotations: &mcp.ToolAnnotations{
@@ -108,7 +110,7 @@ func (s *Server) registerMutationTools() {
 func (s *Server) registerDestructiveTools() {
 	f := false
 	t := true
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_delete_repo",
 		Title: "Delete a clone from the workspace",
 		Annotations: &mcp.ToolAnnotations{
@@ -286,7 +288,16 @@ func (s *Server) handleCloneRepo(ctx context.Context, _ *mcp.CallToolRequest, in
 //     (defence against typos deleting an unrelated directory).
 //  6. Always writes an audit record before removing anything, so a
 //     race between the check and the removal is still logged.
-func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
+//  7. When ServerOptions.ConfirmDeletes is set, requires a person to
+//     approve this particular deletion. The cascade above stops
+//     mistakes; nothing else here stops a persuaded agent choosing the
+//     one clone that passes every check.
+//
+// Step 7 makes this a two-pass handler: the first call returns an input
+// request and no content, the client puts the question to a person, and
+// the same call arrives again carrying the answer. Every check runs on
+// both passes, and nothing is written until the approved one.
+func (s *Server) handleDeleteRepo(ctx context.Context, req *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
 	query := in.Query
 	idx, err := s.scan()
 	if err != nil {
@@ -301,6 +312,14 @@ func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, i
 		return toolError("%v", err), nil, nil
 	}
 
+	// One deletion at a time per clone. Over stdio there was one session
+	// and one request; over HTTP there are neither, and the window between
+	// these checks and the removal is wide enough for a second session to
+	// change what is being checked.
+	lock := s.repoLocks.lock(safe)
+	lock.Lock()
+	defer lock.Unlock()
+
 	rec := AuditRecord{
 		Tool:   "corral_delete_repo",
 		Target: safe,
@@ -309,43 +328,95 @@ func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, i
 
 	// Refusal cascade: any single check failing aborts, audits,
 	// and returns to the agent with a specific reason.
-	if !gitIsRepository(safe) {
-		rec.Message = fmt.Sprintf("target %s is not a git repository", safe)
-		if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
-			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+	if reason, ok := deleteGuards(ctx, safe); !ok {
+		rec.Message = reason
+		if auditErr := s.auditRefusal(rec, reason); auditErr != nil {
+			return toolError("%s; audit failed: %v", reason, auditErr), nil, nil
 		}
-		return toolError("%s", rec.Message), nil, nil
+		return toolError("%s", reason), nil, nil
 	}
-	if dirty, out := hasDirtyWorkingTree(ctx, safe); dirty {
-		rec.Message = fmt.Sprintf("uncommitted changes present: %s", out)
-		if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
-			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+
+	// Per-call authority. The cascade above stops mistakes; this is what
+	// stops a persuaded agent choosing the one clone that passes every
+	// check. Asked only once the deletion would otherwise proceed, so a
+	// refusal the server can decide itself never reaches a person.
+	//
+	// Everything above this point is a read, so serving the call twice —
+	// once to ask, once with the answer — costs a scan and re-checks the
+	// clone against whatever changed while the person was deciding.
+	if s.confirmDeletes {
+		summary := fmt.Sprintf("Delete the local clone %s?", repo.Redacted().RelPath)
+		detail := fmt.Sprintf(
+			"Path: %s\nOrigin: %s\n\nCorral found no uncommitted, unpushed, stashed, "+
+				"gitignored or submodule work in it. This removes the directory from disk.",
+			safe, repo.Redacted().RemoteURL)
+
+		switch decision, ask := s.confirmer.Confirm(req, summary, detail); decision {
+		case confirmAsk:
+			// Not an outcome: the client now puts the question to a person
+			// and calls the tool again with the answer. Nothing is audited
+			// yet because nothing has been decided.
+			return ask, nil, nil
+		case confirmUnavailable:
+			// Fail closed. If nobody can be asked, nobody has approved.
+			rec.Message = "could not obtain confirmation: " + noElicitationMessage
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+			}
+			return toolError("%s\n\nStart the server with --no-confirm-deletes to delete without asking, "+
+				"which is only appropriate for an unattended workspace you are willing to lose.", rec.Message), nil, nil
+		case confirmDenied:
+			rec.Message = "declined by the user"
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+			}
+			return toolError("deletion of %s was declined", repo.Redacted().RelPath), nil, nil
+		case confirmApproved:
+			// Fall through to the deletion.
 		}
-		return toolError("%s", rec.Message), nil, nil
-	}
-	if ahead, out := hasUnpushedCommits(ctx, safe); ahead {
-		rec.Message = fmt.Sprintf("unpublished git state present: %s", out)
-		if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
-			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
-		}
-		return toolError("%s", rec.Message), nil, nil
-	}
-	// Gitignored content is the least recoverable thing in a clone — local
-	// .env files, databases, caches — and `git status --porcelain` hides it
-	// by design, so "clean" was never sufficient grounds to rm -rf.
-	if ignored, out := hasIgnoredContent(ctx, safe); ignored {
-		rec.Message = fmt.Sprintf("gitignored content present: %s", out)
-		if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
-			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
-		}
-		return toolError("%s", rec.Message), nil, nil
 	}
 
 	rec, err = s.beginMutation(rec)
 	if err != nil {
 		return toolError("audit intent failed: %v", err), nil, nil
 	}
-	if err := removeMutation(safe); err != nil {
+	// Stage the clone aside before removing it (SEC-5).
+	//
+	// Every check above ran against a path any other process on this
+	// machine can still write to. The rename closes that: it is atomic
+	// within a directory, and afterwards nothing can reach the clone under
+	// the name it knew — a concurrent `git commit` either fails or writes
+	// into a directory it has just recreated, which is not the one being
+	// deleted. The checks then run once more against the staged copy, so
+	// work that landed between the first check and the rename is seen
+	// before anything is destroyed rather than after.
+	staged, stageErr := stageForRemoval(safe)
+	if stageErr != nil {
+		if auditErr := s.completeMutation(rec, "error", stageErr.Error()); auditErr != nil {
+			return toolError("staging for removal failed: %v; audit completion failed: %v", stageErr, auditErr), nil, nil
+		}
+		return toolError("staging for removal failed: %v", stageErr), nil, nil
+	}
+	if reason, ok := deleteGuards(ctx, staged); !ok {
+		// Something changed under us. Put it back exactly where it was and
+		// refuse; a deletion that lost a race must lose it safely.
+		restored := "restored"
+		if unstageErr := unstageRemoval(staged, safe); unstageErr != nil {
+			restored = "could NOT be restored, and is now at " + staged +
+				"; move it back by hand (" + unstageErr.Error() + ")"
+		}
+		msg := reason + " (detected after staging, so the clone was not deleted and was " + restored + ")"
+		if auditErr := s.completeMutation(rec, "refused", msg); auditErr != nil {
+			return toolError("%s; audit completion failed: %v", msg, auditErr), nil, nil
+		}
+		return toolError("%s", msg), nil, nil
+	}
+	if err := removeMutation(staged); err != nil {
+		// The clone is staged but not removed. Try to put it back rather
+		// than leaving it under a name nobody will look for.
+		if unstageErr := unstageRemoval(staged, safe); unstageErr != nil {
+			err = fmt.Errorf("%w; and the staged copy at %s could not be restored: %v", err, staged, unstageErr)
+		}
 		if auditErr := s.completeMutation(rec, "error", err.Error()); auditErr != nil {
 			return toolError("remove failed: %v; audit completion failed: %v", err, auditErr), nil, nil
 		}
@@ -376,3 +447,73 @@ var hasDirtyWorkingTree = git.HasLocalChanges
 // hasIgnoredContent reports gitignored files in the target repo. Indirected for
 // the same reason as hasDirtyWorkingTree.
 var hasIgnoredContent = git.HasIgnoredContent
+
+// deleteGuards runs the refusal cascade against one path and reports the
+// first reason it must not be deleted.
+//
+// Factored out because it runs twice: once against the live clone, and
+// once against the staged copy after the rename that closes the window
+// between the two. A second copy of the cascade would be a second place
+// for a guard to be forgotten.
+func deleteGuards(ctx context.Context, path string) (reason string, ok bool) {
+	if !gitIsRepository(path) {
+		return fmt.Sprintf("target %s is not a git repository", path), false
+	}
+	if dirty, out := hasDirtyWorkingTree(ctx, path); dirty {
+		return fmt.Sprintf("uncommitted changes present: %s", out), false
+	}
+	if ahead, out := hasUnpushedCommits(ctx, path); ahead {
+		return fmt.Sprintf("unpublished git state present: %s", out), false
+	}
+	// Gitignored content is the least recoverable thing in a clone — local
+	// .env files, databases, caches — and `git status --porcelain` hides it
+	// by design, so "clean" was never sufficient grounds to rm -rf.
+	if ignored, out := hasIgnoredContent(ctx, path); ignored {
+		return fmt.Sprintf("gitignored content present: %s", out), false
+	}
+	return "", true
+}
+
+// stagePrefix marks a directory as mid-deletion.
+//
+// Leading dot so it sorts out of the way and reads as machinery rather
+// than as a repository somebody named oddly; the full word so that anyone
+// who finds one after a crash can tell what it is and search for it.
+const stagePrefix = ".corral-deleting-"
+
+// stageForRemoval renames dir aside within its own parent directory.
+//
+// Within the parent, so the rename is a same-directory operation and
+// therefore atomic and never a cross-device copy. A name that collides is
+// treated as a failure rather than worked around: the only way one exists
+// is a previous deletion that crashed midway, and silently reusing it
+// would delete whatever it holds.
+var stageForRemoval = func(dir string) (string, error) {
+	parent := filepath.Dir(dir)
+	suffix := make([]byte, 8)
+	if _, err := randRead(suffix); err != nil {
+		return "", fmt.Errorf("generating a staging name: %w", err)
+	}
+	staged := filepath.Join(parent, stagePrefix+filepath.Base(dir)+"-"+hex.EncodeToString(suffix))
+	if _, err := os.Lstat(staged); err == nil {
+		return "", fmt.Errorf("staging path %s already exists", staged)
+	}
+	if err := os.Rename(dir, staged); err != nil {
+		return "", err
+	}
+	return staged, nil
+}
+
+// randRead is crypto/rand.Read, indirected so a test can make a staging
+// name deterministic and drive the collision path, which is otherwise
+// unreachable at one chance in 2^64.
+var randRead = rand.Read
+
+// unstageRemoval puts a staged clone back where it came from.
+//
+// Indirected alongside stageForRemoval so a test can drive the case where
+// restoring fails, which is the one that leaves a user with a directory
+// under a name they would never think to look for.
+var unstageRemoval = func(staged, original string) error {
+	return os.Rename(staged, original)
+}

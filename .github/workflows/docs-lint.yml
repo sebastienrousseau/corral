@@ -64,10 +64,12 @@ jobs:
           # statuss - the deliberate typo in the "did you mean" suggestion
           #           tests; correcting it would delete the test case
           # confg   - likewise, a deliberate typo fixture
+          # gitub   - a deliberate misspelling of "github", used to test
+          #           the unknown-forge error message
           # repositor - the stem in `"repositor" + plural(n)`, which builds
           #             "repository"/"repositories" for the summary line
           # unparseable - accepted variant spelling used throughout
-          ignore_words_list: intoto,statuss,confg,repositor,unparseable
+          ignore_words_list: intoto,statuss,confg,gitub,repositor,unparseable
 
   links:
     name: Link Check

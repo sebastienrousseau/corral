@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,6 +24,10 @@ type stubMCPServer struct {
 	audit          string
 	serveErr       error
 	serveCallCount int
+
+	httpErr       error
+	httpCallCount int
+	httpAddr      string
 }
 
 func (s *stubMCPServer) Root() string           { return s.root }
@@ -31,6 +36,12 @@ func (s *stubMCPServer) AuditLogPath() string   { return s.audit }
 func (s *stubMCPServer) ServeStdio() error {
 	s.serveCallCount++
 	return s.serveErr
+}
+
+func (s *stubMCPServer) ServeHTTP(_ context.Context, addr string) error {
+	s.httpCallCount++
+	s.httpAddr = addr
+	return s.httpErr
 }
 
 func TestRunMCPAdditionalPathBranches(t *testing.T) {
@@ -95,9 +106,16 @@ func withStubServer(t *testing.T, stub *stubMCPServer, ctorErr error) *mcp.Serve
 func resetMCPFlags(t *testing.T) {
 	t.Helper()
 	oldRoot, oldMut := mcpRoot, mcpEnableMutations
+	oldHTTP, oldRemote, oldNoConfirm := mcpHTTP, mcpAllowRemote, mcpNoConfirmDeletes
 	mcpRoot = ""
 	mcpEnableMutations = false
-	t.Cleanup(func() { mcpRoot = oldRoot; mcpEnableMutations = oldMut })
+	mcpHTTP = ""
+	mcpAllowRemote = false
+	mcpNoConfirmDeletes = false
+	t.Cleanup(func() {
+		mcpRoot, mcpEnableMutations = oldRoot, oldMut
+		mcpHTTP, mcpAllowRemote, mcpNoConfirmDeletes = oldHTTP, oldRemote, oldNoConfirm
+	})
 }
 
 func TestRunMCPHappyPath(t *testing.T) {
@@ -231,5 +249,145 @@ func TestRunMCPPropagatesServeError(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "stdio-blew-up") {
 		t.Errorf("expected inner error preserved, got %v", err)
+	}
+}
+
+// TestLoopbackOnly is the classification the --http guard rests on.
+//
+// The case that matters is ":7777" — an empty host binds every interface,
+// and it is the form somebody types when they are thinking about the port
+// and not about the host.
+func TestLoopbackOnly(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:7777", true},
+		{"localhost:7777", true},
+		{"[::1]:7777", true},
+		{"127.0.0.2:7777", true}, // the whole 127/8 block is loopback
+
+		{":7777", false},
+		{"0.0.0.0:7777", false},
+		{"[::]:7777", false},
+		{"192.168.1.10:7777", false},
+		{"example.com:7777", false}, // a name that is not localhost
+		{"7777", false},             // no port separator at all
+		{"", false},
+	} {
+		if got := loopbackOnly(tc.addr); got != tc.want {
+			t.Errorf("loopbackOnly(%q) = %t, want %t", tc.addr, got, tc.want)
+		}
+	}
+}
+
+// TestRunMCPRefusesARoutableBind: the server has no authentication and
+// serves a developer's whole workspace, so publishing it has to be asked
+// for rather than arrived at.
+func TestRunMCPRefusesARoutableBind(t *testing.T) {
+	resetMCPFlags(t)
+	dir := t.TempDir()
+	mcpRoot = dir
+	mcpHTTP = ":7777"
+
+	stub := &stubMCPServer{root: dir}
+	withStubServer(t, stub, nil)
+
+	err := runMCP(nil, nil)
+	if err == nil {
+		t.Fatal("a bind on every interface should be refused")
+	}
+	if !strings.Contains(err.Error(), "--allow-remote") {
+		t.Errorf("the refusal should name the override: %v", err)
+	}
+	// Refused before anything was constructed, let alone served.
+	if stub.httpCallCount != 0 || stub.serveCallCount != 0 {
+		t.Error("the server was started despite the refusal")
+	}
+}
+
+func TestRunMCPServesOverHTTP(t *testing.T) {
+	resetMCPFlags(t)
+	dir := t.TempDir()
+	mcpRoot = dir
+	mcpHTTP = "127.0.0.1:7777"
+
+	stub := &stubMCPServer{root: dir}
+	withStubServer(t, stub, nil)
+
+	if err := runMCP(nil, nil); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if stub.httpCallCount != 1 {
+		t.Errorf("ServeHTTP called %d times, want 1", stub.httpCallCount)
+	}
+	if stub.httpAddr != "127.0.0.1:7777" {
+		t.Errorf("served on %q, want the address that was asked for", stub.httpAddr)
+	}
+	if stub.serveCallCount != 0 {
+		t.Error("--http must not also start the stdio loop")
+	}
+}
+
+// TestRunMCPAllowsARoutableBindWhenAsked covers the escape hatch, which
+// exists for somebody who has put their own authentication in front.
+func TestRunMCPAllowsARoutableBindWhenAsked(t *testing.T) {
+	resetMCPFlags(t)
+	dir := t.TempDir()
+	mcpRoot = dir
+	mcpHTTP = "0.0.0.0:7777"
+	mcpAllowRemote = true
+
+	stub := &stubMCPServer{root: dir}
+	withStubServer(t, stub, nil)
+
+	if err := runMCP(nil, nil); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if stub.httpAddr != "0.0.0.0:7777" {
+		t.Errorf("served on %q, want the address that was asked for", stub.httpAddr)
+	}
+}
+
+func TestRunMCPReportsAnHTTPFailure(t *testing.T) {
+	resetMCPFlags(t)
+	dir := t.TempDir()
+	mcpRoot = dir
+	mcpHTTP = "127.0.0.1:7777"
+
+	stub := &stubMCPServer{root: dir, httpErr: errors.New("address already in use")}
+	withStubServer(t, stub, nil)
+
+	err := runMCP(nil, nil)
+	if err == nil {
+		t.Fatal("a failed listener should be reported")
+	}
+	if !strings.Contains(err.Error(), "address already in use") {
+		t.Errorf("the cause should survive: %v", err)
+	}
+}
+
+// TestConfirmDeletesDefaultsOn: the flag is a negative, so the default has
+// to be asserted rather than assumed. A default that silently flipped would
+// remove the confirmation from every existing configuration.
+func TestConfirmDeletesDefaultsOn(t *testing.T) {
+	resetMCPFlags(t)
+	dir := t.TempDir()
+	mcpRoot = dir
+
+	captured := withStubServer(t, &stubMCPServer{root: dir}, nil)
+	if err := runMCP(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !captured.ConfirmDeletes {
+		t.Error("deletions should require confirmation unless --no-confirm-deletes is passed")
+	}
+
+	mcpNoConfirmDeletes = true
+	if err := runMCP(nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if captured.ConfirmDeletes {
+		t.Error("--no-confirm-deletes should switch the confirmation off")
 	}
 }

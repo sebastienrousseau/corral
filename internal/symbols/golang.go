@@ -138,26 +138,3 @@ func typeName(expr ast.Expr) string {
 	}
 	return ""
 }
-
-// skipGoFile reports whether a Go file should be left out of the index.
-//
-// Generated code and vendored dependencies are the bulk of the Go files in
-// a large workspace and almost never what someone is looking for: a
-// definition lookup that answers with a vendored copy of somebody else's
-// library has technically succeeded and practically failed.
-func skipGoFile(rel string) bool {
-	rel = strings.ToLower(rel)
-	for _, seg := range strings.Split(rel, "/") {
-		switch seg {
-		case "vendor", "testdata", "node_modules", ".git":
-			return true
-		}
-	}
-	// Conventional generated-file suffixes.
-	for _, suffix := range []string{".pb.go", ".pb.gw.go", "_generated.go", ".gen.go", "_string.go"} {
-		if strings.HasSuffix(rel, suffix) {
-			return true
-		}
-	}
-	return false
-}

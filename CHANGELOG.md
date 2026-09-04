@@ -6,6 +6,252 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.29] — 2026-09-04
+
+### Added
+
+- **Cloning works against five forges**, not one: GitHub, GitLab, Gitea,
+  Forgejo and Codeberg. `--forge <name>` selects one; `--forge-url`
+  points at a self-hosted instance, and is enough on its own when the
+  host is recognisable.
+
+  This closes an asymmetry that had been there from the start. Corral's
+  *reading* — the index, the MCP server, symbol lookup, content search —
+  never cared where a clone came from, because it operates on
+  directories. Only the *cloning* knew one host.
+
+  A forge has to do exactly one thing: given an owner, list their
+  repositories. Everything after that is already host-agnostic. So the
+  interface is one method, and the differences each forge has are
+  collapsed at the edge — GitLab's "internal" visibility becomes Private,
+  because the layout has two directories and a third that only one forge
+  ever populates would be worse than the lost nuance.
+
+  Gitea, Forgejo and Codeberg are one implementation. Forgejo is a hard
+  fork of Gitea that kept the API and Codeberg is a Forgejo instance;
+  three copies of one client would be three things that could drift.
+
+  GitHub keeps its existing client, wrapped rather than rewritten: its
+  auth ladder, secondary rate-limit handling and search pagination are
+  genuinely intricate and not worth re-deriving. GitLab and Gitea get a
+  few hundred lines of `net/http` each — no new dependencies, against a
+  module that holds eleven direct ones and a hand-maintained SBOM.
+
+  Filters are applied by corral rather than pushed into each API, so
+  `--include-forks` means the same thing everywhere instead of however
+  each host happens to implement it.
+
+  Verified live: Codeberg, gitlab.com, and GitHub unchanged.
+
+- **Symbol extraction covers Python, TypeScript, JavaScript and Rust.**
+  Cross-repository symbol lookup is the thing corral can do that a
+  single-repository index cannot, and until now it covered Go and nothing
+  else — which made it quietly wrong rather than merely limited. An agent
+  asking where `parse_config` is defined in a polyglot workspace did not
+  get "no match"; it got a match set missing every Python, TypeScript and
+  Rust clone, with nothing to say anything had been left out.
+
+  Go keeps `go/ast`, the compiler's own parser. The rest are read by a line
+  scanner, in the tradition ctags established in 1992, because every mature
+  parser for them is either CGO (tree-sitter), a port that lags the
+  language, or larger than corral itself. Each scanner runs over source
+  whose comment and string *contents* have been blanked — offsets and line
+  numbers preserved exactly — so a `class` in a docstring, a `function` in
+  a template literal and a `struct` in a nested block comment are all
+  invisible to it. ADR-0006 carries an amendment recording why this was
+  taken over the wazero-hosted tree-sitter path it had anticipated, and
+  states plainly what a scanner gives up.
+
+- **The symbol index is cached between runs, and repositories are searched
+  concurrently.** A cross-repository symbol lookup on a real
+  187-repository workspace took 6.9 seconds. It now takes 1.3.
+
+  Most of that came from a measurement that contradicted the obvious
+  assumption. Persisting the parsed symbols was the plan; measured, it
+  bought 13% for 53 MB of cache, because extraction is dominated by
+  walking the filesystem rather than by parsing — roughly four to one on
+  that workspace — and the handler was walking 187 repositories one after
+  another, leaving almost all of that I/O wait unoverlapped. Fanning out
+  across repositories is what took 6.9 s to 1.5 s; the cache takes it to
+  1.3 s, and gzip takes the cache from 53 MB to 3.9 MB.
+
+  A cache hit still walks the repository, because the walk is what
+  produces the fingerprint the entry is keyed on — file count, total
+  bytes, newest modification time — so an edited clone is never served
+  stale. Entries live under `$XDG_CACHE_HOME/corral/symbols`, one file per
+  repository so invalidation is per repository and a corrupt file is a
+  miss rather than a failure. `--symbol-cache off` disables it.
+
+  Not SQLite: there are no joins, no transactions and no concurrent
+  writers to reconcile, and the pure-Go driver is an order of magnitude
+  larger than corral itself against a module that holds eleven direct
+  dependencies and a hand-maintained SBOM.
+
+- **`corral_search_code`.** `corral_find_symbol` answers where something is
+  declared; this answers where it is written — call sites, configuration
+  keys, the error string from a ticket. One call searches every clone on
+  the machine, which is the part an agent cannot do with a shell, because
+  it does not know the clones are there.
+
+  Literal by default, RE2 with `regex`, and narrowable by `repo`,
+  `language` or `path_glob`. Only files the file resource would serve are
+  searched — otherwise search would be a way to read a refused file one
+  line at a time — and the check runs inside the walk, so a denied file is
+  never opened. Test files are excluded unless `include_tests` is set. The
+  response reports which bound it reached rather than presenting a partial
+  answer as a complete one.
+
+  Verified live against the real workspace: 187 repositories and 109,171
+  files in one call.
+
+- **Cache hints on the results that carry them** (`ttlMs` / `cacheScope`,
+  protocol 2026-07-28). Without them a client re-fetches everything every
+  turn, including a tool listing that cannot have changed — the tool set is
+  fixed when the process starts.
+
+  Listings get a minute and `public`: they describe this server's own
+  surface, which does not depend on who asked. Resource reads get exactly
+  the workspace scan's own TTL and `private`: the TTL because promising a
+  freshness the server does not itself maintain is a lie a client acts on,
+  and the scope because the content is one developer's workspace and an
+  intermediary serving it to somebody else is what that flag exists to
+  prevent. Tool calls are deliberately left alone — a call can have side
+  effects, and there is no TTL at which reusing its answer is safe.
+
+- **The MCP server can serve over HTTP.** `corralctl mcp --http
+  127.0.0.1:7777` runs the Streamable HTTP transport instead of stdio, for a
+  client that connects to a server somebody else started rather than
+  launching one itself. The transport is stateless, so any instance can serve
+  any request and there is no session state to leak between clients.
+
+  The address is required to be on loopback. This server has no
+  authentication and exposes every repository under its root — with mutations
+  enabled, it can change them — so binding it to a routable interface
+  publishes all of that. `--http :7777`, which is the form typed by somebody
+  thinking about the port and not about the empty host, binds every interface
+  and is refused with a message naming the alternative. `--allow-remote`
+  overrides the refusal for an operator who has put their own authentication
+  in front of it.
+
+### Documentation
+
+- **Migration guides** (`docs/migrating/`) for the four places people
+  actually arrive from: ghq, a hand-written clone script, a
+  single-repository code index, and an unsorted `~/src`. Each says what
+  carries over, what is genuinely different, and — the section that is
+  usually missing — what corral will not do, so a migration does not end
+  in disappointment. None of them requires re-cloning anything.
+
+- **`pkg/`**, one directory per distribution format, so a packager can
+  find the recipe without reading the release pipeline. The recipes are
+  not duplicated there: each page points at the file that actually
+  produces the artefact, because a copy would be a second place to
+  change and a first place to forget. `pkg/VERIFY.md` covers checksums,
+  keyless cosign signatures, SLSA provenance and the SBOM.
+
+  `make pkg-check` asserts the directory matches what the pipeline
+  builds, in both directions — a format with no page, and a page naming
+  no format, both fail. A directory of prose cannot notice that a new
+  format shipped last month, which is exactly how this kind of directory
+  rots.
+
+- **An evaluation suite for the MCP server** (`make eval`). Every other
+  test asks whether a handler is correct; none asked the question that
+  decides whether the server is useful — given a real question, does the
+  right tool answer it with something somebody could act on?
+
+  Eleven scenarios, each phrased as a person actually asked it, against a
+  polyglot fixture workspace with a fork, a private repository and a
+  credential file that must never surface in an answer. A second gate
+  measures *discriminability*: that each tool's description says something
+  its nearest sibling's does not, which is what a model reads when
+  choosing between them. Selection itself needs a model in the loop and
+  is out of scope; what this does is make the inputs to that decision
+  testable, so a selection failure downstream is predictable rather than
+  mysterious.
+
+  It earned its place immediately. A scenario — "we have a retry limit in
+  three services, find them all" — returned two of three, because Go
+  writes `MaxAttempts` and Python writes `MAX_ATTEMPTS` and no amount of
+  case-insensitivity bridges the underscore. `corral_search_code`'s
+  description now says to reach for a regex when a name is spelled
+  differently per language, and both the literal and the regex forms are
+  pinned as scenarios.
+
+- **A committed fuzz seed corpus** for all four fuzz targets. The inline
+  `f.Add` seeds cover the readable cases; these cover the ones that are
+  unreadable as Go string literals — NUL bytes, invalid UTF-8,
+  bidirectional overrides, 8 KiB paths, `ext::` remotes, a URL with an
+  embedded newline and a fake system prompt. They run on every `go test`,
+  not only under `-fuzz`, and give a future finding somewhere to live.
+
+### Security
+
+- **Deletion stages the clone aside before removing it (SEC-5).** Every
+  safety check ran against a path any other process on the machine could
+  still write to, and the window between the last check and the `rm` was
+  real. The clone is now renamed within its own parent directory first —
+  same-directory, so the rename is atomic and never a cross-device copy —
+  after which nothing can reach it under the name a writer knew: a
+  concurrent `git commit` either fails or writes into a directory it has
+  just recreated, which is not the one being deleted.
+
+  The whole refusal cascade then runs a second time against the staged
+  copy, so work that landed between the first check and the rename is seen
+  *before* anything is destroyed rather than after. Losing that race costs
+  nothing: the clone is renamed back and the deletion refuses, saying when
+  the problem was detected. If the restore itself fails — the only outcome
+  that leaves a clone under a name nobody would look for — the error names
+  the staged path so it can be moved back by hand.
+
+- **Deletion now needs a person, not just a flag.** Until now the only gate
+  on `corral_delete_repo` was `--enable-destructive-mutations`, decided once
+  when the process started; after that every call was authorised purely by
+  having been registered.
+
+  The refusal cascade bounds *mistakes* — it declines when a clone holds
+  uncommitted, unpushed, stashed, gitignored or submodule work. It bounds
+  nothing about intent: an agent that has been talked into deleting the one
+  clone with no unpublished work passes every check, because the request is
+  well-formed and each check genuinely succeeds. That is the gap the 2026 MCP
+  guidance describes when it says access control belongs at the execution
+  layer rather than in prompt text.
+
+  Each individual deletion is now put to a person over MCP elicitation before
+  it runs, and only an explicit accept proceeds — a dismissed prompt is not
+  consent. A client that cannot ask its user anything cannot delete, and a
+  confirmation that cannot be obtained refuses rather than proceeding. The
+  question is asked only once the deletion would otherwise have gone ahead,
+  so a refusal the server can reach on its own never reaches a person; a
+  prompt that mostly appears for operations that were going to fail anyway is
+  a prompt people learn to click through. Refusals and unobtainable
+  confirmations are both written to the audit log.
+
+  This matters more over HTTP than it ever did over stdio, where "the user
+  launched this process" was a reasonable proxy for "the user wants this
+  deletion". With concurrent sessions it is not.
+
+  `--no-confirm-deletes` restores the previous behaviour, and is documented
+  as appropriate only for an unattended workspace you are willing to lose.
+
+- **Deletions are serialised per repository.** One session's safety checks
+  could previously be invalidated by another session acting on the same clone
+  between the check and the removal. Unrelated repositories still delete in
+  parallel.
+
+### Fixed
+
+- **Confirmation is implemented as a multi round-trip request, not a
+  server-initiated one.** Protocol 2026-07-28 (SEP-2322 / SEP-2575) forbids a
+  server from issuing an elicitation request while it is serving a call, and
+  the SDK enforces it. A first implementation called `ServerSession.Elicit`
+  from inside the tool handler; a test driving a real client caught that it
+  fails on every conforming client, which would have refused every deletion
+  for the wrong reason. The handler now returns an input request and is
+  invoked again with the answer, so every safety check re-runs against the
+  clone as it stands *after* the person decided. Clients too old for the
+  round-trip flow are served by the SDK's compatibility middleware.
+
 ## [0.0.28] — 2026-09-03
 
 ### Security
@@ -1449,7 +1695,9 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.27...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.29...HEAD
+[0.0.29]: https://github.com/sebastienrousseau/corral/compare/v0.0.28...v0.0.29
+[0.0.28]: https://github.com/sebastienrousseau/corral/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/sebastienrousseau/corral/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/sebastienrousseau/corral/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/sebastienrousseau/corral/compare/v0.0.24...v0.0.25

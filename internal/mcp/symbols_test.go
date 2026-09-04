@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -236,7 +237,7 @@ func TestFindSymbolSurfacesTruncatedIndexes(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 
 	old := extractSymbols
-	extractSymbols = func(context.Context, string) (*symbols.Result, error) {
+	extractSymbols = func(context.Context, string, symbols.Cache) (*symbols.Result, error) {
 		return &symbols.Result{
 			Symbols:   []symbols.Symbol{{Name: "Shared", Kind: symbols.KindFunc, File: "a.go", Line: 1, Exported: true, Language: "go"}},
 			Files:     1,
@@ -261,9 +262,13 @@ func TestFindSymbolToleratesAnUnreadableRepository(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 
 	old := extractSymbols
-	var calls int
-	extractSymbols = func(_ context.Context, path string) (*symbols.Result, error) {
-		calls++
+	// Atomic because handleFindSymbol extracts repositories concurrently.
+	// A plain int here was a data race, and the kind that a single local
+	// `go test -race` run does not reliably catch: it took CI, on a
+	// different scheduler, to surface it.
+	var calls atomic.Int64
+	extractSymbols = func(_ context.Context, path string, _ symbols.Cache) (*symbols.Result, error) {
+		calls.Add(1)
 		if strings.HasSuffix(path, "alpha") {
 			return nil, errors.New("permission denied")
 		}
@@ -281,8 +286,8 @@ func TestFindSymbolToleratesAnUnreadableRepository(t *testing.T) {
 	if got := int(body["total_matched"].(float64)); got != 1 {
 		t.Errorf("matched %d, want 1 from the readable repository", got)
 	}
-	if calls != 2 {
-		t.Errorf("attempted %d repositories, want 2", calls)
+	if got := calls.Load(); got != 2 {
+		t.Errorf("attempted %d repositories, want 2", got)
 	}
 }
 
@@ -352,7 +357,7 @@ func TestRepoOverviewUnknownRepository(t *testing.T) {
 func TestRepoOverviewExtractionFailure(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 	old := extractSymbols
-	extractSymbols = func(context.Context, string) (*symbols.Result, error) {
+	extractSymbols = func(context.Context, string, symbols.Cache) (*symbols.Result, error) {
 		return nil, errors.New("disk on fire")
 	}
 	t.Cleanup(func() { extractSymbols = old })
@@ -374,7 +379,7 @@ func TestRepoOverviewSurfacesTruncationAndCaps(t *testing.T) {
 		)
 	}
 	old := extractSymbols
-	extractSymbols = func(context.Context, string) (*symbols.Result, error) {
+	extractSymbols = func(context.Context, string, symbols.Cache) (*symbols.Result, error) {
 		return &symbols.Result{Symbols: many, Files: 1, Truncated: true}, nil
 	}
 	t.Cleanup(func() { extractSymbols = old })
@@ -482,7 +487,7 @@ func TestSymbolsForUsesTheCache(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 	old := extractSymbols
 	var calls int
-	extractSymbols = func(context.Context, string) (*symbols.Result, error) {
+	extractSymbols = func(context.Context, string, symbols.Cache) (*symbols.Result, error) {
 		calls++
 		return &symbols.Result{Files: 1}, nil
 	}
@@ -500,7 +505,7 @@ func TestSymbolsForUsesTheCache(t *testing.T) {
 	}
 
 	// A failure is not cached, so a transient error can be retried.
-	extractSymbols = func(context.Context, string) (*symbols.Result, error) {
+	extractSymbols = func(context.Context, string, symbols.Cache) (*symbols.Result, error) {
 		calls++
 		return nil, errors.New("nope")
 	}
@@ -558,7 +563,7 @@ func TestFindSymbolRanking(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 
 	old := extractSymbols
-	extractSymbols = func(_ context.Context, path string) (*symbols.Result, error) {
+	extractSymbols = func(_ context.Context, path string, _ symbols.Cache) (*symbols.Result, error) {
 		// Deliberately returned out of order, and identical across
 		// repositories, so only the sort can produce the expected result.
 		return &symbols.Result{Files: 1, Symbols: []symbols.Symbol{
@@ -594,5 +599,183 @@ func TestFindSymbolRanking(t *testing.T) {
 	// A limit above the maximum is clamped rather than honoured.
 	if got := int(body["returned"].(float64)); got > maxPageSize {
 		t.Errorf("returned %d, want at most the page cap %d", got, maxPageSize)
+	}
+}
+
+// TestSymbolDiskCacheSelection covers the three ways a cache directory is
+// chosen, including the one that must yield no cache at all.
+func TestSymbolDiskCacheSelection(t *testing.T) {
+	t.Run("off disables it", func(t *testing.T) {
+		if c := newSymbolDiskCache("off"); c != nil {
+			t.Error(`"off" should yield no cache`)
+		}
+	})
+
+	t.Run("an explicit directory is used", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "sym")
+		c := newSymbolDiskCache(dir)
+		if c == nil {
+			t.Fatal("expected a cache")
+		}
+		c.Put("/repo", symbols.Fingerprint{Files: 1}, &symbols.Result{Files: 1})
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == 0 {
+			t.Error("the cache did not write to the directory it was given")
+		}
+	})
+
+	t.Run("empty takes the default", func(t *testing.T) {
+		// TestMain points XDG_CACHE_HOME at a throwaway directory, so this
+		// exercises the default without touching the real one.
+		if c := newSymbolDiskCache(""); c == nil {
+			t.Error("the default location should be usable")
+		}
+	})
+
+	t.Run("an unusable directory degrades to no cache", func(t *testing.T) {
+		// A path whose parent is a file cannot be created. The server must
+		// be slower, not broken.
+		file := filepath.Join(t.TempDir(), "a-file")
+		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := newSymbolDiskCache(filepath.Join(file, "sym"))
+		if c != nil {
+			t.Error("an uncreatable directory should yield no cache")
+		}
+		// And nil must be usable, since symbolsFor passes it straight
+		// through to the extractor.
+		if _, err := extractSymbols(context.Background(), t.TempDir(), c); err != nil {
+			t.Errorf("a nil cache is the uncached path: %v", err)
+		}
+	})
+}
+
+// TestDefaultSymbolCacheDirFollowsXDG pins the location, including the
+// choice of the cache directory over the state directory the audit log
+// uses: this is derived data that can be rebuilt at any time, which is
+// exactly the distinction XDG draws.
+func TestDefaultSymbolCacheDirFollowsXDG(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "/xdg-cache")
+	if got, want := DefaultSymbolCacheDir(), filepath.Join("/xdg-cache", "corral", "symbols"); got != want {
+		t.Errorf("DefaultSymbolCacheDir = %q, want %q", got, want)
+	}
+
+	t.Setenv("XDG_CACHE_HOME", "")
+	home := t.TempDir()
+	oldHome := auditUserHomeDir
+	auditUserHomeDir = func() (string, error) { return home, nil }
+	t.Cleanup(func() { auditUserHomeDir = oldHome })
+	if got, want := DefaultSymbolCacheDir(), filepath.Join(home, ".cache", "corral", "symbols"); got != want {
+		t.Errorf("DefaultSymbolCacheDir = %q, want %q", got, want)
+	}
+
+	// A machine with no resolvable home is rare, but the fallback must
+	// still be local to the session rather than empty.
+	auditUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	if got := DefaultSymbolCacheDir(); !strings.HasPrefix(got, os.TempDir()) {
+		t.Errorf("DefaultSymbolCacheDir = %q, want a path under the temp dir", got)
+	}
+}
+
+// TestSymbolsForUsesTheDiskCache is the end-to-end property: the second
+// server over an unchanged workspace does not parse anything.
+func TestSymbolsForUsesTheDiskCache(t *testing.T) {
+	base := t.TempDir()
+	repo := makeFakeRepo(t, base, "Public", "go", "alpha", "https://github.com/acme/alpha.git", "")
+	if err := os.WriteFile(filepath.Join(repo, "a.go"),
+		[]byte("package a\n\nfunc CachedAcrossProcesses() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cacheDir := t.TempDir()
+
+	// A fresh server each time, which is what a client launching the
+	// process per session actually does.
+	for i := 0; i < 2; i++ {
+		srv, err := NewServer(ServerOptions{Root: base, SymbolCacheDir: cacheDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		idx, err := srv.scan()
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := srv.symbolsFor(context.Background(), &idx.Repos[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, s := range res.Symbols {
+			if s.Name == "CachedAcrossProcesses" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("run %d did not find the symbol: %+v", i, res.Symbols)
+		}
+	}
+
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected one cache entry, got %d", len(entries))
+	}
+}
+
+func TestClampFanOut(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{
+		{-8, 1}, {0, 1}, {1, 1}, {8, 8},
+		{maxRepoFanOut, maxRepoFanOut},
+		{maxRepoFanOut + 1, maxRepoFanOut},
+		{4096, maxRepoFanOut},
+	} {
+		if got := clampFanOut(tc.in); got != tc.want {
+			t.Errorf("clampFanOut(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+	if n := repoFanOut(); n < 1 || n > maxRepoFanOut {
+		t.Errorf("repoFanOut = %d, want within [1, %d]", n, maxRepoFanOut)
+	}
+}
+
+// TestFindSymbolAgreesWithASingleWorker pins that the fan-out across
+// repositories is an optimisation and not a behaviour switch: the same
+// query must return the same hits in the same order either way.
+func TestFindSymbolAgreesWithASingleWorker(t *testing.T) {
+	base := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma", "delta"} {
+		repo := makeFakeRepo(t, base, "Public", "go", name, "https://github.com/acme/"+name+".git", "")
+		body := "package " + name + "\n\nfunc Shared() {}\nfunc " + name + "Only() {}\n"
+		if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newHarness(t, ServerOptions{Root: base})
+
+	var pooled, serial map[string]any
+	h.callToolJSON("corral_find_symbol", map[string]any{"name": "Shared"}, &pooled)
+
+	old := repoFanOut
+	repoFanOut = func() int { return 1 }
+	t.Cleanup(func() { repoFanOut = old })
+	h.server.symbolCache = newSymbolCache()
+
+	h.callToolJSON("corral_find_symbol", map[string]any{"name": "Shared"}, &serial)
+
+	pooledJSON, err := json.Marshal(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialJSON, err := json.Marshal(serial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pooledJSON) != string(serialJSON) {
+		t.Errorf("the fan-out changed the answer:\n pooled %s\n serial %s", pooledJSON, serialJSON)
 	}
 }

@@ -245,6 +245,16 @@ jobs:
           set -euo pipefail
           go run scripts/manifest_check.go
 
+      # pkg/ exists so a packager can find the recipe for a format without
+      # reading the release pipeline, and that only holds while it is
+      # complete. A directory of prose cannot notice that a new format
+      # shipped last month, which is how this kind of directory rots, so
+      # the pipeline is the source of truth and this compares against it.
+      - name: pkg/ documents every distribution format
+        env:
+          GOTOOLCHAIN: auto
+        run: go run scripts/pkg_check.go
+
       # The documentation site is only built by the Deploy Docs workflow, on
       # push to main — so a change that breaks the generator was invisible
       # until after it merged. Build it here too, and assert it covers every

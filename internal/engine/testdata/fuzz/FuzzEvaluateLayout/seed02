@@ -1,0 +1,6 @@
+go test fuzz v1
+string("{{.Name}}")
+string("Public")
+string("\xff\xfe")
+string("repo")
+string("owner")

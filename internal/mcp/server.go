@@ -6,12 +6,15 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sebastienrousseau/corral/internal/symbols"
 )
 
 // ServerName is the public identifier the MCP server advertises to clients.
@@ -38,12 +41,27 @@ type ServerOptions struct {
 	// harm distinct from clone/sync mistakes, so it earns its own opt-in.
 	// Ignored unless EnableMutations is also true.
 	EnableDestructiveMutations bool
+	// SymbolCacheDir is where extracted symbols are persisted between
+	// processes. Empty means the platform default; "off" disables the
+	// cache, which is for a machine where the extra directory is
+	// unwelcome rather than for correctness — a stale entry cannot be
+	// served, because a hit still walks the repository.
+	SymbolCacheDir string
+
 	// AllowFileExts extends the file-resource extension allowlist with
 	// additional extensions (with or without a leading dot). The default
 	// allowlist covers source, documentation and non-secret configuration;
 	// this is the escape hatch for a workspace with house extensions.
 	// It cannot re-enable a denylisted credential file.
 	AllowFileExts []string
+	// ConfirmDeletes asks the connected client to confirm each deletion
+	// through MCP elicitation, and refuses when no one can be asked.
+	//
+	// Defaults on. --enable-destructive-mutations is a decision made once
+	// at launch; after it, every call was authorised purely by having been
+	// registered. The refusal cascade stops mistakes, not a persuaded
+	// agent that picks the one clone passing every check.
+	ConfirmDeletes bool
 	// AuditLogPath is where the JSONL audit log for every mutation is
 	// appended. Empty means use the XDG default
 	// ($XDG_STATE_HOME/corral/mutations.log). Only consulted when at
@@ -60,6 +78,13 @@ type Server struct {
 	opts    ServerOptions
 	auditor *Auditor
 
+	// toolNames records every tool registered on this server, so its own
+	// surface is knowable in code rather than only in prose.
+	toolNames []string
+	// symbolDisk persists extraction between processes. Nil when a cache
+	// directory could not be created, which degrades to the behaviour
+	// before it existed.
+	symbolDisk symbols.Cache
 	// extraFileExts is opts.AllowFileExts in the normalised lookup form the
 	// file resource checks against. Computed once at construction so the
 	// hot path does no string work.
@@ -70,6 +95,13 @@ type Server struct {
 	// often than the set of repositories does, so it gets its own cache
 	// with its own TTL.
 	symbolCache *symbolCache
+
+	// confirmDeletes and confirmer implement per-call authority for
+	// deletion; repoLocks serialises mutations per clone, which only
+	// started to matter once the server could accept concurrent sessions.
+	confirmDeletes bool
+	confirmer      confirmer
+	repoLocks      *repoLocks
 
 	// scanMu guards the in-memory workspace-index cache below.
 	// Every tool and resource handler goes through Server.scan(),
@@ -163,16 +195,25 @@ func NewServer(opts ServerOptions) (*Server, error) {
 	)
 
 	s := &Server{
-		mcp:           mcpSrv,
-		opts:          opts,
-		extraFileExts: normalizeExtraExts(opts.AllowFileExts),
-		symbolCache:   newSymbolCache(),
+		mcp:            mcpSrv,
+		opts:           opts,
+		extraFileExts:  normalizeExtraExts(opts.AllowFileExts),
+		symbolCache:    newSymbolCache(),
+		symbolDisk:     newSymbolDiskCache(opts.SymbolCacheDir),
+		confirmDeletes: opts.ConfirmDeletes,
+		confirmer:      elicitConfirmer{},
+		repoLocks:      newRepoLocks(),
 	}
 	if opts.EnableMutations || opts.EnableDestructiveMutations {
 		s.auditor = NewAuditor(opts.AuditLogPath)
 	}
 	s.registerTools()
 	s.registerSymbolTools()
+	s.registerSearchTool()
+
+	// Freshness hints on the results that carry them, so a client stops
+	// re-fetching a tool listing that cannot have changed.
+	s.mcp.AddReceivingMiddleware(cacheHintMiddleware())
 	s.registerResources()
 	s.registerPrompts()
 	if s.opts.EnableMutations {
@@ -338,6 +379,10 @@ func serverInstructions(opts ServerOptions) string {
 		b.WriteString("Write tools are enabled, including corral_delete_repo. " +
 			"Deletion refuses when the clone holds uncommitted, unpushed, stashed, " +
 			"gitignored or submodule work. Every mutation is written to an audit log.")
+		if opts.ConfirmDeletes {
+			b.WriteString(" Each deletion additionally requires a person to confirm it, " +
+				"so do not treat a delete as something you can perform unattended.")
+		}
 	case opts.EnableMutations:
 		b.WriteString("Write tools (corral_sync_repo, corral_clone_repo) are enabled and audited. " +
 			"Deletion is not available.")
@@ -345,4 +390,66 @@ func serverInstructions(opts ServerOptions) string {
 		b.WriteString("This server is read-only: no tool here modifies the filesystem.")
 	}
 	return b.String()
+}
+
+// listenAndServe is indirected so a test can drive the branch below where
+// the listener stops on its own. Today only Shutdown closes this server and
+// Shutdown is reached through ctx.Done, so ErrServerClosed cannot arrive on
+// the error channel in production — the guard is there so that a future
+// caller adding a Close path does not turn an orderly stop into a crash
+// report, and the seam is what keeps that guard from being an untested claim.
+var listenAndServe = func(srv *http.Server) error { return srv.ListenAndServe() }
+
+// ServeHTTP runs the server on the Streamable HTTP transport, the MCP
+// standard for anything not launched as a subprocess.
+//
+// Blocks until the listener fails or ctx is cancelled.
+//
+// The address should stay on loopback unless the caller has thought about
+// it. This server reads a developer's whole workspace and, when mutations
+// are enabled, writes to it; there is no authentication here, so binding
+// it to a routable interface publishes that. The cmd layer refuses a
+// non-loopback bind without an explicit flag, and this logs what it is
+// listening on so an operator can see which it got.
+func (s *Server) ServeHTTP(ctx context.Context, addr string) error {
+	handler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return s.mcp },
+		// Stateless: every request carries its own identity, so any
+		// instance can serve any request and there is no session to leak
+		// between clients. It is also what the 2026-07-28 protocol moved
+		// to, so this matches where clients are heading rather than
+		// where they have been.
+		&mcp.StreamableHTTPOptions{Stateless: true},
+	)
+
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: handler,
+		// A workspace scan on a large tree is the slowest thing here, and
+		// a symbol extraction is slower still, so the read and write
+		// budgets are generous. ReadHeaderTimeout is not: it is the one
+		// that bounds a slow-loris connection, and no legitimate client
+		// needs a second to send its headers.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+
+	errs := make(chan error, 1)
+	go func() { errs <- listenAndServe(srv) }()
+
+	select {
+	case err := <-errs:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		// Give in-flight calls a moment to finish rather than cutting a
+		// mutation off mid-write.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	}
 }

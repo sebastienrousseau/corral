@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,12 +73,12 @@ func TestAuditLogKeepsBoundedGenerations(t *testing.T) {
 	}
 
 	for gen := 1; gen <= auditLogGenerations; gen++ {
-		name := path + "." + string(rune('0'+gen))
+		name := fmt.Sprintf("%s.%d", path, gen)
 		if _, err := os.Stat(name); err != nil {
 			t.Fatalf("expected retained generation %s: %v", name, err)
 		}
 	}
-	beyond := path + "." + string(rune('0'+auditLogGenerations+1))
+	beyond := fmt.Sprintf("%s.%d", path, auditLogGenerations+1)
 	if _, err := os.Stat(beyond); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("generation %s should have been discarded, stat err = %v", beyond, err)
 	}
@@ -99,11 +100,12 @@ func TestAuditLogRotationPreservesRecords(t *testing.T) {
 	// retention window.
 	var combined strings.Builder
 	for gen := auditLogGenerations; gen >= 1; gen-- {
-		if body, err := os.ReadFile(path + "." + string(rune('0'+gen))); err == nil {
+		gen := fmt.Sprintf("%s.%d", path, gen)
+		if body, err := os.ReadFile(gen); err == nil { // #nosec G304 -- test-controlled path
 			combined.Write(body)
 		}
 	}
-	body, err := os.ReadFile(path)
+	body, err := os.ReadFile(path) // #nosec G304 -- test-controlled path
 	if err != nil {
 		t.Fatal(err)
 	}

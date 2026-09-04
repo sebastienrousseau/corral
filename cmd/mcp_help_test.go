@@ -5,42 +5,71 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sebastienrousseau/corral/internal/mcp"
 )
 
-// readOnlyTools is the read-only tool set the MCP server registers.
+// The MCP help text is checked against the server's own registered tool
+// set rather than against a list maintained here.
 //
-// Kept here as the one place the help text is checked against. The count
-// in that text has now drifted twice — it said "five" while seven were
-// registered, and the two symbol tools were absent entirely — which is a
-// documentation bug that matters more than most: `corralctl mcp --help` is
-// how someone discovers what the server can do, and it is the text the
-// generated manpage carries.
+// A hand-kept list is only as good as the discipline of updating it, and
+// this text has drifted twice: it said "five" while seven were registered,
+// and the two symbol tools were missing entirely. A list in the test would
+// have missed the third drift too — corral_search_code was added and every
+// test still passed, because the list did not know about it.
 //
-// Adding a tool means adding it here, which fails this test until the help
-// text is updated too.
-var readOnlyTools = []string{
-	"corral_find_symbol",
-	"corral_repo_overview",
-	"corral_list_repos",
-	"corral_find_repo",
-	"corral_get_repo_metadata",
-	"corral_status_summary",
-	"corral_workspace_index",
+// Asking a real server what it registered removes the second place to
+// forget. Adding a tool now fails this test until the help text mentions
+// it.
+func registeredTools(t *testing.T, mutations bool) []string {
+	t.Helper()
+	srv, err := mcp.NewServer(mcp.ServerOptions{
+		Root:                       t.TempDir(),
+		Version:                    "test",
+		EnableMutations:            mutations,
+		EnableDestructiveMutations: mutations,
+		AuditLogPath:               filepath.Join(t.TempDir(), "audit.log"),
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv.ToolNames()
 }
 
-// mutationTools are registered only behind --enable-mutations.
-var mutationTools = []string{
-	"corral_sync_repo",
-	"corral_clone_repo",
-	"corral_delete_repo",
+// readOnlyToolNames is what a default server exposes.
+func readOnlyToolNames(t *testing.T) []string {
+	t.Helper()
+	return registeredTools(t, false)
+}
+
+// mutationToolNames is what --enable-mutations and
+// --enable-destructive-mutations add on top.
+func mutationToolNames(t *testing.T) []string {
+	t.Helper()
+	read := map[string]bool{}
+	for _, n := range readOnlyToolNames(t) {
+		read[n] = true
+	}
+	var extra []string
+	for _, n := range registeredTools(t, true) {
+		if !read[n] {
+			extra = append(extra, n)
+		}
+	}
+	return extra
 }
 
 func TestMCPHelpListsEveryTool(t *testing.T) {
 	help := mcpCmd.Long
 
-	for _, name := range append(append([]string{}, readOnlyTools...), mutationTools...) {
+	all := append(readOnlyToolNames(t), mutationToolNames(t)...)
+	if len(all) == 0 {
+		t.Fatal("the server registered no tools at all")
+	}
+	for _, name := range all {
 		if !strings.Contains(help, name) {
 			t.Errorf("`corralctl mcp --help` does not mention %s", name)
 		}
@@ -55,21 +84,22 @@ func TestMCPHelpCountIsAccurate(t *testing.T) {
 
 	spelled := map[int]string{
 		4: "four", 5: "five", 6: "six", 7: "seven",
-		8: "eight", 9: "nine", 10: "ten",
+		8: "eight", 9: "nine", 10: "ten", 11: "eleven", 12: "twelve",
 	}
-	want, ok := spelled[len(readOnlyTools)]
+	n := len(readOnlyToolNames(t))
+	want, ok := spelled[n]
 	if !ok {
-		t.Fatalf("no spelling for %d tools; extend the table", len(readOnlyTools))
+		t.Fatalf("no spelling for %d tools; extend the table", n)
 	}
 	claim := fmt.Sprintf("%s read-only tools", want)
 	if !strings.Contains(help, claim) {
-		t.Errorf("help should say %q for %d read-only tools", claim, len(readOnlyTools))
+		t.Errorf("help should say %q for %d read-only tools", claim, n)
 	}
 
 	// Any other spelled number in front of "read-only tools" is a stale
 	// claim that happens to sit beside a correct list.
-	for n, word := range spelled {
-		if n == len(readOnlyTools) {
+	for count, word := range spelled {
+		if count == n {
 			continue
 		}
 		if strings.Contains(help, word+" read-only tools") {

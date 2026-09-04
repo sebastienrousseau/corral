@@ -1,0 +1,2 @@
+go test fuzz v1
+string("ssh://git@github.com:22/owner/repo.git")

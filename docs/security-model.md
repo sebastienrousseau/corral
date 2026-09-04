@@ -47,6 +47,14 @@ Corral operates across four trust boundaries:
 
 Boundary 2 also includes `git clone` traffic to `github.com` over HTTPS.
 
+Boundary 4 is a pipe by default: the client launches the server as a
+subprocess and nothing else can reach it. `--http` turns it into a socket.
+The server carries no authentication of its own, so the address is required
+to be on loopback — a routable bind is refused unless the operator also
+passes `--allow-remote`, which asserts that they have put authentication in
+front of it. Anyone who can reach the socket has the server's full
+capability, including whatever mutations were enabled at startup.
+
 ## 3. Security properties (claims)
 
 We claim the following properties. Each is followed by the evidence.
@@ -134,10 +142,28 @@ local-only or divergent tags, gitignored content, and submodules holding
 unpublished commits; it refuses a target that is not a git repository, and the
 workspace root itself. It fails closed when verification is unavailable.
 
+Those refusals bound *mistakes*, not intent: an agent that has been talked
+into deleting the one clone holding no unpublished work passes every one of
+them, because the request is well-formed and the checks all succeed. So the
+capability gate, decided once at startup, is not the only authority a
+deletion needs. Each individual deletion is put to a person over MCP
+elicitation before it runs, which is access control at the execution layer
+rather than in prompt text. A client that cannot ask its user anything cannot
+delete; the confirmation fails closed when it cannot be obtained.
+`--no-confirm-deletes` removes this, and is documented as appropriate only
+for an unattended workspace the operator is willing to lose.
+
 **Evidence.**
 
 - `internal/mcp/mutations_test.go` covers capability gates, audit failures,
   credential redaction, and delete refusal paths.
+- `internal/mcp/confirm_test.go` covers the confirmation: approval, refusal,
+  a dismissed prompt, a client that cannot be asked, and a client that fails
+  while answering — each asserted against whether the directory still exists,
+  and driven over a real client session rather than a direct handler call.
+  It also asserts that a deletion the refusal cascade would decline never
+  reaches a person, so the prompt does not become something people learn to
+  click through.
 - `internal/mcp/coverage_paths_test.go` covers the audit-failure arm of every
   refusal and of every completed mutation, so an unloggable mutation cannot
   proceed quietly.

@@ -166,11 +166,33 @@ func ExtractorFor(path string) (Extractor, bool) {
 	return e, ok
 }
 
+// multiLanguage is implemented by an extractor that reports more than one
+// language name across the files it claims.
+//
+// The TypeScript extractor is one: it handles .js as well, and reporting a
+// JavaScript symbol as "typescript" would be a lie an agent could act on.
+// Optional rather than part of Extractor, because it is the exception.
+type multiLanguage interface {
+	// Languages is every language name this extractor can report.
+	Languages() []string
+}
+
 // Languages lists the indexed languages, sorted, for help text and for the
 // capability a tool description advertises.
+//
+// This is what a tool description tells an agent it covers, so it has to
+// match what symbols actually come back. An extractor that quietly reports
+// a name missing from here makes the tool look like it does not support a
+// language it does.
 func Languages() []string {
 	seen := map[string]struct{}{}
 	for _, e := range registry {
+		if m, ok := e.(multiLanguage); ok {
+			for _, l := range m.Languages() {
+				seen[l] = struct{}{}
+			}
+			continue
+		}
 		seen[e.Language()] = struct{}{}
 	}
 	out := make([]string, 0, len(seen))

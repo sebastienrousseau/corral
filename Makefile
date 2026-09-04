@@ -37,9 +37,10 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check docs-lint help
+        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard \
+        docs-lint help
 
-all: format vet spdx-check sbom-check example-check test test-race build
+all: format vet staticcheck spdx-check sbom-check pkg-check example-check test test-race build
 
 ## build: compile the binary with version metadata
 build:
@@ -94,12 +95,37 @@ test:
 	go test ./...
 
 ## test-race: run the suite under the race detector with shuffled order
+#
+# -count=1 because a race gate must never be answered from the test cache.
 test-race:
-	go test -race -shuffle=on ./...
+	go test -race -shuffle=on -count=1 ./...
+
+## race-hard: hammer the concurrent packages under the race detector
+#
+# One pass of `test-race` is weak evidence. A real race in
+# internal/mcp — a plain int incremented by the concurrent repository
+# fan-out — was missed by the full shuffled suite on every local run and
+# caught by CI, then reproduced 10 times out of 10 by running that one
+# test on its own. Whole-suite timing simply hides some interleavings.
+#
+# So the packages that actually run goroutines get repeated, focused runs.
+# RACE_RUNS overrides the count for a longer soak.
+RACE_RUNS ?= 10
+race-hard:
+	go test -race -count=$(RACE_RUNS) ./internal/mcp/ ./internal/symbols/ ./internal/search/ ./internal/engine/
 
 ## vet: run go vet
 vet:
 	go vet ./...
+
+## staticcheck: run staticcheck standalone, the way CI does
+#
+# Separate from `lint` on purpose. golangci-lint embeds staticcheck but
+# honours //nolint directives; the standalone binary CI runs honours only
+# //lint:ignore. A suppression that satisfies one and not the other passes
+# locally and fails in CI, which has now happened twice.
+staticcheck:
+	go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 ## lint: run golangci-lint
 lint:
@@ -117,14 +143,66 @@ example-check:
 doc-check:
 	go run scripts/doc_coverage.go
 
+## eval: run the MCP evaluation suite and write a report
+# The path is absolute because `go test` runs each package in its own
+# directory, so a relative one would land under internal/mcp.
+eval:
+	@mkdir -p $(DIST)
+	CORRAL_EVAL_REPORT=$(CURDIR)/$(DIST)/eval.json \
+	  go test ./internal/mcp/ -count=1 -v \
+	  -run 'TestEval|TestEveryReadTool|TestToolDescriptions|TestEveryToolIsDescribed|TestServerInstructionsOrient'
+	@echo "eval report: $(DIST)/eval.json"
+
+## pkg-check: verify pkg/ documents every distribution format built
+pkg-check:
+	go run scripts/pkg_check.go
+
 ## spdx-check: verify every source file carries an SPDX header
 spdx-check:
 	go run scripts/spdx_sweep.go -check
 
+# codespell's skip list and accepted words, kept identical to
+# .github/workflows/docs-lint.yml. They had drifted: the Makefile passed
+# neither the ignore list nor half the skip paths, so running it locally
+# reported findings CI does not — which is how a target ends up being run
+# with `|| true` and stops meaning anything.
+#
+#   intoto      the in-toto attestation format, spelled correctly
+#   statuss     a deliberate typo in the "did you mean" suggestion tests
+#   confg       likewise, a deliberate typo fixture
+#   gitub       a deliberate misspelling of "github", used to test the
+#               unknown-forge error message
+#   repositor   the stem in `"repositor" + plural(n)`
+#   unparseable accepted variant spelling used throughout
+CODESPELL_SKIP ?= ./.git,./docs-site,./public,./go.sum,./dist,./build,./node_modules
+CODESPELL_IGNORE ?= intoto,statuss,confg,gitub,repositor,unparseable
+
 ## docs-lint: markdownlint + codespell over the prose
+#
+# npx is the fallback rather than a hard requirement on a global install,
+# because a silent skip is worse than either. This target printed
+# "markdownlint not installed; skipping" and exited 0 on a machine that had
+# no markdownlint, so a broken table passed locally and failed in CI — a
+# gate that cannot run must say so loudly, not report success.
 docs-lint:
-	@command -v markdownlint >/dev/null && markdownlint '**/*.md' --ignore node_modules --ignore docs-site || echo "markdownlint not installed; skipping"
-	@command -v codespell >/dev/null && codespell --skip='./.git,./docs-site,./public,go.sum' || echo "codespell not installed; skipping"
+	@if command -v markdownlint-cli2 >/dev/null 2>&1; then \
+	  markdownlint-cli2 '**/*.md'; \
+	elif command -v markdownlint >/dev/null 2>&1; then \
+	  markdownlint '**/*.md' --ignore node_modules --ignore docs-site; \
+	elif command -v npx >/dev/null 2>&1; then \
+	  npx --yes markdownlint-cli2@0.23.2 '**/*.md'; \
+	else \
+	  echo "!! GATE DID NOT RUN: markdownlint is unavailable and npx is missing." >&2; \
+	  echo "!! CI will still run it. Install node, or expect a surprise." >&2; \
+	  exit 1; \
+	fi
+	@if command -v codespell >/dev/null 2>&1; then \
+	  codespell --skip='$(CODESPELL_SKIP)' --ignore-words-list='$(CODESPELL_IGNORE)'; \
+	else \
+	  echo "!! GATE DID NOT RUN: codespell is unavailable." >&2; \
+	  echo "!! CI will still run it. Install it, or expect a surprise." >&2; \
+	  exit 1; \
+	fi
 
 ## format: gofmt the tree
 format:

@@ -58,6 +58,7 @@ func main() {
 	problems = append(problems, checkServerManifest()...)
 	problems = append(problems, checkBaseImage()...)
 	problems = append(problems, checkOSPSConsistency()...)
+	problems = append(problems, checkChangelogLinks()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -68,6 +69,55 @@ func main() {
 	}
 	fmt.Println("Manifest check: SBOM.md, server.json and the prose docs agree with go.mod, CHANGELOG.md and the Dockerfile")
 }
+
+// checkChangelogLinks verifies every release heading in CHANGELOG.md has
+// a matching link reference, and that no reference points at a release
+// that does not exist.
+//
+// Keep a Changelog puts the compare links in a block at the bottom, far
+// from the entry somebody just wrote — so they are the part that drifts,
+// silently, and only show up as a dead link in a rendered changelog
+// months later. Version 0.0.28 shipped without one.
+func checkChangelogLinks() []string {
+	b, err := os.ReadFile("CHANGELOG.md")
+	if err != nil {
+		return []string{fmt.Sprintf("reading CHANGELOG.md: %v", err)}
+	}
+
+	headings := map[string]bool{}
+	links := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if m := anyChangelogHeading.FindStringSubmatch(line); m != nil {
+			headings[m[1]] = true
+		}
+		if m := changelogLinkRef.FindStringSubmatch(line); m != nil {
+			links[m[1]] = true
+		}
+	}
+
+	var problems []string
+	for h := range headings {
+		if !links[h] {
+			problems = append(problems, fmt.Sprintf(
+				"CHANGELOG.md has a [%s] heading with no link reference at the bottom of the file", h))
+		}
+	}
+	for l := range links {
+		if !headings[l] {
+			problems = append(problems, fmt.Sprintf(
+				"CHANGELOG.md has a [%s] link reference with no matching heading", l))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// anyChangelogHeading matches a heading, released or not, so Unreleased
+// is checked for a link too — it is the one people follow most.
+var anyChangelogHeading = regexp.MustCompile(`^## \[([^\]]+)\]`)
+
+// changelogLinkRef matches a Markdown link reference definition.
+var changelogLinkRef = regexp.MustCompile(`^\[([^\]]+)\]:\s+http`)
 
 // checkSBOM compares SBOM.md's table with go.mod's direct requirements.
 func checkSBOM() []string {

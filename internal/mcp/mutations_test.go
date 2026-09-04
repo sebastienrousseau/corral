@@ -268,8 +268,14 @@ func TestDeleteRepoSucceedsWhenClean(t *testing.T) {
 	if got["result"] != "deleted" {
 		t.Errorf("result = %v, want deleted", got["result"])
 	}
-	if !strings.HasSuffix(removed, filepath.Join("Public", "go", "alpha")) {
-		t.Errorf("removed the wrong path: %q", removed)
+	// The clone is staged aside before it is removed (SEC-5), so what
+	// reaches removeMutation is the staged name — in the same directory,
+	// derived from the original, and marked as machinery.
+	if !strings.HasPrefix(filepath.Base(removed), stagePrefix+"alpha-") {
+		t.Errorf("removed %q, want a staged copy of alpha", removed)
+	}
+	if !strings.HasSuffix(filepath.Dir(removed), filepath.Join("Public", "go")) {
+		t.Errorf("staged outside the clone's own directory: %q", removed)
 	}
 	recs := auditRecords(t, audit)
 	if len(recs) != 2 || recs[1].Result != "ok" {

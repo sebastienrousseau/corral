@@ -84,6 +84,9 @@ Read-only, available by default:
 | `corral_get_repo_metadata` | Full metadata for one clone, including its current branch |
 | `corral_status_summary` | Workspace summary: counts by visibility and language |
 | `corral_workspace_index` | The full structured index, in a single call |
+| `corral_find_symbol` | Find where a symbol is declared, across *every* clone at once |
+| `corral_repo_overview` | Summarise one repository's shape — languages, entry points, layout |
+| `corral_search_code` | Find where text appears — call sites, config keys, error strings — across *every* clone |
 
 ## Mutations and audit
 
@@ -96,13 +99,40 @@ they shell out to `git`. The GitHub API is still never contacted.
 | --- | --- | --- |
 | `corral_sync_repo` | Runs `git pull --rebase --autostash` against one clone | `--enable-mutations` |
 | `corral_clone_repo` | Clones a URL into a sandboxed target path | `--enable-mutations` |
-| `corral_delete_repo` | Removes a clone; refuses on uncommitted or unpushed changes | `--enable-destructive-mutations` |
+| `corral_delete_repo` | Removes a clone; refuses on uncommitted or unpushed changes, and asks a person to approve each deletion | `--enable-destructive-mutations` |
 
 Deletion sits behind a second, separate flag on purpose, and it refuses
 outright when a clone holds uncommitted or unpushed work rather than asking an
 agent to decide.
 
+Those refusals stop *mistakes*. They do nothing about a persuaded agent that
+picks the one clone holding no unpublished work, because every check passes
+and the deletion is exactly what was asked for. So each individual deletion is
+also put to a person, over MCP elicitation, before it runs — access control at
+the execution layer rather than in prompt text, which is where the 2026 MCP
+security guidance puts it. A client that cannot ask its user anything cannot
+delete. `--no-confirm-deletes` switches this off, and is only appropriate for
+an unattended workspace you are willing to lose.
+
 Every mutation writes a JSONL audit record to
 `$XDG_STATE_HOME/corral/mutations.log`, falling back to
 `~/.local/state/corral/mutations.log`. What an agent did to your workspace is
 therefore reconstructable after the fact, which is the point.
+
+## Transport
+
+By default the server speaks stdio: the client launches `corralctl mcp` as a
+subprocess and talks to it over the pipe. There is no endpoint and no
+listening port.
+
+`--http 127.0.0.1:7777` serves the Streamable HTTP transport instead, for a
+client that connects to a server somebody else started. The transport is
+stateless, so any instance can serve any request.
+
+The address has to be on loopback. This server has no authentication and
+exposes every repository under its root — with mutations enabled, it can
+change them — so binding it to a routable interface publishes all of that.
+`--http :7777`, which is the form typed by somebody thinking about the port
+and not the host, binds every interface and is refused with an explanation.
+`--allow-remote` overrides the refusal, and is for the case where you have
+put your own authentication in front of it.

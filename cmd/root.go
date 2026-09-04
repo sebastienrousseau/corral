@@ -38,6 +38,8 @@ var (
 	limit               int
 	output              string
 	authMode            string
+	forgeName           string
+	forgeURL            string
 	visibility          string
 	includeForks        bool
 	includeArchived     bool
@@ -142,6 +144,8 @@ var rootCmd = &cobra.Command{
 			DoSync:      !noSync,
 			Output:      engine.OutputFormat(output),
 			Interactive: interactive,
+			Forge:       forgeName,
+			ForgeURL:    forgeURL,
 			Fetch: github.FetchOptions{
 				Limit:            lim,
 				Visibility:       visibility,
