@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -504,4 +506,162 @@ func TestLoadConfigIgnoresCommentKeysButNotTypos(t *testing.T) {
 			t.Error(`"/defaults" is a typo, not a comment, and must still fail`)
 		}
 	})
+}
+
+// TestFetchReposForOpsHonoursTheForge is the gap that made `--forge` a lie
+// on prune: the listing went straight to the GitHub client regardless of
+// the flag, so a Codeberg run compared Codeberg clones against a GitHub
+// listing.
+func TestFetchReposForOpsHonoursTheForge(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/users/acme/repos") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{
+			"id": 1, "name": "tool", "full_name": "acme/tool",
+			"owner": {"login": "acme"},
+			"clone_url": "https://git.example.com/acme/tool.git"
+		}]`))
+	}))
+	defer srv.Close()
+
+	oldName, oldURL := forgeName, forgeURL
+	forgeName, forgeURL = "gitea", srv.URL
+	t.Cleanup(func() { forgeName, forgeURL = oldName, oldURL })
+
+	repos, err := fetchReposForOps(context.Background(), "acme", github.FetchOptions{})
+	if err != nil {
+		t.Fatalf("fetchReposForOps: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("got %d repositories, want 1", len(repos))
+	}
+	// The clone URL has to survive: it is what prune builds upstream
+	// identities from, and a missing one silently makes every clone an
+	// orphan.
+	if repos[0].CloneURL != "https://git.example.com/acme/tool.git" {
+		t.Errorf("clone URL = %q", repos[0].CloneURL)
+	}
+}
+
+func TestFetchReposForOpsReportsAnUnknownForge(t *testing.T) {
+	oldName := forgeName
+	forgeName = "gitub"
+	t.Cleanup(func() { forgeName = oldName })
+
+	if _, err := fetchReposForOps(context.Background(), "acme", github.FetchOptions{}); err == nil {
+		t.Error("an unknown forge should be an error, not a silent GitHub fetch")
+	}
+}
+
+// prunePreamble puts the package-level flag state back after a test that
+// drives pruneCmd directly.
+func prunePreamble(t *testing.T, root string) {
+	t.Helper()
+	oldBase, oldDry, oldYes, oldOut := baseDir, dryRun, assumeYes, pruneOutput
+	oldFetch, oldCheck, oldRemove := opsFetchRepos, localStateCheck, removeAll
+	oldName, oldURL, oldLimit := forgeName, forgeURL, limit
+	t.Cleanup(func() {
+		baseDir, dryRun, assumeYes, pruneOutput = oldBase, oldDry, oldYes, oldOut
+		opsFetchRepos, localStateCheck, removeAll = oldFetch, oldCheck, oldRemove
+		forgeName, forgeURL, limit = oldName, oldURL, oldLimit
+	})
+	baseDir, dryRun, assumeYes, pruneOutput, limit = root, false, true, "text", 0
+	localStateCheck = func(context.Context, string) (bool, string) { return false, "" }
+}
+
+// TestPruneComparesOnTheForgeItListedFrom is the whole point of the fix.
+//
+// Upstream identities used to be built as "github.com/" + FullName, so a
+// Codeberg listing produced identities no Codeberg clone could match.
+// Combined with a hardcoded owner prefix, prune was a silent no-op off
+// GitHub — and fixing either one alone would have made it delete.
+func TestPruneComparesOnTheForgeItListedFrom(t *testing.T) {
+	root := t.TempDir()
+	orphan := makeLocalRepo(t, root, "Public/other/gone", "https://codeberg.org/acme/gone.git")
+	makeLocalRepo(t, root, "Public/other/kept", "https://codeberg.org/acme/kept.git")
+	// Same owner name, different host: not this listing's business.
+	makeLocalRepo(t, root, "Public/go/elsewhere", "https://github.com/acme/elsewhere.git")
+
+	prunePreamble(t, root)
+	forgeName, forgeURL = "codeberg", ""
+	opsFetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{
+			Name: "kept", FullName: "acme/kept",
+			CloneURL: "https://codeberg.org/acme/kept.git",
+		}}, nil
+	}
+	var removed []string
+	removeAll = func(path string) error { removed = append(removed, path); return nil }
+
+	if err := pruneCmd.RunE(pruneCmd, []string{"acme"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != orphan {
+		t.Fatalf("removed %v, want only the Codeberg orphan %s", removed, orphan)
+	}
+}
+
+// TestPruneRefusesWhenItCannotIdentifyTheOwner: with no clone URLs and no
+// host to fall back on, nothing can be attributed to this owner — and
+// prune's answer to an unattributable clone must never be rm -rf.
+func TestPruneRefusesWhenItCannotIdentifyTheOwner(t *testing.T) {
+	root := t.TempDir()
+	makeLocalRepo(t, root, "Public/other/thing", "https://git.example.com/acme/thing.git")
+
+	prunePreamble(t, root)
+	// A self-hosted forge with no instance URL, and a listing carrying no
+	// clone URLs: there is nothing to derive a prefix from.
+	forgeName, forgeURL = "gitea", ""
+	opsFetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "thing"}}, nil
+	}
+	removeAll = func(path string) error {
+		t.Errorf("nothing should be removed: %s", path)
+		return nil
+	}
+
+	err := pruneCmd.RunE(pruneCmd, []string{"acme"})
+	if err == nil {
+		t.Fatal("expected a refusal rather than a guess")
+	}
+	for _, want := range []string{"refusing to prune", "--forge-url"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal should mention %q: %v", want, err)
+		}
+	}
+}
+
+func TestPruneReportsAnUnknownForge(t *testing.T) {
+	root := t.TempDir()
+	prunePreamble(t, root)
+	forgeName = "gitub"
+	opsFetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "x", CloneURL: "https://github.com/acme/x.git"}}, nil
+	}
+	if err := pruneCmd.RunE(pruneCmd, []string{"acme"}); err == nil {
+		t.Error("an unknown forge should be an error")
+	}
+}
+
+// TestPruneFallsBackWhenAForgeReturnsNoCloneURL keeps a listing usable
+// when a forge omits the URL: the repository still has an identity, and
+// dropping it would make every clone look like an orphan.
+func TestPruneFallsBackWhenAForgeReturnsNoCloneURL(t *testing.T) {
+	root := t.TempDir()
+	makeLocalRepo(t, root, "Public/go/kept", "https://github.com/acme/kept.git")
+
+	prunePreamble(t, root)
+	forgeName, forgeURL = "github", ""
+	opsFetchRepos = func(context.Context, string, github.FetchOptions) ([]github.Repo, error) {
+		return []github.Repo{{Name: "kept", FullName: "acme/kept"}}, nil
+	}
+	removeAll = func(path string) error {
+		t.Errorf("a repository present upstream must not be removed: %s", path)
+		return nil
+	}
+	if err := pruneCmd.RunE(pruneCmd, []string{"acme"}); err != nil {
+		t.Fatal(err)
+	}
 }

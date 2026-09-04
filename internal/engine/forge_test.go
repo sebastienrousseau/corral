@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -195,5 +197,93 @@ func TestRunEFailsFastOnAnUnknownForge(t *testing.T) {
 	}
 	if called {
 		t.Error("the fetch should not have been attempted")
+	}
+}
+
+// TestFindOrphansIsForgeAware is the gap multi-forge cloning left behind.
+//
+// Orphan detection matched a hardcoded "github.com/<owner>/" prefix, so a
+// Codeberg clone was skipped rather than compared — `--orphans` reported
+// nothing and looked like it had run.
+func TestFindOrphansIsForgeAware(t *testing.T) {
+	base := t.TempDir()
+	mk := func(rel, remote string) string {
+		t.Helper()
+		dir := filepath.Join(base, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		cfg := "[remote \"origin\"]\n\turl = " + remote + "\n"
+		if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	orphan := mk("Public/other/deleted-upstream", "https://codeberg.org/acme/deleted-upstream.git")
+	mk("Public/other/kept", "https://codeberg.org/acme/kept.git")
+	// The same owner name on a different host. Matching it is the bug the
+	// hardcoded prefix was originally added to prevent, so it must stay
+	// prevented.
+	mk("Public/other/elsewhere", "https://github.com/acme/elsewhere.git")
+
+	upstream := []github.Repo{
+		{Name: "kept", FullName: "acme/kept", CloneURL: "https://codeberg.org/acme/kept.git"},
+	}
+
+	got := findOrphansOn("acme", base, upstream, "codeberg", "")
+	if len(got) != 1 {
+		t.Fatalf("found %v, want exactly the Codeberg orphan", got)
+	}
+	if got[0] != orphan {
+		t.Errorf("found %q, want %q", got[0], orphan)
+	}
+}
+
+// TestFindOrphansStillScopesByHost: the fix must not reintroduce the
+// cross-host false positive it replaced.
+func TestFindOrphansStillScopesByHost(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "Public", "go", "elsewhere")
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = https://gitlab.com/acme/elsewhere.git\n"
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Listing GitHub. A GitLab clone under the same owner name is not a
+	// GitHub orphan.
+	upstream := []github.Repo{
+		{Name: "something", FullName: "acme/something", CloneURL: "https://github.com/acme/something.git"},
+	}
+	if got := findOrphansOn("acme", base, upstream, "github", ""); len(got) != 0 {
+		t.Errorf("a clone on another host was reported as an orphan: %v", got)
+	}
+}
+
+// TestFindOrphansWithNoPrefixesFindsNothing: no prefixes means nothing can
+// be identified as this owner's, and the caller's answer to an orphan is
+// deletion.
+func TestFindOrphansWithNoPrefixesFindsNothing(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "Public", "go", "anything")
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = https://git.example.com/acme/anything.git\n"
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A self-hosted forge with no instance URL and an empty listing: there
+	// is nothing to derive a prefix from.
+	if got := findOrphansOn("acme", base, nil, "gitea", ""); len(got) != 0 {
+		t.Errorf("expected nothing without a prefix, got %v", got)
+	}
+	// An unresolvable forge likewise, rather than a panic or a default.
+	if got := findOrphansOn("acme", base, nil, "gitub", ""); len(got) != 0 {
+		t.Errorf("expected nothing for an unknown forge, got %v", got)
 	}
 }

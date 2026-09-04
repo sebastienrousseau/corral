@@ -10,7 +10,6 @@ import (
 
 	"github.com/sebastienrousseau/corral/internal/engine"
 	gitutil "github.com/sebastienrousseau/corral/internal/git"
-	"github.com/sebastienrousseau/corral/internal/github"
 )
 
 // TestCmdSeamsBindToRealImplementations pins the cmd-layer indirection seams to
@@ -29,7 +28,7 @@ func TestCmdSeamsBindToRealImplementations(t *testing.T) {
 		{"osExit", osExit, os.Exit},
 		{"engineRun", engineRun, engine.Run},
 		{"preflightRunner", preflightRunner, runPreflight},
-		{"opsFetchRepos", opsFetchRepos, github.FetchReposWithOptions},
+		{"opsFetchRepos", opsFetchRepos, fetchReposForOps},
 		{"localStateCheck", localStateCheck, gitutil.HasUnpublishedWork},
 		{"removeAll", removeAll, os.RemoveAll},
 		{"userHomeDir", userHomeDir, os.UserHomeDir},
