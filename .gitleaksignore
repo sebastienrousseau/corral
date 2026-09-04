@@ -16,11 +16,25 @@ f3c4d0c5e212a57480c3e3ba3b5c1af46f20b23a:internal/mcp/resources_test.go:private-
 # 26e13d17 — internal/mcp/eval_test.go, `stripe-access-token` rule.
 # The eval suite's fixture workspace contains a ".env" whose value must be
 # recognisable as a credential, because the scenarios assert it is never the
-# answer to a symbol lookup or a content search. The value written was
-# "sk_live_MaxAttempts": no key material, and no account it could belong to,
-# but it matches the shape of a real Stripe key well enough for the scanner.
+# answer to a symbol lookup or a content search. The value written had a
+# live-Stripe-key prefix followed by an ordinary identifier: no key material,
+# and no account it could belong to, but enough shape for the scanner.
 #
-# The fixture now reads "fixture-not-a-real-key-MaxAttempts", so this cannot
-# recur. This entry covers only the historical commit, which cannot be edited
-# without a rewrite.
+# The value is deliberately not repeated here. A first attempt at this comment
+# quoted it, and the explanation tripped the same rule in the very file that
+# exists to record the exception.
+#
+# The fixture now reads "fixture-not-a-real-key-…", so this cannot recur. This
+# entry covers only the historical commit, which cannot be edited without a
+# rewrite.
 26e13d17a94449f664ca03d43003961e5891e480:internal/mcp/eval_test.go:stripe-access-token:89
+
+# ec0cb037 — .gitleaksignore itself, `stripe-access-token` rule.
+# The entry above originally quoted the fixture value it was explaining, so
+# the comment recording the exception became a finding in its own right. The
+# text has been rewritten to describe the value instead of repeating it; this
+# entry covers the one commit where it was quoted.
+#
+# The lesson, recorded because it is not obvious: a file that documents
+# credential-shaped findings must describe them, never quote them.
+ec0cb0374690ae5eb79efa1f34fa018bbffb84d9:.gitleaksignore:stripe-access-token:20
