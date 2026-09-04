@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Symbol extraction covers Python, TypeScript, JavaScript and Rust.**
+  Cross-repository symbol lookup is the thing corral can do that a
+  single-repository index cannot, and until now it covered Go and nothing
+  else — which made it quietly wrong rather than merely limited. An agent
+  asking where `parse_config` is defined in a polyglot workspace did not
+  get "no match"; it got a match set missing every Python, TypeScript and
+  Rust clone, with nothing to say anything had been left out.
+
+  Go keeps `go/ast`, the compiler's own parser. The rest are read by a line
+  scanner, in the tradition ctags established in 1992, because every mature
+  parser for them is either CGO (tree-sitter), a port that lags the
+  language, or larger than corral itself. Each scanner runs over source
+  whose comment and string *contents* have been blanked — offsets and line
+  numbers preserved exactly — so a `class` in a docstring, a `function` in
+  a template literal and a `struct` in a nested block comment are all
+  invisible to it. ADR-0006 carries an amendment recording why this was
+  taken over the wazero-hosted tree-sitter path it had anticipated, and
+  states plainly what a scanner gives up.
+
+- **`corral_search_code`.** `corral_find_symbol` answers where something is
+  declared; this answers where it is written — call sites, configuration
+  keys, the error string from a ticket. One call searches every clone on
+  the machine, which is the part an agent cannot do with a shell, because
+  it does not know the clones are there.
+
+  Literal by default, RE2 with `regex`, and narrowable by `repo`,
+  `language` or `path_glob`. Only files the file resource would serve are
+  searched — otherwise search would be a way to read a refused file one
+  line at a time — and the check runs inside the walk, so a denied file is
+  never opened. Test files are excluded unless `include_tests` is set. The
+  response reports which bound it reached rather than presenting a partial
+  answer as a complete one.
+
+  Verified live against the real workspace: 187 repositories and 109,171
+  files in one call.
+
 - **The MCP server can serve over HTTP.** `corralctl mcp --http
   127.0.0.1:7777` runs the Streamable HTTP transport instead of stdio, for a
   client that connects to a server somebody else started rather than

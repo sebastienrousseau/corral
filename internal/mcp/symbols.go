@@ -131,14 +131,14 @@ type repoOverviewInput struct {
 func (s *Server) registerSymbolTools() {
 	langs := strings.Join(symbols.Languages(), ", ")
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_find_symbol",
 		Title:       "Find where a symbol is defined",
 		Annotations: readOnlyAnnotations(),
 		Description: "Find where a function, method, type, interface, constant or variable is defined, across every repository in the Corral workspace — not just one. This is the tool to reach for when you know a name but not which repository it lives in. Returns file and line, not source: read the file at the location it gives you. Indexed languages: " + langs + ". Test declarations are excluded unless include_tests is set. Results are paginated and the response reports whether any repository's index was truncated.",
 	}, s.handleFindSymbol)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_repo_overview",
 		Title:       "Summarise one repository",
 		Annotations: readOnlyAnnotations(),

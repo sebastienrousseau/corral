@@ -353,6 +353,9 @@ Where GitHub's own MCP server covers the remote API surface (issues, PRs, search
 - `corral_get_repo_metadata` — Full metadata for one clone, including current branch
 - `corral_status_summary` — Workspace summary: counts by visibility and language
 - `corral_workspace_index` — Full structured index in a single call
+- `corral_find_symbol` — Where a symbol is declared, across *every* clone
+- `corral_search_code` — Where text appears, across *every* clone
+- `corral_repo_overview` — One repository's shape in a single call
 
 **Write tools (v0.0.12, opt-in via `--enable-mutations`):**
 
@@ -509,6 +512,18 @@ outnumber everything else — and `include_tests` brings them back.
 `corral_repo_overview` summarises one repository in a single call: its
 origin, file count, declaration counts by kind, and its most significant
 exported types and functions. Reach for it before reading files.
+
+`corral_search_code` is the counterpart to `corral_find_symbol`: find_symbol
+answers where something is *declared*, search_code answers where it is
+*written* — call sites, configuration keys, the error string from a ticket.
+Literal by default, `regex` for RE2, and narrowable by `repo`, `language` or
+`path_glob`.
+
+It searches only the files the file resource would serve, so a credential
+file can never match — otherwise search would be a way to read a refused
+file one line at a time. Test files are excluded unless `include_tests` is
+set, and the response says plainly when a bound was reached rather than
+presenting a partial answer as complete.
 
 **Indexed languages: Go, Python, TypeScript, JavaScript, Rust.**
 

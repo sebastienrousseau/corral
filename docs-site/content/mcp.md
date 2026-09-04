@@ -86,6 +86,7 @@ Read-only, available by default:
 | `corral_workspace_index` | The full structured index, in a single call |
 | `corral_find_symbol` | Find where a symbol is declared, across *every* clone at once |
 | `corral_repo_overview` | Summarise one repository's shape — languages, entry points, layout |
+| `corral_search_code` | Find where text appears — call sites, config keys, error strings — across *every* clone |
 
 ## Mutations and audit
 

@@ -77,7 +77,7 @@ func redactCloneURL(raw string) string {
 func (s *Server) registerMutationTools() {
 	f := false
 	t := true
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_sync_repo",
 		Title: "Sync one repository",
 		Annotations: &mcp.ToolAnnotations{
@@ -89,7 +89,7 @@ func (s *Server) registerMutationTools() {
 		Description: "Run `git pull --rebase --autostash` against one clone in the Corral workspace. Requires --enable-mutations. Reuses corral's non-interactive git environment (no credential prompts, no signing pinentry) and honours smart-sync via the sync sidecar. Refuses when the repo isn't in the index or resolves outside the configured sandbox root.",
 	}, s.handleSyncRepo)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_clone_repo",
 		Title: "Clone a repository into the workspace",
 		Annotations: &mcp.ToolAnnotations{
@@ -108,7 +108,7 @@ func (s *Server) registerMutationTools() {
 func (s *Server) registerDestructiveTools() {
 	f := false
 	t := true
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:  "corral_delete_repo",
 		Title: "Delete a clone from the workspace",
 		Annotations: &mcp.ToolAnnotations{

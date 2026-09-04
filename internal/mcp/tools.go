@@ -69,35 +69,35 @@ func readOnlyAnnotations() *mcp.ToolAnnotations {
 
 // registerTools attaches the read-only tool set.
 func (s *Server) registerTools() {
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_list_repos",
 		Title:       "List local repository clones",
 		Annotations: readOnlyAnnotations(),
 		Description: "List local clones in the Corral-organised workspace, optionally filtered by visibility (Public/Private), language, repository-name substring, or whether a sync sidecar is present. Results are paginated: the response carries total_matched, returned and next_offset; pass next_offset back as 'offset' to continue. Use response_format 'concise' (the default) unless you specifically need origin URLs and sync timestamps — 'detailed' is roughly ten times larger per repository.",
 	}, s.handleListRepos)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_find_repo",
 		Title:       "Find one repository by name",
 		Annotations: readOnlyAnnotations(),
 		Description: "Resolve a fuzzy repository name (bare name, relative path, or path suffix) to a single local clone in the Corral workspace. Returns the matched repository, or an error listing all candidate paths when the query is ambiguous.",
 	}, s.handleFindRepo)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_get_repo_metadata",
 		Title:       "Get full metadata for one repository",
 		Annotations: readOnlyAnnotations(),
 		Description: "Return full metadata for a single local clone: repository entry, current branch, and parsed sync state. The branch lookup spawns one git subprocess per call; prefer corral_list_repos for bulk queries.",
 	}, s.handleRepoMetadata)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_status_summary",
 		Title:       "Summarise the workspace",
 		Annotations: readOnlyAnnotations(),
 		Description: "High-level workspace summary: total repository count and breakdowns by visibility and language. Cheap to compute; the right opening call for orienting in an unfamiliar workspace.",
 	}, s.handleStatusSummary)
 
-	mcp.AddTool(s.mcp, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "corral_workspace_index",
 		Title:       "Page through every repository",
 		Annotations: readOnlyAnnotations(),
@@ -293,4 +293,31 @@ var currentBranch = func(ctx context.Context, repoPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// addTool registers a tool and records its name.
+//
+// A thin wrapper over mcp.AddTool so the server knows its own surface.
+// Without it, "which tools does this server expose" has no answer in code,
+// and the only place the list exists is prose — which is exactly how
+// `corralctl mcp --help` came to claim five tools while seven were
+// registered, and later to omit two more entirely.
+//
+// ToolNames is what the help-text gate in cmd compares against, so a tool
+// added here and not documented fails a test rather than shipping.
+func addTool[In, Out any](s *Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	mcp.AddTool(s.mcp, t, h)
+	s.toolNames = append(s.toolNames, t.Name)
+}
+
+// ToolNames returns every tool this server registered, in registration
+// order.
+//
+// Which tools those are depends on the options the server was built with:
+// a read-only server reports the read set, and the write tools appear only
+// when they were unlocked.
+func (s *Server) ToolNames() []string {
+	out := make([]string, len(s.toolNames))
+	copy(out, s.toolNames)
+	return out
 }

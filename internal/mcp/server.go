@@ -70,6 +70,9 @@ type Server struct {
 	opts    ServerOptions
 	auditor *Auditor
 
+	// toolNames records every tool registered on this server, so its own
+	// surface is knowable in code rather than only in prose.
+	toolNames []string
 	// extraFileExts is opts.AllowFileExts in the normalised lookup form the
 	// file resource checks against. Computed once at construction so the
 	// hot path does no string work.
@@ -193,6 +196,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 	}
 	s.registerTools()
 	s.registerSymbolTools()
+	s.registerSearchTool()
 	s.registerResources()
 	s.registerPrompts()
 	if s.opts.EnableMutations {
