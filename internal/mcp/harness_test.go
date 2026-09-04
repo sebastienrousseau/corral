@@ -45,6 +45,12 @@ func newHarnessWithClient(t *testing.T, opts ServerOptions, clientOpts *mcp.Clie
 	if opts.Version == "" {
 		opts.Version = "test"
 	}
+	// Never the real one. Without this every test run writes into the
+	// developer's own ~/.cache, and a test that asserts a cache miss would
+	// pass or fail depending on what an earlier run left behind.
+	if opts.SymbolCacheDir == "" {
+		opts.SymbolCacheDir = t.TempDir()
+	}
 	srv, err := NewServer(opts)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

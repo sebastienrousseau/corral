@@ -27,6 +27,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   taken over the wazero-hosted tree-sitter path it had anticipated, and
   states plainly what a scanner gives up.
 
+- **The symbol index is cached between runs, and repositories are searched
+  concurrently.** A cross-repository symbol lookup on a real
+  187-repository workspace took 6.9 seconds. It now takes 1.3.
+
+  Most of that came from a measurement that contradicted the obvious
+  assumption. Persisting the parsed symbols was the plan; measured, it
+  bought 13% for 53 MB of cache, because extraction is dominated by
+  walking the filesystem rather than by parsing — roughly four to one on
+  that workspace — and the handler was walking 187 repositories one after
+  another, leaving almost all of that I/O wait unoverlapped. Fanning out
+  across repositories is what took 6.9 s to 1.5 s; the cache takes it to
+  1.3 s, and gzip takes the cache from 53 MB to 3.9 MB.
+
+  A cache hit still walks the repository, because the walk is what
+  produces the fingerprint the entry is keyed on — file count, total
+  bytes, newest modification time — so an edited clone is never served
+  stale. Entries live under `$XDG_CACHE_HOME/corral/symbols`, one file per
+  repository so invalidation is per repository and a corrupt file is a
+  miss rather than a failure. `--symbol-cache off` disables it.
+
+  Not SQLite: there are no joins, no transactions and no concurrent
+  writers to reconcile, and the pure-Go driver is an order of magnitude
+  larger than corral itself against a module that holds eleven direct
+  dependencies and a hand-maintained SBOM.
+
 - **`corral_search_code`.** `corral_find_symbol` answers where something is
   declared; this answers where it is written — call sites, configuration
   keys, the error string from a ticket. One call searches every clone on

@@ -18,6 +18,7 @@ var (
 	mcpRoot                       string
 	mcpEnableMutations            bool
 	mcpEnableDestructiveMutations bool
+	mcpSymbolCache                string
 	mcpAuditLog                   string
 	mcpAllowFileExts              string
 	mcpHTTP                       string
@@ -173,6 +174,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		ConfirmDeletes:             !mcpNoConfirmDeletes,
 		AuditLogPath:               mcpAuditLog,
 		AllowFileExts:              parseCSV(mcpAllowFileExts),
+		SymbolCacheDir:             mcpSymbolCache,
 	})
 	if err != nil {
 		return fmt.Errorf("constructing mcp server: %w", err)
@@ -238,6 +240,8 @@ func init() {
 		"delete without asking a person to confirm. Only for an unattended workspace you are willing to lose")
 	mcpCmd.Flags().StringVar(&mcpAllowFileExts, "allow-file-ext", "",
 		"comma-separated extra file extensions the file resource may serve (e.g. \"tpl,hbs\"). Cannot re-enable credential files")
+	mcpCmd.Flags().StringVar(&mcpSymbolCache, "symbol-cache", "",
+		"where to persist the symbol index between runs (defaults to $XDG_CACHE_HOME/corral/symbols; \"off\" disables it)")
 	mcpCmd.Flags().StringVar(&mcpAuditLog, "audit-log", "", "path to the mutation audit log (defaults to $XDG_STATE_HOME/corral/mutations.log or ~/.local/state/corral/mutations.log)")
 	rootCmd.AddCommand(mcpCmd)
 }

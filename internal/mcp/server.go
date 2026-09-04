@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sebastienrousseau/corral/internal/symbols"
 )
 
 // ServerName is the public identifier the MCP server advertises to clients.
@@ -40,6 +41,13 @@ type ServerOptions struct {
 	// harm distinct from clone/sync mistakes, so it earns its own opt-in.
 	// Ignored unless EnableMutations is also true.
 	EnableDestructiveMutations bool
+	// SymbolCacheDir is where extracted symbols are persisted between
+	// processes. Empty means the platform default; "off" disables the
+	// cache, which is for a machine where the extra directory is
+	// unwelcome rather than for correctness — a stale entry cannot be
+	// served, because a hit still walks the repository.
+	SymbolCacheDir string
+
 	// AllowFileExts extends the file-resource extension allowlist with
 	// additional extensions (with or without a leading dot). The default
 	// allowlist covers source, documentation and non-secret configuration;
@@ -73,6 +81,10 @@ type Server struct {
 	// toolNames records every tool registered on this server, so its own
 	// surface is knowable in code rather than only in prose.
 	toolNames []string
+	// symbolDisk persists extraction between processes. Nil when a cache
+	// directory could not be created, which degrades to the behaviour
+	// before it existed.
+	symbolDisk symbols.Cache
 	// extraFileExts is opts.AllowFileExts in the normalised lookup form the
 	// file resource checks against. Computed once at construction so the
 	// hot path does no string work.
@@ -187,6 +199,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		opts:           opts,
 		extraFileExts:  normalizeExtraExts(opts.AllowFileExts),
 		symbolCache:    newSymbolCache(),
+		symbolDisk:     newSymbolDiskCache(opts.SymbolCacheDir),
 		confirmDeletes: opts.ConfirmDeletes,
 		confirmer:      elicitConfirmer{},
 		repoLocks:      newRepoLocks(),

@@ -134,17 +134,37 @@ func skipSourceFile(rel string) bool {
 // ctx cancellation is honoured between files, so an agent that gives up
 // does not leave a pool parsing a monorepo.
 func ExtractRepo(ctx context.Context, root string) (*Result, error) {
+	return ExtractRepoCached(ctx, root, nil)
+}
+
+// ExtractRepoCached is ExtractRepo with a cache consulted before parsing.
+//
+// Extraction splits cleanly into a cheap walk and expensive parsing, and
+// the walk produces a fingerprint of what it found. So a cache hit still
+// walks — which is why a repository edited since the last call is never
+// served stale — and skips only the parsing, which is where the seconds
+// are. A nil cache is the uncached path.
+func ExtractRepoCached(ctx context.Context, root string, cache Cache) (*Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	paths, truncated, err := discover(ctx, root)
+	paths, truncated, fp, err := discover(ctx, root)
 	if err != nil {
 		return nil, err
 	}
 
+	if cache != nil {
+		if cached, ok := cache.Get(root, fp); ok {
+			return cached, nil
+		}
+	}
+
 	res := &Result{Files: len(paths), Truncated: truncated}
 	if len(paths) == 0 {
+		if cache != nil {
+			cache.Put(root, fp, res)
+		}
 		return res, nil
 	}
 
@@ -193,14 +213,30 @@ func ExtractRepo(ctx context.Context, root string) (*Result, error) {
 	// Workers finish in an arbitrary order, so the merged slice is
 	// arbitrary until sorted. Two identical queries must not disagree.
 	Sort(res.Symbols)
+
+	if cache != nil {
+		// Stored after the sort, so a cache hit and a cache miss return
+		// results in the same order. A cache that changed the answer
+		// would be worse than no cache.
+		cache.Put(root, fp, res)
+	}
 	return res, nil
 }
 
-// discover collects the source files an extractor claims, in walk order.
-func discover(ctx context.Context, root string) ([]string, bool, error) {
+// discover collects the source files an extractor claims, in walk order,
+// and fingerprints them along the way.
+//
+// The fingerprint is free here: the walk already stats every entry, so
+// accumulating a count, a byte total and the newest modification time
+// costs nothing beyond three additions. That matters because the walk is
+// the cheap half of extraction and parsing is the expensive half — a
+// fingerprint that can be computed without parsing is exactly what lets a
+// cache skip the parsing.
+func discover(ctx context.Context, root string) ([]string, bool, Fingerprint, error) {
 	var (
 		paths     []string
 		truncated bool
+		fp        Fingerprint
 	)
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if ctx.Err() != nil {
@@ -235,17 +271,24 @@ func discover(ctx context.Context, root string) ([]string, bool, error) {
 		if skipSourceFile(rel) {
 			return nil
 		}
+		if info, statErr := d.Info(); statErr == nil {
+			fp.Bytes += info.Size()
+			if mod := info.ModTime().UnixNano(); mod > fp.ModUnixNano {
+				fp.ModUnixNano = mod
+			}
+		}
 		paths = append(paths, rel)
 		return nil
 	})
 	if err != nil && ctx.Err() != nil {
-		return nil, false, err
+		return nil, false, Fingerprint{}, err
 	}
+	fp.Files = len(paths)
 	// Any other walk error is best-effort: a partial file list still
 	// produces a useful index, and the root being unreadable shows up as
 	// an empty result rather than a failure the agent must handle.
 	sort.Strings(paths)
-	return paths, truncated, nil
+	return paths, truncated, fp, nil
 }
 
 // parseOne reads and extracts a single file. Every failure is silent by
