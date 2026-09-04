@@ -59,6 +59,7 @@ func main() {
 	problems = append(problems, checkBaseImage()...)
 	problems = append(problems, checkOSPSConsistency()...)
 	problems = append(problems, checkChangelogLinks()...)
+	problems = append(problems, checkVersionedProse()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -69,6 +70,69 @@ func main() {
 	}
 	fmt.Println("Manifest check: SBOM.md, server.json and the prose docs agree with go.mod, CHANGELOG.md and the Dockerfile")
 }
+
+// checkVersionedProse verifies that documents quoting a concrete version
+// still quote the current one.
+//
+// Both of these went stale unnoticed. pkg/VERIFY.md opens with
+// "VERSION=0.0.29" and every command below it interpolates that, so a
+// packager following the page downloads and verifies the wrong release —
+// and gets a passing checksum for it, which is worse than a failure. The
+// documentation site's hero_tag is rendered as the version badge on the
+// homepage; it sat three releases behind.
+//
+// Neither is reachable from server.json or the Dockerfile, so the existing
+// version check did not see them.
+func checkVersionedProse() []string {
+	released, err := latestChangelogVersion("CHANGELOG.md")
+	if err != nil {
+		return []string{fmt.Sprintf("reading CHANGELOG.md: %v", err)}
+	}
+
+	checks := []struct {
+		path    string
+		pattern *regexp.Regexp
+		want    string
+		why     string
+	}{
+		{
+			"pkg/VERIFY.md", verifyDocVersion, released,
+			"packagers interpolate it into every download and verification command",
+		},
+		{
+			"docs-site/content/index.md", heroTagVersion, "v" + released,
+			"it is rendered as the version badge on the documentation site's homepage",
+		},
+	}
+
+	var problems []string
+	for _, c := range checks {
+		b, err := os.ReadFile(c.path)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("reading %s: %v", c.path, err))
+			continue
+		}
+		m := c.pattern.FindSubmatch(b)
+		if m == nil {
+			problems = append(problems, fmt.Sprintf(
+				"%s no longer states a version where one is expected; "+
+					"either restore it or drop this check", c.path))
+			continue
+		}
+		if got := string(m[1]); got != c.want {
+			problems = append(problems, fmt.Sprintf(
+				"%s states version %s, newest release is %s — %s",
+				c.path, got, c.want, c.why))
+		}
+	}
+	return problems
+}
+
+// verifyDocVersion matches the VERSION assignment packagers copy.
+var verifyDocVersion = regexp.MustCompile(`(?m)^VERSION=([0-9]+\.[0-9]+\.[0-9]+)\s*$`)
+
+// heroTagVersion matches the documentation site's version badge.
+var heroTagVersion = regexp.MustCompile(`(?m)^hero_tag:\s*"(v[0-9]+\.[0-9]+\.[0-9]+)"`)
 
 // checkChangelogLinks verifies every release heading in CHANGELOG.md has
 // a matching link reference, and that no reference points at a release

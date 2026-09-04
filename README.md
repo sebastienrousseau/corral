@@ -7,7 +7,7 @@
 <h1 align="center"><a id="corral"></a>Corral</h1>
 
 <p align="center">
-  Automatically clone and organise GitHub repositories using Finder-friendly collections, ecosystems, and metadata.
+  Automatically clone and organise repositories from GitHub, GitLab, Gitea, Forgejo and Codeberg using Finder-friendly collections, ecosystems, and metadata.
 </p>
 
 <p align="center">

@@ -37,7 +37,7 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard \
+        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard bench \
         docs-lint help
 
 all: format vet staticcheck spdx-check sbom-check pkg-check example-check test test-race build
@@ -99,6 +99,15 @@ test:
 # -count=1 because a race gate must never be answered from the test cache.
 test-race:
 	go test -race -shuffle=on -count=1 ./...
+
+## bench: smoke-run every benchmark, as CI does
+#
+# CI runs this and local development had no equivalent, which is how a
+# performance claim ends up with no benchmark behind it: internal/search
+# and internal/symbols carry the 6.9s-to-1.3s figure and had none until a
+# review asked whether they did.
+bench:
+	go test -run '^$$' -bench . -benchtime 1x ./...
 
 ## race-hard: hammer the concurrent packages under the race detector
 #

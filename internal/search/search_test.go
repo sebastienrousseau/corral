@@ -623,3 +623,49 @@ func TestSearchSkipsAnUnreadableDirectory(t *testing.T) {
 		t.Errorf("the readable file should still match: %s", files(res))
 	}
 }
+
+// TestCaseInsensitiveColumnIsAnOffsetIntoTheOriginal.
+//
+// The case-insensitive path used to lowercase the line and search that,
+// then report the offset it found — but lowercasing can change a string's
+// byte length, so the offset was into a string the caller never sees. On
+// the line below the reported column was 4 where the match is at 7.
+//
+// It now compiles the literal to a quoted case-insensitive regex, which
+// searches the original. That also removed an allocation per line that
+// scaled with the line: 4864 B/op on a 4 KB line, against 16 B/op now.
+func TestCaseInsensitiveColumnIsAnOffsetIntoTheOriginal(t *testing.T) {
+	m, err := Compile(Query{Pattern: "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// U+0130 lowercases to two code points, so the lowercased copy is
+	// longer than the original and every offset past it is shifted.
+	line := "İİİ needle"
+	if got, want := m.MatchLine(line), len("İİİ "); got != want {
+		t.Errorf("MatchLine = %d, want %d — the column must index the original line", got, want)
+	}
+}
+
+// TestCaseInsensitiveLiteralIsNotARegex: the pattern is quoted before it
+// is compiled, so a literal containing regex metacharacters still matches
+// itself rather than being interpreted.
+func TestCaseInsensitiveLiteralIsNotARegex(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "a.go", "x := cfg[\"a.b\"]\nfunc aXb() {}\n")
+
+	// "a.b" as a regex would match "aXb". As a literal it must not.
+	res := run(t, root, Query{Pattern: "A.B"}, nil)
+	if len(res.Hits) != 1 {
+		t.Fatalf("expected exactly the literal match, got %s", files(res))
+	}
+	if res.Hits[0].Line != 1 {
+		t.Errorf("matched line %d, want 1 — the dot was treated as a wildcard", res.Hits[0].Line)
+	}
+
+	// And with Regex set, the same pattern is a pattern again.
+	res = run(t, root, Query{Pattern: "a.b", Regex: true}, nil)
+	if len(res.Hits) != 2 {
+		t.Errorf("as a regex it should match both lines, got %s", files(res))
+	}
+}
