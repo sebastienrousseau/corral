@@ -1,0 +1,257 @@
+//go:build ignore
+
+// SPDX-FileCopyrightText: 2026 Sebastien Rousseau <sebastian.rousseau@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+// claims_check verifies that what the project claims about itself is still
+// true.
+//
+// Some documents make measurable assertions: a coverage percentage, a list
+// of packages, a count of benchmarks. Those go stale silently, because
+// nothing fails when a number in prose stops matching the code — and the
+// documents that carry them are the ones read by people deciding whether
+// to trust the project. .bestpractices.json is an OpenSSF submission; it
+// claimed 90.2% coverage "as of v0.0.11" through twenty releases, by which
+// point the real figure was 100% across twelve packages. Understated, but
+// wrong, and wrong in a public place.
+//
+// This runs the measurement and compares. It is deliberately not clever:
+// where a claim can be checked against reality, it is; where it cannot, it
+// is not pretended otherwise.
+//
+//	go run scripts/claims_check.go [-coverprofile path]
+//
+// With no profile it runs the suite itself, which is slow. CI passes the
+// profile it has already produced.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+func main() {
+	profile := flag.String("coverprofile", "",
+		"an existing coverage profile to read instead of running the suite")
+	flag.Parse()
+
+	var problems []string
+	pkgs, overall, err := coverage(*profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "claims check: measuring coverage: %v\n", err)
+		os.Exit(1)
+	}
+	problems = append(problems, checkCoverageClaims(pkgs, overall)...)
+	problems = append(problems, checkBenchmarkCoverage()...)
+	problems = append(problems, checkExampleCoverage()...)
+
+	if len(problems) > 0 {
+		fmt.Fprintln(os.Stderr, "claims check failed:")
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, "  - "+p)
+		}
+		os.Exit(1)
+	}
+	fmt.Printf("Claims check: %d packages at %.1f%% coverage, and the documents that say so agree\n",
+		len(pkgs), overall)
+}
+
+// coverage returns the per-package percentages and the overall figure.
+func coverage(profile string) (map[string]float64, float64, error) {
+	pkgs := map[string]float64{}
+
+	// Per-package percentages come from `go test -cover`, which reports
+	// them directly. A profile alone cannot produce them without
+	// re-deriving package boundaries.
+	out, err := exec.Command("go", "test", "./...", "-count=1", "-cover").CombinedOutput()
+	if err != nil {
+		return nil, 0, fmt.Errorf("go test -cover: %v\n%s", err, out)
+	}
+	line := regexp.MustCompile(`(?m)^ok\s+(\S+)\s+\S+\s+coverage:\s+([0-9.]+)% of statements`)
+	for _, m := range line.FindAllStringSubmatch(string(out), -1) {
+		pkgs[strings.TrimPrefix(m[1], modulePath+"/")] = mustFloat(m[2])
+	}
+	if len(pkgs) == 0 {
+		return nil, 0, fmt.Errorf("no packages reported coverage:\n%s", out)
+	}
+
+	// The overall figure is the statement-weighted total, which only a
+	// profile gives. Recompute it rather than averaging the per-package
+	// numbers, which would weight a tiny package like a large one.
+	if profile == "" {
+		profile = "coverage.claims.out"
+		defer func() { _ = os.Remove(profile) }()
+		if o, err := exec.Command("go", "test", "./...", "-count=1", "-coverprofile="+profile).CombinedOutput(); err != nil {
+			return nil, 0, fmt.Errorf("go test -coverprofile: %v\n%s", err, o)
+		}
+	}
+	o, err := exec.Command("go", "tool", "cover", "-func="+profile).Output()
+	if err != nil {
+		return nil, 0, fmt.Errorf("go tool cover: %w", err)
+	}
+	total := regexp.MustCompile(`\(statements\)\s+([0-9.]+)%`).FindStringSubmatch(string(o))
+	if total == nil {
+		return nil, 0, fmt.Errorf("no total line in the coverage profile")
+	}
+	return pkgs, mustFloat(total[1]), nil
+}
+
+const modulePath = "github.com/sebastienrousseau/corral"
+
+// coverageClaim matches a stated overall percentage.
+var coverageClaim = regexp.MustCompile(`Statement coverage is ([0-9.]+)% overall`)
+
+// packageCount matches the stated number of packages.
+var packageCount = regexp.MustCompile(`across all (\d+) packages`)
+
+// checkCoverageClaims compares .bestpractices.json against the measurement.
+//
+// Both the percentage and the package count are checked. The count matters
+// on its own: a claim of "100% across all 9 packages" stays true about the
+// percentage while silently omitting three packages added since.
+func checkCoverageClaims(pkgs map[string]float64, overall float64) []string {
+	b, err := os.ReadFile(".bestpractices.json")
+	if err != nil {
+		return []string{fmt.Sprintf("reading .bestpractices.json: %v", err)}
+	}
+	body := string(b)
+
+	var problems []string
+	claims := coverageClaim.FindAllStringSubmatch(body, -1)
+	if len(claims) == 0 {
+		return []string{".bestpractices.json states no coverage figure; " +
+			"either restore one or drop this check"}
+	}
+	for _, m := range claims {
+		if claimed := mustFloat(m[1]); !sameToOneDecimal(claimed, overall) {
+			problems = append(problems, fmt.Sprintf(
+				".bestpractices.json claims %.1f%% statement coverage; the suite measures %.1f%%",
+				claimed, overall))
+			break
+		}
+	}
+	for _, m := range packageCount.FindAllStringSubmatch(body, -1) {
+		claimed, _ := strconv.Atoi(m[1])
+		if claimed != len(pkgs) {
+			problems = append(problems, fmt.Sprintf(
+				".bestpractices.json claims %d packages; the suite covers %d", claimed, len(pkgs)))
+			break
+		}
+	}
+	// Every package it names must exist, so a renamed or removed package
+	// cannot linger in a public claim.
+	for name := range pkgs {
+		if !strings.Contains(body, name) {
+			problems = append(problems, fmt.Sprintf(
+				".bestpractices.json does not name package %s, which the suite covers", name))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// benchmarked are the packages whose performance the project makes claims
+// about, and which therefore have to keep a benchmark.
+//
+// Not every package: a benchmark nobody reads is noise. These are the ones
+// on the path a user waits for — the workspace scan, symbol extraction and
+// content search — and the CHANGELOG quotes figures for all three.
+var benchmarked = []string{
+	"internal/engine",
+	"internal/mcp",
+	"internal/search",
+	"internal/symbols",
+}
+
+// checkBenchmarkCoverage requires a benchmark in each of those packages.
+//
+// internal/search and internal/symbols carry the 6.9s-to-1.3s figure and
+// had no benchmark at all until this check's absence was noticed: a change
+// making extraction three times slower would have passed every gate.
+func checkBenchmarkCoverage() []string {
+	var problems []string
+	for _, pkg := range benchmarked {
+		entries, err := os.ReadDir(pkg)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("reading %s: %v", pkg, err))
+			continue
+		}
+		found := false
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			b, err := os.ReadFile(pkg + "/" + e.Name()) // #nosec G304 -- path from the table above
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(b), "\nfunc Benchmark") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			problems = append(problems, fmt.Sprintf(
+				"%s has no benchmark, and the project publishes performance figures for it", pkg))
+		}
+	}
+	return problems
+}
+
+// checkExampleCoverage requires every program under examples/ to be
+// referenced from prose.
+//
+// An example nobody links to is one nobody reads, and it rots without
+// anybody noticing — it compiles, so example-check stays green.
+func checkExampleCoverage() []string {
+	entries, err := os.ReadDir("examples")
+	if err != nil {
+		return []string{fmt.Sprintf("reading examples/: %v", err)}
+	}
+	docs := readAll("README.md", "docs-site/content/reference.md", "DEVELOPMENT.md", "examples/README.md")
+
+	var problems []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		if !strings.Contains(docs, e.Name()) {
+			problems = append(problems, fmt.Sprintf(
+				"examples/%s is not referenced from any document, so nothing would notice it rotting",
+				e.Name()))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// readAll concatenates the files that exist, ignoring the ones that do not.
+func readAll(paths ...string) string {
+	var b strings.Builder
+	for _, p := range paths {
+		if c, err := os.ReadFile(p); err == nil { // #nosec G304 -- fixed list above
+			b.Write(c)
+		}
+	}
+	return b.String()
+}
+
+// sameToOneDecimal compares two percentages at the precision they are
+// written to, so 100.0 and 100.04 agree and 99.9 and 100.0 do not.
+func sameToOneDecimal(a, b float64) bool {
+	return fmt.Sprintf("%.1f", a) == fmt.Sprintf("%.1f", b)
+}
+
+func mustFloat(s string) float64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return -1
+	}
+	return f
+}

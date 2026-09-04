@@ -6,7 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.32] — 2026-09-04
+
 ### Fixed
+
+- **The OpenSSF Best Practices submission understated the project.** Five
+  entries in `.bestpractices.json` made present-tense claims pinned to
+  v0.0.11 — "Statement coverage is 90.2% overall as of v0.0.11", naming
+  six packages. Twenty releases later the real figure is 100.0% across
+  twelve. Wrong in a public place, and wrong in the direction that makes
+  the project look worse than it is.
+
+  The "since v0.0.x" claims elsewhere in that file are untouched: those
+  describe when a practice started and stay true.
 
 - **Case-insensitive search reported the wrong column on multi-byte
   text.** It lowercased the line and searched that, then reported the
@@ -34,6 +46,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against five forges.
 
 ### Added
+
+- **`make claims-check`**, so the measurable things the project says about
+  itself cannot drift from the code. It runs the coverage measurement and
+  compares, and fails when:
+
+  - a stated coverage percentage disagrees with the suite;
+  - a stated package count disagrees with the packages measured — a claim
+    of "100% across all 9 packages" stays true about the percentage while
+    silently omitting three packages added since;
+  - a package the project publishes performance figures for has no
+    benchmark;
+  - a program under `examples/` is referenced from no document, and so
+    would rot unnoticed because it still compiles.
+
+  Each of the four was confirmed to fail before being wired in.
 
 - **Benchmarks for `internal/search` and `internal/symbols`**, and a
   `make bench` target. Those two packages carry the 6.9s-to-1.3s figure
@@ -1823,7 +1850,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.31...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.32...HEAD
+[0.0.32]: https://github.com/sebastienrousseau/corral/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/sebastienrousseau/corral/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/sebastienrousseau/corral/compare/v0.0.29...v0.0.30
 [0.0.29]: https://github.com/sebastienrousseau/corral/compare/v0.0.28...v0.0.29
