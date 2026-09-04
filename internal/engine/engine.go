@@ -1315,15 +1315,40 @@ func repoNameFromURL(url string) string {
 }
 
 func findOrphans(owner, baseDir string, repos []github.Repo) []string {
+	return findOrphansOn(owner, baseDir, repos, fetchForgeName, fetchForgeURL)
+}
+
+// findOrphansOn is findOrphans with the forge named explicitly.
+//
+// The host is derived rather than assumed. It used to be the literal
+// "github.com", which silently made orphan detection a no-op for every
+// other forge: a Codeberg clone never matched the prefix, so it was
+// skipped rather than compared. That failed safe — nothing was deleted
+// wrongly — but `--orphans` reported nothing and looked like it had run.
+func findOrphansOn(owner, baseDir string, repos []github.Repo, forgeName, forgeURL string) []string {
 	repoMap := make(map[string]bool)
 	identities := make(map[string]bool, len(repos))
+	cloneURLs := make([]string, 0, len(repos))
 	for _, r := range repos {
 		repoMap[r.Name] = true
 		if id := repoRemoteIdentity(r); id != "" {
 			identities[id] = true
 		}
+		if r.CloneURL != "" {
+			cloneURLs = append(cloneURLs, r.CloneURL)
+		}
 	}
-	ownerPrefix := strings.ToLower("github.com/" + owner + "/")
+	f, err := forge.Resolve(forgeName, forgeURL)
+	if err != nil {
+		// An unresolvable forge yields no prefixes, and no prefixes match
+		// nothing. RunE rejects this long before here; the safe direction
+		// is the right one regardless.
+		f = nil
+	}
+	prefixes := forge.OwnerPrefixes(f, owner, forgeURL, cloneURLs)
+	if len(prefixes) == 0 {
+		return nil
+	}
 
 	var orphans []string
 	// Per-entry walk errors are deliberately ignored inside the callback; the
@@ -1345,7 +1370,7 @@ func findOrphans(owner, baseDir string, repos []github.Repo) []string {
 			// matched unrelated path segments. git.CanonicalRemote is the
 			// same identity migrateLegacy, originMismatch and prune use.
 			identity := git.CanonicalRemote(url)
-			if !strings.HasPrefix(identity, ownerPrefix) {
+			if !forge.MatchesOwner(identity, prefixes) {
 				return filepath.SkipDir
 			}
 			// Identity first; fall back to names so a locally-renamed
@@ -1455,7 +1480,18 @@ func firstNonEmpty(values ...string) string {
 // churn with no behaviour attached, so it is left for a change that has a
 // reason of its own. The conversion below is where the seam actually is.
 func fetchFromForge(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
-	f, err := forge.Resolve(fetchForgeName, fetchForgeURL)
+	return FetchRepos(ctx, owner, opts, fetchForgeName, fetchForgeURL)
+}
+
+// FetchRepos lists an owner's repositories from the named forge.
+//
+// Exported because prune needs it. prune used to call the GitHub client
+// directly, so `--forge codeberg` was accepted and then ignored: it
+// compared Codeberg clones against a GitHub listing. Everything that
+// decides what is missing upstream has to come through one path, or the
+// flag lies.
+func FetchRepos(ctx context.Context, owner string, opts github.FetchOptions, forgeName, forgeURL string) ([]github.Repo, error) {
+	f, err := forge.Resolve(forgeName, forgeURL)
 	if err != nil {
 		return nil, err
 	}
@@ -1468,7 +1504,7 @@ func fetchFromForge(ctx context.Context, owner string, opts github.FetchOptions)
 		IncludeForks:    opts.IncludeForks,
 		IncludeArchived: opts.IncludeArchived,
 		Token:           forgeToken(ctx, f.Name(), opts.AuthMode),
-		BaseURL:         fetchForgeURL,
+		BaseURL:         forgeURL,
 		RequestTimeout:  opts.RequestTimeout,
 		TotalTimeout:    opts.TotalTimeout,
 	})

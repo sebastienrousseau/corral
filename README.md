@@ -500,10 +500,14 @@ tooling already uses: `GITLAB_TOKEN` (or `CI_JOB_TOKEN`), and
 GitHub keeps its existing ladder — explicit token, then the environment,
 then the `gh` CLI.
 
-**Reading was never GitHub-specific.** The index, the MCP server, symbol
+`--forge` applies to everything that talks to a hosting service:
+`corralctl <owner>`, `plan`, `profile` and `prune`. Orphan detection and
+`prune` compare against the forge you listed from, and scope by host — a
+GitLab clone under the same owner name is never a GitHub orphan.
+
+**Reading was never host-specific.** The index, the MCP server, symbol
 lookup and content search work on clones, so a repository you cloned by
-hand from anywhere has always been a first-class citizen. This closes the
-asymmetry on the cloning side.
+hand from anywhere has always been a first-class citizen.
 
 ---
 

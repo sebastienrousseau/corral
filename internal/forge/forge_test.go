@@ -323,3 +323,125 @@ func TestRedactRemovesCredentials(t *testing.T) {
 		t.Errorf("an unparseable URL should degrade, got %q", got)
 	}
 }
+
+// TestOwnerPrefixesFromTheListing is the property prune and orphan
+// detection rest on: which local clones belong to this owner, on this
+// host. Derived from the clone URLs the listing returned, because those
+// come from the instance and are therefore right for a self-hosted
+// deployment and for GitLab's nested groups without anyone configuring
+// anything.
+func TestOwnerPrefixesFromTheListing(t *testing.T) {
+	gh, _ := Get("github")
+	for name, tc := range map[string]struct {
+		urls []string
+		want []string
+	}{
+		"one host": {
+			urls: []string{"https://codeberg.org/forgejo/meta.git", "https://codeberg.org/forgejo/docs.git"},
+			want: []string{"codeberg.org/forgejo/"},
+		},
+		// The owner a user types is "group"; the project lives under
+		// "group/subgroup". No host-plus-owner string could produce this.
+		"gitlab nested group": {
+			urls: []string{"https://gitlab.com/group/subgroup/proj.git"},
+			want: []string{"gitlab.com/group/subgroup/"},
+		},
+		"scp-style remote": {
+			urls: []string{"git@codeberg.org:forgejo/meta.git"},
+			want: []string{"codeberg.org/forgejo/"},
+		},
+		// The port is not part of the identity: git.CanonicalRemote drops
+		// it, so a prefix that kept it would never match.
+		"self-hosted with a port": {
+			urls: []string{"https://git.example.com:8443/team/tool.git"},
+			want: []string{"git.example.com/team/"},
+		},
+		"mixed namespaces are all kept": {
+			urls: []string{
+				"https://gitlab.com/a/one.git",
+				"https://gitlab.com/b/two.git",
+			},
+			want: []string{"gitlab.com/a/", "gitlab.com/b/"},
+		},
+		"unusable urls are ignored": {
+			urls: []string{"", "   ", "not-a-url", "https://host-only.example", "https://codeberg.org/forgejo/meta.git"},
+			want: []string{"codeberg.org/forgejo/"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := OwnerPrefixes(gh, "ignored", "", tc.urls)
+			if len(got) != len(tc.want) {
+				t.Fatalf("OwnerPrefixes = %v, want %v", got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("OwnerPrefixes = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestOwnerPrefixesFallsBackToTheForgeHosts covers the case that matters
+// most: an empty listing is exactly when every local clone is an orphan,
+// so a prefix that fails to match there does not miss one repository, it
+// silently disables the comparison.
+func TestOwnerPrefixesFallsBackToTheForgeHosts(t *testing.T) {
+	gh, _ := Get("github")
+	if got := OwnerPrefixes(gh, "acme", "", nil); len(got) != 1 || got[0] != "github.com/acme/" {
+		t.Errorf("OwnerPrefixes = %v, want [github.com/acme/]", got)
+	}
+
+	// A self-hosted instance has no declared host, so the base URL is the
+	// only thing that can supply one.
+	gitea, _ := Get("gitea")
+	got := OwnerPrefixes(gitea, "acme", "https://git.example.com", nil)
+	if len(got) != 1 || got[0] != "git.example.com/acme/" {
+		t.Errorf("OwnerPrefixes = %v, want [git.example.com/acme/]", got)
+	}
+
+	// Nothing to go on at all: no prefixes, which matches nothing, which
+	// is the safe direction for an operation whose answer is rm -rf.
+	if got := OwnerPrefixes(gitea, "acme", "", nil); len(got) != 0 {
+		t.Errorf("OwnerPrefixes = %v, want none", got)
+	}
+	if got := OwnerPrefixes(nil, "", "", nil); len(got) != 0 {
+		t.Errorf("OwnerPrefixes = %v, want none", got)
+	}
+	if got := OwnerPrefixes(nil, "  /  ", "", nil); len(got) != 0 {
+		t.Errorf("a blank owner should yield nothing, got %v", got)
+	}
+}
+
+func TestMatchesOwner(t *testing.T) {
+	prefixes := []string{"codeberg.org/forgejo/", "gitlab.com/group/sub/"}
+
+	for _, id := range []string{
+		"codeberg.org/forgejo/meta",
+		"CODEBERG.ORG/forgejo/meta",
+		"gitlab.com/group/sub/proj",
+	} {
+		if !MatchesOwner(id, prefixes) {
+			t.Errorf("MatchesOwner(%q) = false, want true", id)
+		}
+	}
+
+	for _, id := range []string{
+		// The same owner name on a different host is a different
+		// repository. Matching it is how a GitLab clone once counted as a
+		// GitHub orphan.
+		"github.com/forgejo/meta",
+		"codeberg.org/someone-else/meta",
+		"gitlab.com/group/other/proj",
+		"",
+	} {
+		if MatchesOwner(id, prefixes) {
+			t.Errorf("MatchesOwner(%q) = true, want false", id)
+		}
+	}
+
+	// No prefixes matches nothing, whatever the identity.
+	if MatchesOwner("codeberg.org/forgejo/meta", nil) {
+		t.Error("an empty prefix set must match nothing")
+	}
+}

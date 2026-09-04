@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`prune` and orphan detection now follow `--forge`.** v0.0.29 made
+  cloning work against five hosting services and left the reciprocal
+  operation behind: `--forge` was accepted on `prune` and then ignored.
+
+  Three things were wrong, and they cancelled out. `prune` called the
+  GitHub client directly whatever `--forge` said. It then built upstream
+  identities as `"github.com/" + FullName`, which no Codeberg clone could
+  match. And both `prune` and orphan detection matched local clones
+  against a hardcoded `github.com/<owner>/` prefix, so non-GitHub clones
+  were skipped rather than compared.
+
+  The net effect was a silent no-op: `prune --forge codeberg` looked like
+  it ran and did nothing. It failed safe, but fixing any one of the three
+  alone would have made it delete — a Codeberg clone compared against a
+  GitHub listing is an orphan by construction.
+
+  All three move together. Listings go through the forge; identities come
+  from the clone URL the forge returned; and the owner prefix is derived
+  from those URLs, which makes it correct for a self-hosted instance
+  nobody configured and for GitLab's nested groups, where the owner
+  someone types is not the namespace a project lives in. Host scoping is
+  preserved — a GitLab clone under the same owner name is still not a
+  GitHub orphan, which is what the hardcoded prefix was originally added
+  to prevent.
+
+  When nothing can be attributed to an owner — no clone URLs and no host
+  to fall back on — `prune` refuses and says why, rather than guessing.
+
 ## [0.0.29] — 2026-09-04
 
 ### Added

@@ -44,6 +44,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sebastienrousseau/corral/internal/git"
 )
 
 // Repo is one repository, as any forge describes it.
@@ -338,4 +340,100 @@ func Resolve(name, forgeURL string) (Forge, error) {
 			forgeURL, strings.Join(Names(), ", "))
 	}
 	return Get("github")
+}
+
+// OwnerPrefixes returns the canonical-remote prefixes that mark a local
+// clone as belonging to owner on this forge.
+//
+// A prefix is what git.CanonicalRemote produces for one of this owner's
+// repositories, up to and including the final separator —
+// "codeberg.org/forgejo/", "gitlab.com/group/subgroup/". Matching on it is
+// what stops one host's clone being compared against another host's
+// listing.
+//
+// # Why the listing is the primary source
+//
+// The clone URLs come from the instance itself. That makes them correct
+// for a self-hosted deployment nobody told corral about, and for GitLab's
+// nested groups, where the owner a user types ("group") is not the
+// namespace a project lives in ("group/subgroup") — neither of which a
+// host-plus-owner string could produce.
+//
+// The declared hosts are the fallback, for an owner whose listing came
+// back empty. That case matters more than it looks: an empty listing is
+// exactly when every local clone is an orphan, so a prefix that fails to
+// match there does not merely miss one repository, it silently disables
+// the whole comparison.
+func OwnerPrefixes(f Forge, owner, baseURL string, cloneURLs []string) []string {
+	seen := map[string]struct{}{}
+	for _, raw := range cloneURLs {
+		if p := identityPrefix(raw); p != "" {
+			seen[p] = struct{}{}
+		}
+	}
+
+	if len(seen) == 0 {
+		owner = strings.ToLower(strings.Trim(strings.TrimSpace(owner), "/"))
+		if owner == "" {
+			return nil
+		}
+		hosts := map[string]struct{}{}
+		if f != nil {
+			for _, h := range f.Hosts() {
+				hosts[strings.ToLower(h)] = struct{}{}
+			}
+		}
+		if h := hostFromRemote(baseURL); h != "" {
+			hosts[strings.ToLower(h)] = struct{}{}
+		}
+		for h := range hosts {
+			seen[h+"/"+owner+"/"] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// identityPrefix reduces a clone URL to everything before its final path
+// segment: "https://codeberg.org/forgejo/meta.git" becomes
+// "codeberg.org/forgejo/".
+//
+// Built on git.CanonicalRemote so a prefix is produced by exactly the
+// function that produces the identities it will be matched against. An
+// earlier version parsed the URL here instead, which was both longer and
+// a second place for the two to disagree — and they would have, over
+// ports, scp-style remotes and userinfo.
+func identityPrefix(raw string) string {
+	identity := git.CanonicalRemote(raw)
+	last := strings.LastIndexByte(identity, '/')
+	if last < 0 {
+		return ""
+	}
+	// A bare "host/repo" has no owner segment to key on, and treating the
+	// host as one would match every repository on it.
+	if strings.Count(identity, "/") < 2 {
+		return ""
+	}
+	return identity[:last+1]
+}
+
+// MatchesOwner reports whether a canonical remote identity falls under any
+// of the prefixes.
+//
+// An empty prefix set matches nothing. That is the safe direction and it is
+// deliberate: prefixes are empty only when the forge could not be
+// determined, and the operation these guard is deletion.
+func MatchesOwner(identity string, prefixes []string) bool {
+	identity = strings.ToLower(identity)
+	for _, p := range prefixes {
+		if strings.HasPrefix(identity, p) {
+			return true
+		}
+	}
+	return false
 }

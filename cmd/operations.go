@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/sebastienrousseau/corral/internal/engine"
+	"github.com/sebastienrousseau/corral/internal/forge"
 	gitutil "github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
 	corralmcp "github.com/sebastienrousseau/corral/internal/mcp"
@@ -45,7 +47,7 @@ var (
 	statusOutput    string
 	planOutput      string
 	pruneOutput     string
-	opsFetchRepos   = github.FetchReposWithOptions
+	opsFetchRepos   = fetchReposForOps
 	removeAll       = os.RemoveAll
 	localStateCheck = gitutil.HasUnpublishedWork
 )
@@ -104,6 +106,20 @@ var planCmd = &cobra.Command{
 	},
 }
 
+// fetchReposForOps lists an owner's repositories for the operational
+// commands, through the selected forge.
+//
+// A named function rather than a closure so the seam test can still
+// compare it against its production implementation by pointer — a seam
+// that cannot be checked is how a stub leaks out of a test unnoticed.
+//
+// prune used to call the GitHub client directly regardless of --forge, so
+// the flag was accepted and then ignored: it compared another host's
+// clones against a GitHub listing.
+func fetchReposForOps(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+	return engine.FetchRepos(ctx, owner, opts, forgeName, forgeURL)
+}
+
 var pruneCmd = &cobra.Command{
 	Use:   "prune <owner>",
 	Short: "Remove safe local clones that no longer exist upstream",
@@ -140,8 +156,24 @@ var pruneCmd = &cobra.Command{
 					"like an orphan. Re-run with --limit 0 to fetch every repository",
 				limit)
 		}
+		// Identities come from the clone URL each forge returned, so they
+		// carry the real host. Building them as "github.com/" + FullName
+		// meant a Codeberg listing produced identities no Codeberg clone
+		// could ever match — which, combined with the hardcoded owner
+		// prefix below, made prune a silent no-op off GitHub. Fixing
+		// either one alone would have made it delete.
 		upstream := make(map[string]struct{}, len(repos))
+		cloneURLs := make([]string, 0, len(repos))
 		for _, repo := range repos {
+			if repo.CloneURL != "" {
+				cloneURLs = append(cloneURLs, repo.CloneURL)
+				if id := gitutil.CanonicalRemote(repo.CloneURL); id != "" {
+					upstream[id] = struct{}{}
+				}
+				continue
+			}
+			// A forge that returned no clone URL still has an identity;
+			// falling back keeps it comparable rather than orphaned.
 			identity := repo.FullName
 			if identity == "" && repo.Owner != "" {
 				identity = repo.Owner + "/" + repo.Name
@@ -155,10 +187,25 @@ var pruneCmd = &cobra.Command{
 			return err
 		}
 		results := make([]pruneResult, 0)
-		ownerPrefix := "github.com/" + owner + "/"
+		selected, err := forge.Resolve(forgeName, forgeURL)
+		if err != nil {
+			return err
+		}
+		prefixes := forge.OwnerPrefixes(selected, owner, forgeURL, cloneURLs)
+		if len(prefixes) == 0 {
+			// No prefix means nothing can be identified as this owner's,
+			// and prune's answer to an unidentified clone must never be
+			// rm -rf. Refusing beats deleting on a guess.
+			return fmt.Errorf(
+				"refusing to prune: cannot tell which clones belong to %q on %s\n"+
+					"The upstream listing returned no repositories with clone URLs, so there is\n"+
+					"nothing to compare against. Check the owner name, and --forge-url for a\n"+
+					"self-hosted instance",
+				owner, selected.Name())
+		}
 		for _, local := range idx.Repos {
 			identity := gitutil.CanonicalRemote(local.RemoteURL)
-			if !strings.HasPrefix(identity, ownerPrefix) {
+			if !forge.MatchesOwner(identity, prefixes) {
 				continue
 			}
 			if _, exists := upstream[identity]; exists {
