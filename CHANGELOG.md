@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where the identity check had been silently degrading to a weaker
   name-matching fallback beside it.
 
+- **`--protocol ssh` could clone from the wrong host.** When a forge
+  returns no `ssh_url` — which a Gitea or Forgejo instance with SSH
+  disabled does — the URL fell back to
+  `git@github.com:<owner>/<name>.git`. The consequence is not a failure
+  but something worse: cloning a *different* repository, from a host the
+  user never named, that happens to share an owner and name. The SSH
+  form is now derived from the HTTPS URL, so the fallback stays on the
+  instance the repository actually came from.
+
 - **`topic:` and `language:` were misdiagnosed on other forges.** They are
   GitHub search queries; passed to a forge that lists by owner they were
   read as an owner name, and the 404 that followed said "check the owner
