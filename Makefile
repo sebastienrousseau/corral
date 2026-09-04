@@ -37,9 +37,10 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check docs-lint help
+        clean format sbom-check example-check doc-check spdx-check pkg-check \
+        docs-lint help
 
-all: format vet spdx-check sbom-check example-check test test-race build
+all: format vet spdx-check sbom-check pkg-check example-check test test-race build
 
 ## build: compile the binary with version metadata
 build:
@@ -116,6 +117,10 @@ example-check:
 ## doc-check: enforce 100% documentation coverage on exported declarations
 doc-check:
 	go run scripts/doc_coverage.go
+
+## pkg-check: verify pkg/ documents every distribution format built
+pkg-check:
+	go run scripts/pkg_check.go
 
 ## spdx-check: verify every source file carries an SPDX header
 spdx-check:

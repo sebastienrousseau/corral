@@ -1,0 +1,2 @@
+go test fuzz v1
+string("https://user:hunter2@github.com/owner/repo.git")

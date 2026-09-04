@@ -476,6 +476,20 @@ you have put your own in front of it.
 
 ---
 
+## Coming from another tool
+
+Migration guides live in [`docs/migrating/`](docs/migrating/README.md):
+from [ghq](docs/migrating/from-ghq.md), from
+[a hand-written clone script](docs/migrating/from-a-script.md), from
+[a single-repository code index](docs/migrating/from-a-code-index.md),
+or from [an unsorted `~/src`](docs/migrating/from-an-unsorted-directory.md).
+
+Each says what carries over, what is genuinely different, and what
+corral will not do — nothing there requires re-cloning, and `corralctl
+plan` shows you the outcome before anything changes.
+
+---
+
 ## Cross-repository symbol lookup
 
 Every code-context server can tell an agent where a symbol is defined **in

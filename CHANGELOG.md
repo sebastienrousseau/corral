@@ -98,6 +98,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overrides the refusal for an operator who has put their own authentication
   in front of it.
 
+### Documentation
+
+- **Migration guides** (`docs/migrating/`) for the four places people
+  actually arrive from: ghq, a hand-written clone script, a
+  single-repository code index, and an unsorted `~/src`. Each says what
+  carries over, what is genuinely different, and — the section that is
+  usually missing — what corral will not do, so a migration does not end
+  in disappointment. None of them requires re-cloning anything.
+
+- **`pkg/`**, one directory per distribution format, so a packager can
+  find the recipe without reading the release pipeline. The recipes are
+  not duplicated there: each page points at the file that actually
+  produces the artefact, because a copy would be a second place to
+  change and a first place to forget. `pkg/VERIFY.md` covers checksums,
+  keyless cosign signatures, SLSA provenance and the SBOM.
+
+  `make pkg-check` asserts the directory matches what the pipeline
+  builds, in both directions — a format with no page, and a page naming
+  no format, both fail. A directory of prose cannot notice that a new
+  format shipped last month, which is exactly how this kind of directory
+  rots.
+
+- **A committed fuzz seed corpus** for all four fuzz targets. The inline
+  `f.Add` seeds cover the readable cases; these cover the ones that are
+  unreadable as Go string literals — NUL bytes, invalid UTF-8,
+  bidirectional overrides, 8 KiB paths, `ext::` remotes, a URL with an
+  embedded newline and a fake system prompt. They run on every `go test`,
+  not only under `-fuzz`, and give a future finding somewhere to live.
+
 ### Security
 
 - **Deletion stages the clone aside before removing it (SEC-5).** Every
