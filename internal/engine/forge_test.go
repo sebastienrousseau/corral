@@ -325,3 +325,133 @@ func TestFetchAnnouncementNamesTheForge(t *testing.T) {
 		})
 	}
 }
+
+// makeCloneAt creates a fixture clone with a real origin, so a test that
+// syncs it exercises the origin check rather than skipping it.
+//
+// Fixtures used to create a bare ".git" directory with no config. That
+// silently disabled originMismatch — the guard against pulling one
+// project's history into another project's directory — so tests asserting
+// "dry run pull" were asserting it without the check having run.
+func makeCloneAt(t *testing.T, dir, remote string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[remote \"origin\"]\n\turl = " + remote + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOriginIdentityUsesTheCloneURL is the bug v0.0.30 shipped: the
+// identity was "github.com/" + FullName, which only ever agreed with a
+// real remote because GitHub's clone URLs happen to take that shape.
+//
+// On any other forge it disagreed with every clone, and originMismatch
+// reads a disagreement as an origin collision — so cloning worked and the
+// second run failed with "expected github.com/...".
+func TestOriginIdentityUsesTheCloneURL(t *testing.T) {
+	for name, tc := range map[string]struct {
+		repo github.Repo
+		want string
+	}{
+		"codeberg": {
+			github.Repo{
+				FullName: "forgejo/meta",
+				CloneURL: "https://codeberg.org/forgejo/meta.git",
+			},
+			"codeberg.org/forgejo/meta",
+		},
+		"gitlab nested group": {
+			github.Repo{
+				FullName: "group/sub/proj",
+				CloneURL: "https://gitlab.com/group/sub/proj.git",
+			},
+			"gitlab.com/group/sub/proj",
+		},
+		"self-hosted": {
+			github.Repo{
+				FullName: "team/tool",
+				CloneURL: "https://git.example.com/team/tool.git",
+			},
+			"git.example.com/team/tool",
+		},
+		"github is unchanged": {
+			github.Repo{
+				FullName: "acme/tool",
+				CloneURL: "https://github.com/acme/tool.git",
+			},
+			"github.com/acme/tool",
+		},
+		// The fallbacks assume github.com because nothing else can be
+		// inferred without a URL. No forge adapter omits one; this pins
+		// that they stay behind the URL rather than in front of it.
+		"no clone url falls back": {
+			github.Repo{FullName: "acme/tool"}, "github.com/acme/tool",
+		},
+		"owner and name fall back": {
+			github.Repo{Owner: "Acme", Name: "Tool"}, "github.com/acme/tool",
+		},
+		"nothing to go on": {github.Repo{}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := repoRemoteIdentity(tc.repo); got != tc.want {
+				t.Errorf("repoRemoteIdentity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestOriginMismatchAcceptsAMatchingNonGitHubClone is the end-to-end half:
+// the identity has to agree with what CanonicalRemote produces for the
+// local clone, or every sync off GitHub reports a collision.
+func TestOriginMismatchAcceptsAMatchingNonGitHubClone(t *testing.T) {
+	dir := t.TempDir()
+	makeCloneAt(t, dir, "https://codeberg.org/forgejo/meta.git")
+
+	repo := github.Repo{
+		Name: "meta", FullName: "forgejo/meta",
+		CloneURL: "https://codeberg.org/forgejo/meta.git",
+	}
+	if msg, mismatch := originMismatch(repo, dir); mismatch {
+		t.Errorf("a matching Codeberg clone was reported as a collision: %s", msg)
+	}
+
+	// And a genuine collision is still caught, with both hosts named.
+	other := t.TempDir()
+	makeCloneAt(t, other, "https://codeberg.org/someone-else/different.git")
+	msg, mismatch := originMismatch(repo, other)
+	if !mismatch {
+		t.Fatal("a clone pointing elsewhere must be reported")
+	}
+	for _, want := range []string{"someone-else/different", "forgejo/meta"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the message should name %q: %s", want, msg)
+		}
+	}
+}
+
+// TestSearchSelectorsAreRejectedOffGitHub: topic: and language: are
+// GitHub search queries. Passed to another forge they were read as an
+// owner name, and the 404 blamed the owner — sending somebody to look for
+// a typo that was not there.
+func TestSearchSelectorsAreRejectedOffGitHub(t *testing.T) {
+	for _, owner := range []string{"topic:forge", "language:go"} {
+		err := RunE(context.Background(), RunOptions{
+			Owner:       owner,
+			BaseDir:     t.TempDir(),
+			Concurrency: 1,
+			Protocol:    "https",
+			Forge:       "codeberg",
+		})
+		if err == nil {
+			t.Fatalf("%s should be rejected on a forge without search", owner)
+		}
+		for _, want := range []string{"codeberg", owner, "owner"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the error should mention %q: %v", owner, want, err)
+			}
+		}
+	}
+}

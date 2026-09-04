@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every existing non-GitHub clone failed to sync.** v0.0.30 could clone
+  from Codeberg, GitLab, Gitea and Forgejo, and then refused to touch
+  what it had cloned: the second run reported
+  `origin collision: target has codeberg.org/forgejo/meta, expected
+  github.com/forgejo/meta`.
+
+  The identity a listed repository was compared by was built as
+  `"github.com/" + FullName`. That only ever agreed with a real remote
+  because GitHub's clone URLs happen to take exactly that shape; on any
+  other forge it disagreed with every clone, and the origin-collision
+  guard reads a disagreement as a collision. Cloning worked. Nothing
+  after it did.
+
+  The identity now comes from the clone URL the forge returned, through
+  the same function the local side goes through, so the two are
+  comparable by construction. Genuine collisions are still caught, and
+  now name the right hosts.
+
+  This also fixed a latent version of the same fault in orphan detection,
+  where the identity check had been silently degrading to a weaker
+  name-matching fallback beside it.
+
+- **`topic:` and `language:` were misdiagnosed on other forges.** They are
+  GitHub search queries; passed to a forge that lists by owner they were
+  read as an owner name, and the 404 that followed said "check the owner
+  name" — sending somebody to look for a typo that was not there. They
+  are now rejected up front, naming the forge and what to do instead.
+
+- **Test fixtures were disabling the origin check.** Several created a
+  bare `.git` directory with no config and a placeholder clone URL, which
+  made the identity empty and the guard a no-op — so tests asserting
+  "dry run pull" were asserting it without the check having run. The
+  fixtures now carry real remotes, which is what surfaced the bug above.
+
 ## [0.0.30] — 2026-09-04
 
 ### Fixed

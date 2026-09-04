@@ -173,7 +173,7 @@ func TestProcessRepo(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo1.git",
 		SSHURL:        "ssh://clone",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
@@ -184,7 +184,7 @@ func TestProcessRepo(t *testing.T) {
 		t.Errorf("Expected dry run clone, got %v", msg)
 	}
 
-	_ = os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750)
+	makeCloneAt(t, targetDir, "https://github.com/owner/repo1.git")
 
 	msg = processRepo(context.Background(), "owner", "https", true, true, git.CloneOptions{}, SyncOptions{}, job)
 	if msg.Action != "DRY-RUN" || msg.Message != "git pull" {
@@ -241,7 +241,7 @@ func TestProcessRepoFull(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo1.git",
 		SSHURL:        "ssh://clone",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
@@ -299,7 +299,7 @@ func TestProcessRepoCanceled(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo1.git",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
@@ -1209,7 +1209,7 @@ func TestProcessRepoMkdirFail(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo1.git",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "repo1")
 	job := Job{Repo: repo, Target: targetDir}
