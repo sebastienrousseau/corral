@@ -37,10 +37,10 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard bench \
+        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard bench claims-check \
         docs-lint help
 
-all: format vet staticcheck spdx-check sbom-check pkg-check example-check test test-race build
+all: format vet staticcheck spdx-check sbom-check pkg-check claims-check example-check test test-race build
 
 ## build: compile the binary with version metadata
 build:
@@ -161,6 +161,16 @@ eval:
 	  go test ./internal/mcp/ -count=1 -v \
 	  -run 'TestEval|TestEveryReadTool|TestToolDescriptions|TestEveryToolIsDescribed|TestServerInstructionsOrient'
 	@echo "eval report: $(DIST)/eval.json"
+
+## claims-check: verify the project's measurable claims about itself
+#
+# Coverage percentages, package counts, benchmark presence and example
+# references all go stale silently — nothing fails when a number in prose
+# stops matching the code. .bestpractices.json claimed 90.2% coverage
+# "as of v0.0.11" through twenty releases, by which point it was 100%
+# across twelve packages.
+claims-check:
+	go run scripts/claims_check.go
 
 ## pkg-check: verify pkg/ documents every distribution format built
 pkg-check:

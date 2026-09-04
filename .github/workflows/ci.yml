@@ -245,6 +245,16 @@ jobs:
           set -euo pipefail
           go run scripts/manifest_check.go
 
+      # Coverage percentages, package counts, benchmark presence and example
+      # references all go stale silently: nothing fails when a number in
+      # prose stops matching the code. .bestpractices.json is an OpenSSF
+      # submission and claimed 90.2% coverage "as of v0.0.11" through
+      # twenty releases, by which point it was 100% across twelve packages.
+      - name: Claims about the project are still true
+        env:
+          GOTOOLCHAIN: auto
+        run: go run scripts/claims_check.go
+
       # pkg/ exists so a packager can find the recipe for a format without
       # reading the release pipeline, and that only holds while it is
       # complete. A directory of prose cannot notice that a new format
