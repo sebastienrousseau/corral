@@ -44,6 +44,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Verified live against the real workspace: 187 repositories and 109,171
   files in one call.
 
+- **Cache hints on the results that carry them** (`ttlMs` / `cacheScope`,
+  protocol 2026-07-28). Without them a client re-fetches everything every
+  turn, including a tool listing that cannot have changed — the tool set is
+  fixed when the process starts.
+
+  Listings get a minute and `public`: they describe this server's own
+  surface, which does not depend on who asked. Resource reads get exactly
+  the workspace scan's own TTL and `private`: the TTL because promising a
+  freshness the server does not itself maintain is a lie a client acts on,
+  and the scope because the content is one developer's workspace and an
+  intermediary serving it to somebody else is what that flag exists to
+  prevent. Tool calls are deliberately left alone — a call can have side
+  effects, and there is no TTL at which reusing its answer is safe.
+
 - **The MCP server can serve over HTTP.** `corralctl mcp --http
   127.0.0.1:7777` runs the Streamable HTTP transport instead of stdio, for a
   client that connects to a server somebody else started rather than
@@ -60,6 +74,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in front of it.
 
 ### Security
+
+- **Deletion stages the clone aside before removing it (SEC-5).** Every
+  safety check ran against a path any other process on the machine could
+  still write to, and the window between the last check and the `rm` was
+  real. The clone is now renamed within its own parent directory first —
+  same-directory, so the rename is atomic and never a cross-device copy —
+  after which nothing can reach it under the name a writer knew: a
+  concurrent `git commit` either fails or writes into a directory it has
+  just recreated, which is not the one being deleted.
+
+  The whole refusal cascade then runs a second time against the staged
+  copy, so work that landed between the first check and the rename is seen
+  *before* anything is destroyed rather than after. Losing that race costs
+  nothing: the clone is renamed back and the deletion refuses, saying when
+  the problem was detected. If the restore itself fails — the only outcome
+  that leaves a clone under a name nobody would look for — the error names
+  the staged path so it can be moved back by hand.
 
 - **Deletion now needs a person, not just a flag.** Until now the only gate
   on `corral_delete_repo` was `--enable-destructive-mutations`, decided once

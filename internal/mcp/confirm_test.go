@@ -670,3 +670,273 @@ func TestConfirmationSurvivesTheHTTPTransport(t *testing.T) {
 		t.Error("the clone should have been removed")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// staging (SEC-5)
+// ---------------------------------------------------------------------------
+
+// TestDeleteStagesBeforeRemoving is the SEC-5 property. Every guard runs
+// against a path any other process can still write to; the rename is what
+// makes the clone unreachable under the name a writer knew, and the second
+// pass of the guards is what sees anything that landed in between.
+func TestDeleteStagesBeforeRemoving(t *testing.T) {
+	c := &stubConfirmer{decision: confirmApproved}
+	h, repo := confirmHarness(t, true, c)
+
+	var staged string
+	stubSeam(t, &removeMutation, func(p string) error {
+		staged = p
+		return os.RemoveAll(p)
+	})
+
+	out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+	if isErr {
+		t.Fatalf("a clean deletion should succeed: %s", out)
+	}
+	if staged == repo {
+		t.Error("the clone was removed under its own path; nothing closed the window")
+	}
+	if !strings.HasPrefix(filepath.Base(staged), stagePrefix) {
+		t.Errorf("staged path %q is not marked as machinery", staged)
+	}
+	// Compared through EvalSymlinks because the server resolves the path
+	// it acts on and a temp directory is a symlink on macOS.
+	wantParent, err := filepath.EvalSymlinks(filepath.Dir(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(staged) != wantParent {
+		t.Errorf("staged into %q, not the clone's own parent %q — a rename across "+
+			"directories is not guaranteed atomic", filepath.Dir(staged), wantParent)
+	}
+	if _, err := os.Stat(repo); !os.IsNotExist(err) {
+		t.Error("the original path should be gone")
+	}
+	if _, err := os.Stat(staged); !os.IsNotExist(err) {
+		t.Error("the staged copy should be gone too")
+	}
+}
+
+// TestDeleteRestoresWhenTheSecondCheckFails is the case staging exists for:
+// work landed between the first check and the rename. Losing that race must
+// cost nothing.
+func TestDeleteRestoresWhenTheSecondCheckFails(t *testing.T) {
+	c := &stubConfirmer{decision: confirmApproved}
+	h, repo := confirmHarness(t, true, c)
+
+	// Clean on the first pass, dirty on the second — exactly the race.
+	calls := 0
+	stubSeam(t, &hasDirtyWorkingTree, func(context.Context, string) (bool, string) {
+		calls++
+		if calls > 1 {
+			return true, "M internal/thing.go"
+		}
+		return false, ""
+	})
+	stubSeam(t, &removeMutation, func(string) error {
+		t.Error("nothing should be removed once the second check fails")
+		return nil
+	})
+
+	out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+	if !isErr {
+		t.Fatalf("work that appeared during staging must refuse: %s", out)
+	}
+	if !strings.Contains(out, "after staging") {
+		t.Errorf("the refusal should say when it was detected: %s", out)
+	}
+	if !strings.Contains(out, "restored") {
+		t.Errorf("the refusal should say the clone is safe: %s", out)
+	}
+	if _, err := os.Stat(repo); err != nil {
+		t.Errorf("the clone must be back where it was: %v", err)
+	}
+	// And the staged name must not be left behind.
+	entries, err := os.ReadDir(filepath.Dir(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), stagePrefix) {
+			t.Errorf("a staged directory was left behind: %s", e.Name())
+		}
+	}
+}
+
+// TestDeleteReportsAFailedRestore: the worst outcome is a clone sitting
+// under a name nobody would look for, so it must be named in the error.
+func TestDeleteReportsAFailedRestore(t *testing.T) {
+	c := &stubConfirmer{decision: confirmApproved}
+	h, _ := confirmHarness(t, true, c)
+
+	calls := 0
+	stubSeam(t, &hasUnpushedCommits, func(context.Context, string) (bool, string) {
+		calls++
+		return calls > 1, "2 commits reachable only from local refs"
+	})
+	stubSeam(t, &unstageRemoval, func(string, string) error {
+		return errors.New("device busy")
+	})
+
+	out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+	if !isErr {
+		t.Fatalf("expected a refusal: %s", out)
+	}
+	for _, want := range []string{"could NOT be restored", stagePrefix, "device busy", "by hand"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the error should contain %q so the clone can be found: %s", want, out)
+		}
+	}
+}
+
+func TestDeleteReportsAStagingFailure(t *testing.T) {
+	c := &stubConfirmer{decision: confirmApproved}
+	h, repo := confirmHarness(t, true, c)
+	stubSeam(t, &stageForRemoval, func(string) (string, error) {
+		return "", errors.New("read-only file system")
+	})
+	stubSeam(t, &removeMutation, func(string) error {
+		t.Error("nothing should be removed when staging failed")
+		return nil
+	})
+
+	out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+	if !isErr {
+		t.Fatalf("expected a refusal: %s", out)
+	}
+	if !strings.Contains(out, "read-only file system") {
+		t.Errorf("the cause should survive: %s", out)
+	}
+	if _, err := os.Stat(repo); err != nil {
+		t.Error("the clone must be untouched")
+	}
+}
+
+// TestDeleteRestoresWhenRemovalFails: a removal that fails halfway leaves
+// the clone staged, and leaving it under a hidden name would be worse than
+// the failure itself.
+func TestDeleteRestoresWhenRemovalFails(t *testing.T) {
+	c := &stubConfirmer{decision: confirmApproved}
+	h, repo := confirmHarness(t, true, c)
+	stubSeam(t, &removeMutation, func(string) error {
+		return errors.New("directory not empty")
+	})
+
+	out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+	if !isErr {
+		t.Fatalf("expected an error: %s", out)
+	}
+	if !strings.Contains(out, "directory not empty") {
+		t.Errorf("the cause should survive: %s", out)
+	}
+	if _, err := os.Stat(repo); err != nil {
+		t.Errorf("a failed removal must leave the clone where it was: %v", err)
+	}
+}
+
+func TestStageForRemovalRefusesAnExistingName(t *testing.T) {
+	// The only way a staging path exists already is a previous deletion
+	// that crashed midway. Reusing it would delete whatever it holds.
+	base := t.TempDir()
+	dir := filepath.Join(base, "repo")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	stubSeam(t, &randRead, func(b []byte) (int, error) {
+		for i := range b {
+			b[i] = 0
+		}
+		return len(b), nil
+	})
+	first, err := stageForRemoval(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The same deterministic suffix, so the second attempt collides.
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stageForRemoval(dir); err == nil {
+		t.Errorf("staging onto an existing path %q should fail", first)
+	}
+}
+
+func TestStageForRemovalReportsARandomnessFailure(t *testing.T) {
+	stubSeam(t, &randRead, func([]byte) (int, error) {
+		return 0, errors.New("entropy pool exhausted")
+	})
+	if _, err := stageForRemoval(t.TempDir()); err == nil {
+		t.Error("a staging name that cannot be made unique is a failure")
+	}
+}
+
+func TestStageForRemovalReportsARenameFailure(t *testing.T) {
+	if _, err := stageForRemoval(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Error("staging a path that does not exist should fail")
+	}
+}
+
+// TestDeleteReportsAuditFailuresAroundStaging covers the arms where the
+// audit log itself fails while a deletion is already in flight. An
+// unloggable mutation is the one thing worse than a failed one, so each
+// says so rather than reporting a clean outcome.
+func TestDeleteReportsAuditFailuresAroundStaging(t *testing.T) {
+	t.Run("staging failed", func(t *testing.T) {
+		c := &stubConfirmer{decision: confirmApproved}
+		h, _ := confirmHarness(t, true, c)
+		stubSeam(t, &stageForRemoval, func(string) (string, error) {
+			return "", errors.New("read-only file system")
+		})
+		failAuditAfter(t, 2)
+
+		out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+		if !isErr {
+			t.Fatalf("expected an error: %s", out)
+		}
+		if !strings.Contains(out, "audit completion failed") {
+			t.Errorf("the audit failure was swallowed: %s", out)
+		}
+	})
+
+	t.Run("second check failed", func(t *testing.T) {
+		c := &stubConfirmer{decision: confirmApproved}
+		h, _ := confirmHarness(t, true, c)
+		calls := 0
+		stubSeam(t, &hasIgnoredContent, func(context.Context, string) (bool, string) {
+			calls++
+			return calls > 1, ".env"
+		})
+		failAuditAfter(t, 2)
+
+		out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+		if !isErr {
+			t.Fatalf("expected a refusal: %s", out)
+		}
+		if !strings.Contains(out, "audit completion failed") {
+			t.Errorf("the audit failure was swallowed: %s", out)
+		}
+	})
+
+	t.Run("restore failed after a failed removal", func(t *testing.T) {
+		c := &stubConfirmer{decision: confirmApproved}
+		h, _ := confirmHarness(t, true, c)
+		stubSeam(t, &removeMutation, func(string) error {
+			return errors.New("directory not empty")
+		})
+		stubSeam(t, &unstageRemoval, func(string, string) error {
+			return errors.New("device busy")
+		})
+
+		out, isErr := h.callTool("corral_delete_repo", map[string]any{"query": "doomed"})
+		if !isErr {
+			t.Fatalf("expected an error: %s", out)
+		}
+		// Both failures have to reach the caller: the removal that failed,
+		// and the fact the clone is now under a name they will not find.
+		for _, want := range []string{"directory not empty", "could not be restored", stagePrefix} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the error should contain %q: %s", want, out)
+			}
+		}
+	})
+}

@@ -197,6 +197,10 @@ func NewServer(opts ServerOptions) (*Server, error) {
 	s.registerTools()
 	s.registerSymbolTools()
 	s.registerSearchTool()
+
+	// Freshness hints on the results that carry them, so a client stops
+	// re-fetching a tool listing that cannot have changed.
+	s.mcp.AddReceivingMiddleware(cacheHintMiddleware())
 	s.registerResources()
 	s.registerPrompts()
 	if s.opts.EnableMutations {
