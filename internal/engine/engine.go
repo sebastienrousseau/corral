@@ -1333,9 +1333,20 @@ func cloneRepository(
 	return result
 }
 
-// cloneURL selects the URL to clone from. For ssh it prefers the API's own
-// ssh_url and falls back to the conventional github.com form when the API
-// did not supply one.
+// cloneURL selects the URL to clone from. For ssh it prefers the forge's
+// own ssh_url, and derives one from the HTTPS URL when the forge did not
+// supply one.
+//
+// It used to fall back to "git@github.com:owner/name.git". That is
+// reachable — a Gitea or Forgejo instance with SSH disabled returns an
+// empty ssh_url — and the consequence is not a failure but something
+// worse: cloning a *different* repository, from a host the user never
+// named, that happens to share an owner and name.
+//
+// Deriving the host from the HTTPS URL keeps the fallback on the instance
+// the repository actually came from. It can still be wrong about the SSH
+// port or user for an unusual deployment, but it cannot be wrong about
+// which server to talk to.
 func cloneURL(repo github.Repo, owner, protocol string) string {
 	if protocol != "ssh" {
 		return repo.CloneURL
@@ -1343,6 +1354,14 @@ func cloneURL(repo github.Repo, owner, protocol string) string {
 	if repo.SSHURL != "" {
 		return repo.SSHURL
 	}
+	if identity := git.CanonicalRemote(repo.CloneURL); identity != "" {
+		if slash := strings.IndexByte(identity, '/'); slash > 0 {
+			return fmt.Sprintf("git@%s:%s.git", identity[:slash], identity[slash+1:])
+		}
+	}
+	// Nothing to derive from. The conventional GitHub form is the only
+	// remaining guess, and it is at least the one that was correct before
+	// other forges existed.
 	return fmt.Sprintf("git@github.com:%s/%s.git", owner, repo.Name)
 }
 

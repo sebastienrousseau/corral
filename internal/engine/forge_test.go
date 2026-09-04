@@ -455,3 +455,46 @@ func TestSearchSelectorsAreRejectedOffGitHub(t *testing.T) {
 		}
 	}
 }
+
+// TestCloneURLDerivesTheSSHHost: the fallback used to be
+// "git@github.com:owner/name.git", which is reachable — a Gitea or
+// Forgejo instance with SSH disabled returns an empty ssh_url — and whose
+// consequence is not a failure but something worse: cloning a different
+// repository, from a host the user never named, that happens to share an
+// owner and name.
+func TestCloneURLDerivesTheSSHHost(t *testing.T) {
+	for name, tc := range map[string]struct {
+		repo     github.Repo
+		protocol string
+		want     string
+	}{
+		"https uses the clone url": {
+			github.Repo{CloneURL: "https://codeberg.org/acme/tool.git", SSHURL: "git@codeberg.org:acme/tool.git"},
+			"https", "https://codeberg.org/acme/tool.git",
+		},
+		"ssh prefers the forge's own": {
+			github.Repo{CloneURL: "https://codeberg.org/acme/tool.git", SSHURL: "git@codeberg.org:acme/tool.git"},
+			"ssh", "git@codeberg.org:acme/tool.git",
+		},
+		"ssh derives the host when the forge gives none": {
+			github.Repo{Name: "tool", CloneURL: "https://git.example.com/team/tool.git"},
+			"ssh", "git@git.example.com:team/tool.git",
+		},
+		"a nested gitlab group keeps its full path": {
+			github.Repo{Name: "proj", CloneURL: "https://gitlab.com/group/sub/proj.git"},
+			"ssh", "git@gitlab.com:group/sub/proj.git",
+		},
+		// Nothing to derive from: the conventional GitHub form is the only
+		// remaining guess, and it is the one that was correct before other
+		// forges existed.
+		"no urls at all": {
+			github.Repo{Name: "tool"}, "ssh", "git@github.com:acme/tool.git",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := cloneURL(tc.repo, "acme", tc.protocol); got != tc.want {
+				t.Errorf("cloneURL = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
