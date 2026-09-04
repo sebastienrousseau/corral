@@ -194,9 +194,9 @@ func (s *Server) handleSyncRepo(ctx context.Context, _ *mcp.CallToolRequest, in 
 	pullErr := gitPull(ctx, safe, git.PullOptions{})
 	if pullErr != nil {
 		if auditErr := s.completeMutation(rec, "error", pullErr.Error()); auditErr != nil {
-			return toolError("git pull failed: %v; audit completion failed: %v", pullErr, auditErr), nil, nil
+			return toolError("%v; audit completion failed: %v", pullErr, auditErr), nil, nil
 		}
-		return toolError("git pull failed: %v", pullErr), nil, nil
+		return toolError("%v", pullErr), nil, nil
 	}
 	if err := markSynced(safe); err != nil {
 		if auditErr := s.completeMutation(rec, "error", err.Error()); auditErr != nil {
@@ -259,9 +259,9 @@ func (s *Server) handleCloneRepo(ctx context.Context, _ *mcp.CallToolRequest, in
 	})
 	if cloneErr != nil {
 		if auditErr := s.completeMutation(rec, "error", cloneErr.Error()); auditErr != nil {
-			return toolError("git clone failed: %v; audit completion failed: %v", cloneErr, auditErr), nil, nil
+			return toolError("%v; audit completion failed: %v", cloneErr, auditErr), nil, nil
 		}
-		return toolError("git clone failed: %v", cloneErr), nil, nil
+		return toolError("%v", cloneErr), nil, nil
 	}
 	if err := s.completeMutation(rec, "ok", ""); err != nil {
 		return toolError("audit completion failed: %v", err), nil, nil

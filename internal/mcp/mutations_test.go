@@ -376,7 +376,12 @@ func failAuditAfter(t *testing.T, n int) {
 // Every failure path in a mutation must surface as a tool error carrying the
 // underlying cause — never a silent success, and never a dropped audit.
 func TestMutationFailurePathsReportCause(t *testing.T) {
+	// Shaped the way internal/git actually returns them: git names the
+	// operation itself, so the MCP layer no longer repeats it. A bare
+	// "boom" everywhere made that redundant prefix look load-bearing.
 	boom := errors.New("boom")
+	pullBoom := errors.New("git pull failed in alpha: boom")
+	cloneBoom := errors.New("git clone failed in alpha: boom")
 
 	cases := []struct {
 		name       string
@@ -390,7 +395,7 @@ func TestMutationFailurePathsReportCause(t *testing.T) {
 			name: "pull fails",
 			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
 			stub: func(t *testing.T) {
-				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return boom })
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return pullBoom })
 			},
 			wants: []string{"git pull failed", "boom"},
 		},
@@ -399,7 +404,7 @@ func TestMutationFailurePathsReportCause(t *testing.T) {
 			tool: "corral_sync_repo", args: map[string]any{"query": "alpha"},
 			auditFails: true,
 			stub: func(t *testing.T) {
-				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return boom })
+				stubSeam(t, &gitPull, func(context.Context, string, git.PullOptions) error { return pullBoom })
 			},
 			wants: []string{"git pull failed", "audit completion failed"},
 		},
@@ -435,7 +440,7 @@ func TestMutationFailurePathsReportCause(t *testing.T) {
 			tool: "corral_clone_repo", args: map[string]any{"url": "https://example.com/o/new.git", "target": "Public/go/new"},
 			stub: func(t *testing.T) {
 				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return nil })
-				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return boom })
+				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return cloneBoom })
 			},
 			wants: []string{"git clone failed", "boom"},
 		},
@@ -548,7 +553,10 @@ func TestCloneRefusedWhenIntentCannotBeAudited(t *testing.T) {
 // Both clone failure modes, paired with a lost completion record: the caller
 // must learn the operation failed AND that the audit trail is incomplete.
 func TestCloneFailuresWithLostAuditRecord(t *testing.T) {
+	// mkdir is corral's own failure and carries no git prefix; the clone
+	// is git's and carries the one git writes.
 	boom := errors.New("boom")
+	cloneBoom := errors.New("git clone failed in alpha: boom")
 	cases := []struct {
 		name  string
 		stub  func(t *testing.T)
@@ -565,7 +573,7 @@ func TestCloneFailuresWithLostAuditRecord(t *testing.T) {
 			name: "clone itself",
 			stub: func(t *testing.T) {
 				stubSeam(t, &mkdirMutation, func(string, os.FileMode) error { return nil })
-				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return boom })
+				stubSeam(t, &gitClone, func(context.Context, string, string, git.CloneOptions) error { return cloneBoom })
 			},
 			wants: []string{"git clone failed", "audit completion failed"},
 		},

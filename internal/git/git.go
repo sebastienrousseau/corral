@@ -173,7 +173,13 @@ func Pull(ctx context.Context, targetDir string, opts PullOptions) error {
 	withGitEnv(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		// The operation, not the argv. Joining every argument put the
+		// whole invocation into the message — eight internal -c flags and
+		// an absolute path — which is noise in a terminal and worse in an
+		// MCP tool result, where it reaches a model's context in place of
+		// the actual git error.
+		return fmt.Errorf("git pull failed in %s: %w: %s",
+			filepath.Base(targetDir), err, strings.TrimSpace(string(out)))
 	}
 
 	if opts.RecurseSubmodules && opts.IgnoreSubmoduleFailures {
