@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -110,12 +111,66 @@ func main() {
 			problems = append(problems, required+" is missing")
 		}
 	}
+	problems = append(problems, checkVerifyDoc()...)
 
 	if len(problems) > 0 {
 		fail(problems)
 	}
 	fmt.Printf("pkg check: %d distribution format(s) documented\n", len(formats))
 }
+
+// checkVerifyDoc verifies that pkg/VERIFY.md names the signature artefact
+// the release pipeline actually produces.
+//
+// v0.0.29 shipped a VERIFY.md telling packagers to pass
+// `--certificate checksums.txt.pem --signature checksums.txt.sig` to
+// cosign. goreleaser has never produced those: its `signs:` block writes
+// a sigstore bundle. Anyone following the document got "no such file",
+// and nothing in the pipeline noticed, because a document that is wrong
+// still builds.
+//
+// The filename lives in one place — the `signature:` template in
+// .goreleaser.yaml — so that is the source of truth and this compares
+// against it.
+func checkVerifyDoc() []string {
+	cfg, err := os.ReadFile(".goreleaser.yaml")
+	if err != nil {
+		return []string{fmt.Sprintf("reading .goreleaser.yaml: %v", err)}
+	}
+	doc, err := os.ReadFile("pkg/VERIFY.md")
+	if err != nil {
+		return []string{fmt.Sprintf("reading pkg/VERIFY.md: %v", err)}
+	}
+
+	m := signatureTemplate.FindSubmatch(cfg)
+	if m == nil {
+		return []string{".goreleaser.yaml has no `signature:` template under `signs:`, " +
+			"so pkg/VERIFY.md cannot be checked against it"}
+	}
+	// "${artifact}.sigstore.json" -> ".sigstore.json", the part a reader
+	// has to type. The artifact name itself varies per release.
+	suffix := strings.TrimPrefix(string(m[1]), "${artifact}")
+
+	var problems []string
+	if !strings.Contains(string(doc), suffix) {
+		problems = append(problems, fmt.Sprintf(
+			"pkg/VERIFY.md does not mention %q, which is the signature artefact "+
+				".goreleaser.yaml produces — the verification steps cannot work as written",
+			suffix))
+	}
+	// The shapes goreleaser does not produce, which a reader would spend
+	// real time on before discovering they do not exist.
+	for _, stale := range []string{"checksums.txt.pem", "checksums.txt.sig`", "checksums.txt.sig "} {
+		if strings.Contains(string(doc), stale) {
+			problems = append(problems, fmt.Sprintf(
+				"pkg/VERIFY.md refers to %q, which the release does not publish", strings.TrimSpace(stale)))
+		}
+	}
+	return problems
+}
+
+// signatureTemplate matches goreleaser's blob-signature filename template.
+var signatureTemplate = regexp.MustCompile(`(?m)^\s*signature:\s*'?([^'\n]+)'?`)
 
 func fail(problems []string) {
 	sort.Strings(problems)
