@@ -510,11 +510,22 @@ outnumber everything else — and `include_tests` brings them back.
 origin, file count, declaration counts by kind, and its most significant
 exported types and functions. Reach for it before reading files.
 
-**Only Go is indexed today.** Symbol extraction uses `go/ast` from the
-standard library rather than tree-sitter, because tree-sitter's Go binding
-requires CGO and corral builds `CGO_ENABLED=0` — three of its four release
-targets fail to cross-compile with it. The reasoning, and what would change
-it, is in [ADR-0006](docs/adr/0006-symbol-extraction-without-cgo.md).
+**Indexed languages: Go, Python, TypeScript, JavaScript, Rust.**
+
+Go is parsed with `go/ast` — the compiler's own parser, so the index agrees
+with the language by construction. The rest are read by a line scanner, in
+the tradition of ctags: it recognises declaration syntax rather than
+building a syntax tree, because every mature parser for those languages is
+either CGO (tree-sitter), a port that lags the language, or larger than
+corral itself. ADR-0006 records why CGO is not available here.
+
+The scanner runs over source that has had comment and string *contents*
+blanked out, so a `class` inside a docstring or a `function` inside a
+template literal is invisible to it. What it cannot do is resolve types,
+see through macros, or follow a declaration split across lines unusually —
+and it is wrong cheaply: a missed symbol falls back to reading files, and a
+spurious one is a wrong line in the right file. What it will not do is
+invent a symbol that does not exist.
 
 ---
 

@@ -84,6 +84,47 @@ func skipDir(name string) bool {
 	return false
 }
 
+// generatedSuffixes are the filename endings that conventionally mean
+// "written by a tool", per language.
+//
+// A definition lookup that answers with generated code has technically
+// succeeded and practically failed: nobody wants the line in the protobuf
+// stub, they want the .proto or the hand-written wrapper. Vendored and
+// dependency trees are already excluded by skipDir; this is the same idea
+// for files that sit among ordinary source.
+var generatedSuffixes = []string{
+	// Go
+	".pb.go", ".pb.gw.go", "_generated.go", ".gen.go", "_string.go",
+	// Python
+	"_pb2.py", "_pb2_grpc.py", "_pb2.pyi",
+	// TypeScript / JavaScript
+	".min.js", ".min.mjs", ".bundle.js", ".generated.ts", ".gen.ts",
+	// Rust
+	".pb.rs",
+}
+
+// skipSourceFile reports whether a discovered file should be left out of
+// the index, by path segment or by generated-file convention.
+//
+// The segment check duplicates skipDir on purpose. skipDir prunes the walk
+// and cannot see a path assembled some other way; this is checked against
+// the repository-relative path, so it holds for every caller.
+func skipSourceFile(rel string) bool {
+	lower := strings.ToLower(rel)
+	for _, seg := range strings.Split(lower, "/") {
+		switch seg {
+		case "vendor", "testdata", "node_modules", ".git", "__pycache__":
+			return true
+		}
+	}
+	for _, suffix := range generatedSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractRepo walks one repository and returns every symbol it can find.
 //
 // The walk is serial and the parsing is concurrent, for the same reason the
@@ -191,7 +232,7 @@ func discover(ctx context.Context, root string) ([]string, bool, error) {
 		if _, ok := ExtractorFor(rel); !ok {
 			return nil
 		}
-		if skipGoFile(rel) {
+		if skipSourceFile(rel) {
 			return nil
 		}
 		paths = append(paths, rel)

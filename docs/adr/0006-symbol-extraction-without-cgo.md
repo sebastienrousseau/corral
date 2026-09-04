@@ -95,3 +95,49 @@ Two things, either of which should reopen it:
   wazero-hosted tree-sitter would give many languages while keeping
   `CGO_ENABLED=0`. That was judged too speculative to build on here, not
   wrong in principle.
+
+## Amendment — 2026-09-04: four more languages, without changing the decision
+
+The first bullet above fired. A workspace is polyglot, and a
+cross-repository symbol lookup that silently covered only the Go clones
+was not answering the question it appeared to answer: not "no match", but
+a match set missing every Python, TypeScript and Rust repository, with no
+indication anything was left out.
+
+Python, TypeScript, JavaScript and Rust are now indexed. Neither branch
+this ADR anticipated was taken — no CGO, and no wazero-hosted
+tree-sitter. The third option is the oldest one: a line scanner, which is
+what ctags has done since 1992.
+
+**Why a scanner rather than the wazero path.** wazero remains the right
+answer eventually, and nothing here forecloses it — `Extractor` is the
+same interface either way, so replacing a scanner with a WASM grammar is
+one file per language. It was not taken now because it is a large amount
+of new machinery (a WASM runtime, a grammar per language, a build step to
+produce the `.wasm`, and a query language to map nodes to symbols) for an
+index whose contract is deliberately shallow: a name, a kind, a file and a
+line. Nothing in that contract needs a syntax tree. The scanner reaches it
+in roughly two hundred lines per language with no new dependency.
+
+**What the scanner gives up, stated plainly**, because a shallow tool that
+oversells itself is worse than one that does not exist:
+
+- No type resolution. It cannot tell a re-export from a declaration.
+- No macro expansion, no decorators that rewrite, no import-time
+  generation.
+- A declaration split across lines unusually will be missed.
+- Python tuple unpacking (`a, b = f()`) is deliberately not read.
+
+**What it does not give up** is trustworthiness, which is the property
+that actually matters for this index. Every scanner runs over source whose
+comment and string *contents* have been blanked — offsets and line numbers
+preserved exactly — so a `class` in a docstring, a `function` in a
+template literal, and a `struct` in a nested Rust block comment are all
+invisible to it. A missed symbol degrades to reading files, which is what
+an agent would have done anyway. A *fabricated* symbol would be a
+confident lie about a line where nothing is declared, and that is the
+failure this design spends its complexity preventing. Every language's
+test fixture plants such a trap and asserts it does not appear.
+
+Go keeps `go/ast`. The scanner is for languages that have no equivalent
+available here, not a replacement for one that does.

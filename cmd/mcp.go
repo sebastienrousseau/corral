@@ -53,7 +53,8 @@ Tools:
 
 corral_find_symbol is the one a single-repository code index cannot
 offer: it resolves a function, method, type, interface, constant or
-variable across the whole workspace at once. Go sources are indexed.
+variable across the whole workspace at once. Go, Python, TypeScript,
+JavaScript and Rust sources are indexed.
 
 Write tools, registered only with --enable-mutations, and audited:
   corral_sync_repo         - git pull one clone
