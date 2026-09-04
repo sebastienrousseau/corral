@@ -298,8 +298,18 @@ func snippet(b []byte) string {
 	return s
 }
 
-// pageQuery builds the page/per_page parameters both GitLab and Gitea use.
+// pageQuery builds the page/per_page parameters GitLab and Gitea use.
 func pageQuery(page int, extra url.Values) url.Values {
+	return pageQueryNamed(page, "per_page", extra)
+}
+
+// pageQueryNamed is pageQuery with the page-size parameter named
+// explicitly, for a forge that spells it differently.
+//
+// Bitbucket calls it pagelen and silently ignores per_page, falling back
+// to a default of ten — which is not an error and not visible in the
+// output, just ten times the requests. Verified against the live API.
+func pageQueryNamed(page int, sizeParam string, extra url.Values) url.Values {
 	q := url.Values{}
 	for k, vs := range extra {
 		for _, v := range vs {
@@ -307,6 +317,6 @@ func pageQuery(page int, extra url.Values) url.Values {
 		}
 	}
 	q.Set("page", strconv.Itoa(page))
-	q.Set("per_page", strconv.Itoa(perPage))
+	q.Set(sizeParam, strconv.Itoa(perPage))
 	return q
 }

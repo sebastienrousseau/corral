@@ -144,6 +144,16 @@ func TestForgeTokenSources(t *testing.T) {
 		t.Errorf("gitlab token = %q, want the corral-specific variable to win", got)
 	}
 
+	t.Setenv("CORRAL_BITBUCKET_TOKEN", "")
+	t.Setenv("BITBUCKET_TOKEN", "bb-env")
+	if got := forgeToken(context.Background(), "bitbucket", github.AuthModeAuto); got != "bb-env" {
+		t.Errorf("bitbucket token = %q", got)
+	}
+	t.Setenv("CORRAL_BITBUCKET_TOKEN", "bb-corral")
+	if got := forgeToken(context.Background(), "bitbucket", github.AuthModeAuto); got != "bb-corral" {
+		t.Errorf("bitbucket token = %q, want the corral-specific variable to win", got)
+	}
+
 	t.Setenv("CORRAL_FORGE_TOKEN", "")
 	t.Setenv("FORGEJO_TOKEN", "")
 	t.Setenv("CODEBERG_TOKEN", "")

@@ -6,6 +6,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Bitbucket Cloud** is the sixth forge corral can clone from:
+  `--forge bitbucket`, or `--forge-url https://bitbucket.org`.
+
+  Three things about Bitbucket differ from every other forge here, and
+  each was found against the live API rather than reasoned about:
+
+  - It paginates on an absolute `next` URL, so **a short page is not the
+    last page** — a filtered listing can be short and still have more.
+  - It names its page size `pagelen` and *silently ignores* `per_page`,
+    falling back to ten. Not an error, and invisible in the output: just
+    ten times the requests.
+  - Its API lives on `api.bitbucket.org` while everything a user sees
+    lives on `bitbucket.org`, so `--forge-url https://bitbucket.org` —
+    a perfectly reasonable input — 404s on every request unless the host
+    is rewritten.
+
+  Also: `name` is a display name ("Atlassian Event") and `slug` is the URL
+  name ("atlassian-event"), so the slug is what a directory is called;
+  a fork is signalled by the presence of a `parent` rather than a boolean;
+  and a Mercurial repository, which an old workspace can still list, is
+  skipped because it has no git clone URL.
+
+  `prune`, orphan detection and `--protocol ssh` all followed without
+  change, which is what the forge abstraction was for. Verified live
+  against a real workspace.
+
+  Credentials come from `BITBUCKET_TOKEN`, or `CORRAL_BITBUCKET_TOKEN`
+  where both are set.
+
+  **sourcehut is not included.** Its API requires authentication even to
+  list public repositories, so there is no anonymous path and no way to
+  verify an implementation against the live service without an account.
+
 ### Fixed
 
 - **A failed `corral_sync_repo` or `corral_clone_repo` returned a wall of

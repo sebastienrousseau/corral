@@ -84,7 +84,7 @@ Disk is cheaper than a migration that has to be right the first time.
 
 - **`ghq get` for a single repository.** Covered above.
 - **Arbitrary hosts.** ghq handles any remote. Corral clones from
-  GitHub, GitLab, Gitea, Forgejo and Codeberg (`--forge`, `--forge-url`),
+  GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket (`--forge`, `--forge-url`),
   which covers most of what ghq is used for but is not "any remote". Its
   *reading* has no such limit: the MCP server, `status`, `exec` and
   symbol lookup work against any clone in the workspace, whatever its
