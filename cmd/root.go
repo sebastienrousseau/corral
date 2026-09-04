@@ -70,7 +70,7 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "corralctl <owner|topic:<topic>|language:<language>> [base_dir] [limit]",
-	Short: "Automatically clone and organise GitHub repositories by owner, topic, or language.",
+	Short: "Automatically clone and organise repositories by owner, topic, or language.",
 	Args:  validateRootArgs,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return validateCommonFlags(cmd)
@@ -284,7 +284,7 @@ func init() {
 
 	rootCmd.Flags().AddFlagSet(fetchFlags())
 	rootCmd.Flags().AddFlagSet(cloneFlags())
-	rootCmd.Flags().BoolVarP(&orphans, "orphans", "o", false, "detect and list local repositories not on GitHub")
+	rootCmd.Flags().BoolVarP(&orphans, "orphans", "o", false, "detect and list local clones no longer present on the selected forge")
 	rootCmd.Flags().StringVar(&output, "output", string(engine.OutputText), "output format: text, json, ndjson")
 	rootCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "display an interactive selector dashboard to pick repositories to clone/sync")
 	rootCmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the preflight confirmation prompt when a new base directory would be created")

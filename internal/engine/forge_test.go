@@ -287,3 +287,41 @@ func TestFindOrphansWithNoPrefixesFindsNothing(t *testing.T) {
 		t.Errorf("expected nothing for an unknown forge, got %v", got)
 	}
 }
+
+// TestFetchAnnouncementNamesTheForge: the announcement is the only
+// confirmation a user gets that --forge took effect, and it said "GitHub"
+// unconditionally — so a Codeberg run reported the wrong service.
+func TestFetchAnnouncementNamesTheForge(t *testing.T) {
+	for name, tc := range map[string]struct {
+		opts RunOptions
+		want string
+	}{
+		"default": {
+			RunOptions{}, "Fetching repositories from github...",
+		},
+		"named forge": {
+			RunOptions{Forge: "codeberg"}, "Fetching repositories from codeberg...",
+		},
+		// For a self-hosted deployment the instance matters more than the
+		// software: two of them run the same forge.
+		"self-hosted names the instance": {
+			RunOptions{Forge: "gitea", ForgeURL: "https://git.example.com"},
+			"Fetching repositories from gitea (https://git.example.com)...",
+		},
+		"inferred from the url": {
+			RunOptions{ForgeURL: "https://codeberg.org"},
+			"Fetching repositories from codeberg (https://codeberg.org)...",
+		},
+		// An unresolvable forge is rejected by RunE long before here, so
+		// this only has to stay readable rather than be right.
+		"unknown forge falls back": {
+			RunOptions{Forge: "gitub"}, "Fetching repositories from GitHub...",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := fetchAnnouncement(tc.opts); got != tc.want {
+				t.Errorf("fetchAnnouncement = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
