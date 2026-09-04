@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/sebastienrousseau/corral/internal/git"
-	"github.com/sebastienrousseau/corral/internal/github"
 	"github.com/sebastienrousseau/corral/internal/tui"
 )
 
@@ -31,7 +30,7 @@ func TestSeamsBindToRealImplementations(t *testing.T) {
 		got  any
 		want any
 	}{
-		{"fetchRepos", fetchRepos, github.FetchReposWithOptions},
+		{"fetchRepos", fetchRepos, fetchFromForge},
 		{"osExit", osExit, os.Exit},
 		{"gitPull", gitPull, git.Pull},
 		{"gitClone", gitClone, git.Clone},

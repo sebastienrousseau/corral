@@ -298,6 +298,7 @@ func operationalRunOptions(owner string, preview bool, format engine.OutputForma
 		Owner: owner, BaseDir: resolvedBaseDir(nil), Concurrency: concurrency,
 		DryRun: preview, Orphans: orphans, Protocol: protocol, DoSync: !noSync,
 		Output: format, Interactive: false, Layout: layout, FinderTags: finderTags, Version: Version,
+		Forge: forgeName, ForgeURL: forgeURL,
 		Fetch: github.FetchOptions{
 			Limit: limit, Visibility: visibility, IncludeForks: includeForks,
 			IncludeArchived: includeArchived, IncludeLanguages: parseCSV(includeLanguagesCSV),

@@ -23,6 +23,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 	"github.com/sebastienrousseau/corral/internal/diag"
+	"github.com/sebastienrousseau/corral/internal/forge"
 	"github.com/sebastienrousseau/corral/internal/git"
 	"github.com/sebastienrousseau/corral/internal/github"
 	"github.com/sebastienrousseau/corral/internal/tui"
@@ -61,8 +62,17 @@ type RunOptions struct {
 	// Interactive, when true, displays an interactive selector before processing.
 	Interactive bool
 
-	// Fetch holds the options passed to the GitHub repository listing call.
+	// Fetch holds the options passed to the repository listing call.
 	Fetch github.FetchOptions
+	// Forge names the hosting service to list from: github, gitlab, gitea,
+	// forgejo or codeberg. Empty means github, which is what corral did
+	// before other forges were supported — a default that changes under
+	// people is worse than a narrow one.
+	Forge string
+	// ForgeURL is a self-hosted instance's base address. Required for
+	// gitea and forgejo, which have no single public instance; optional
+	// for the others, which do.
+	ForgeURL string
 	// Clone holds the options passed to each Git clone operation.
 	Clone git.CloneOptions
 	// Sync controls when an already-cloned repository is actually pulled.
@@ -161,7 +171,7 @@ const (
 )
 
 var (
-	fetchRepos       = github.FetchReposWithOptions
+	fetchRepos       = fetchFromForge
 	osExit           = os.Exit
 	gitPull          = git.Pull
 	gitClone         = git.Clone
@@ -251,6 +261,13 @@ func RunE(ctx context.Context, opts RunOptions) error {
 	if err := opts.normalize(); err != nil {
 		return err
 	}
+	// Validated here rather than at the fetch, so `--forge gitub` fails
+	// immediately instead of after a workspace scan.
+	f, err := forge.Resolve(opts.Forge, opts.ForgeURL)
+	if err != nil {
+		return err
+	}
+	fetchForgeName, fetchForgeURL = f.Name(), opts.ForgeURL
 	installTokenProvider(ctx, opts)
 
 	isTTY := isTerminal(os.Stdout.Fd())
@@ -1421,6 +1438,101 @@ func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
 			return value
+		}
+	}
+	return ""
+}
+
+// fetchFromForge lists an owner's repositories from the selected hosting
+// service.
+//
+// The seam the engine calls, and the one place a forge.Repo becomes the
+// engine's own repository shape.
+//
+// That shape still lives in internal/github, which is now a misnomer: it
+// is the engine's type, and GitHub is one of five things that can produce
+// it. Renaming it across the engine, the TUI and the command layer is
+// churn with no behaviour attached, so it is left for a change that has a
+// reason of its own. The conversion below is where the seam actually is.
+func fetchFromForge(ctx context.Context, owner string, opts github.FetchOptions) ([]github.Repo, error) {
+	f, err := forge.Resolve(fetchForgeName, fetchForgeURL)
+	if err != nil {
+		return nil, err
+	}
+	// GitHub keeps its existing path entirely: the adapter delegates to
+	// the same client, so its auth ladder, rate-limit handling and search
+	// pagination are untouched by this indirection.
+	repos, err := f.List(ctx, owner, forge.Options{
+		Limit:           opts.Limit,
+		Visibility:      opts.Visibility,
+		IncludeForks:    opts.IncludeForks,
+		IncludeArchived: opts.IncludeArchived,
+		Token:           forgeToken(ctx, f.Name(), opts.AuthMode),
+		BaseURL:         fetchForgeURL,
+		RequestTimeout:  opts.RequestTimeout,
+		TotalTimeout:    opts.TotalTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]github.Repo, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, github.Repo{
+			ID:            r.ID,
+			Owner:         r.Owner,
+			FullName:      r.FullName,
+			Name:          r.Name,
+			Language:      r.Language,
+			Visibility:    r.Visibility,
+			DefaultBranch: r.DefaultBranch,
+			CloneURL:      r.CloneURL,
+			SSHURL:        r.SSHURL,
+			Fork:          r.Fork,
+			Archived:      r.Archived,
+			PushedAt:      r.PushedAt,
+			Stars:         r.Stars,
+			IsTemplate:    r.IsTemplate,
+			IsMirror:      r.IsMirror,
+		})
+	}
+	return out, nil
+}
+
+// fetchForgeName and fetchForgeURL carry the run's forge selection into
+// the seam.
+//
+// Package-level rather than parameters because fetchRepos is a variable
+// the tests replace, and widening its signature would rewrite every one
+// of those. Set once by Run before anything reads them.
+var (
+	fetchForgeName string
+	fetchForgeURL  string
+)
+
+// forgeToken resolves the credential for a forge.
+//
+// GitHub's is resolved by its own client, which knows the ladder from an
+// explicit token through the environment to the gh CLI — passing a token
+// in would bypass that. The others read one environment variable each,
+// named the way each forge's own tooling names it, so a developer who
+// already has it exported does not have to learn a corral-specific name.
+var forgeToken = func(ctx context.Context, name string, mode github.AuthMode) string {
+	switch name {
+	case "github":
+		return "" // resolved inside the GitHub client
+	case "gitlab":
+		return firstEnv("CORRAL_GITLAB_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN")
+	default:
+		return firstEnv("CORRAL_FORGE_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "CODEBERG_TOKEN")
+	}
+}
+
+// firstEnv returns the first of these variables that is set and non-empty.
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
+			return v
 		}
 	}
 	return ""

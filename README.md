@@ -476,6 +476,37 @@ you have put your own in front of it.
 
 ---
 
+## Forges
+
+Cloning works against five hosting services:
+
+```bash
+corralctl <owner>                                    # GitHub (default)
+corralctl <group> --forge gitlab                     # GitLab
+corralctl <owner> --forge codeberg                   # Codeberg
+corralctl <owner> --forge gitea --forge-url https://git.example.com
+corralctl <owner> --forge forgejo --forge-url https://forgejo.example.com
+```
+
+Gitea and Forgejo have no single public instance, so they need
+`--forge-url`. GitLab and Codeberg default to theirs. `--forge-url` alone
+is enough when the host is recognisable — `--forge-url
+https://codeberg.org` implies Codeberg.
+
+Credentials come from the environment, under the names each forge's own
+tooling already uses: `GITLAB_TOKEN` (or `CI_JOB_TOKEN`), and
+`GITEA_TOKEN` / `FORGEJO_TOKEN` / `CODEBERG_TOKEN`. A corral-specific
+`CORRAL_GITLAB_TOKEN` or `CORRAL_FORGE_TOKEN` wins where both are set.
+GitHub keeps its existing ladder — explicit token, then the environment,
+then the `gh` CLI.
+
+**Reading was never GitHub-specific.** The index, the MCP server, symbol
+lookup and content search work on clones, so a repository you cloned by
+hand from anywhere has always been a first-class citizen. This closes the
+asymmetry on the cloning side.
+
+---
+
 ## Coming from another tool
 
 Migration guides live in [`docs/migrating/`](docs/migrating/README.md):
@@ -727,17 +758,20 @@ Corral is opinionated, and the opinions do not suit everyone.
   read and edited. For archival mirroring use `git clone --mirror` or a
   purpose-built tool; Corral will not preserve every ref or hold a
   guaranteed-complete copy.
-- **You need a forge other than GitHub.** GitLab, Gitea, Codeberg and
-  Forgejo are not supported today. `git.CanonicalRemote` is already
-  forge-neutral, but repository listing is GitHub-only.
+- **You need a forge corral does not list from.** GitHub, GitLab, Gitea,
+  Forgejo and Codeberg are supported; anything else is not. Reading is
+  forge-neutral — a clone from any host is a first-class citizen in the
+  index, the MCP server and symbol lookup — but `corralctl <owner>` only
+  knows those five.
 - **Your repositories must stay where they are.** Corral's value is a
   consistent layout, and the default reorganises clones into
   `Collection/Bucket/Name`. If a fixed path matters, use `--layout` to
   match your existing tree — or a different tool.
-- **You want a code-search index.** The MCP server indexes repository
-  metadata: names, paths, languages, sync state. It does not index symbols
-  or file contents, so it answers "which repository" and not "where is this
-  function defined".
+- **You want code intelligence.** The MCP server does index symbols and
+  search file contents across every clone, but shallowly: a declaration
+  is a name, a kind, a file and a line. It does not resolve types, find
+  references, or rename — an LSP does those, one project at a time, and
+  corral is the layer that tells an agent which project to open.
 - **You need Windows without WSL.** Binaries are published for Windows, but
   macOS Finder tags are a no-op there and the experience is less tested
   than on macOS and Linux.

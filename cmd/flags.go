@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sebastienrousseau/corral/internal/forge"
 	"github.com/sebastienrousseau/corral/internal/github"
 	"github.com/spf13/pflag"
 )
@@ -58,9 +59,13 @@ func cloneFlags() *pflag.FlagSet {
 }
 
 // newFetchFlags returns the flags that decide *which* repositories a command
-// operates on. Relevant to any command that talks to the GitHub API.
+// operates on. Relevant to any command that lists from a hosting service.
 func newFetchFlags() *pflag.FlagSet {
 	fs := pflag.NewFlagSet("fetch", pflag.ContinueOnError)
+	fs.StringVar(&forgeName, "forge", "",
+		"hosting service to list from: "+strings.Join(forge.Names(), ", ")+" (default github)")
+	fs.StringVar(&forgeURL, "forge-url", "",
+		"base URL of a self-hosted instance (required for gitea and forgejo, which have no single public instance)")
 	fs.IntVarP(&limit, "limit", "l", 1000, "max repos to list (0 for no limit)")
 	fs.StringVar(&visibility, "visibility", "all", "repository visibility filter: all, public, private")
 	fs.BoolVar(&includeForks, "include-forks", true, "include forked repositories under the Forks collection")

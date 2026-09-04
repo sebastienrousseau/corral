@@ -83,9 +83,11 @@ Disk is cheaper than a migration that has to be right the first time.
 ## What you lose
 
 - **`ghq get` for a single repository.** Covered above.
-- **Non-GitHub hosts.** ghq handles any remote. Corral's *cloning* is
-  GitHub-only today. Its *reading* is not: the MCP server, `status`,
-  `exec` and symbol lookup work against any clone in the workspace,
-  whatever its origin, so a GitLab repository you cloned by hand is a
+- **Arbitrary hosts.** ghq handles any remote. Corral clones from
+  GitHub, GitLab, Gitea, Forgejo and Codeberg (`--forge`, `--forge-url`),
+  which covers most of what ghq is used for but is not "any remote". Its
+  *reading* has no such limit: the MCP server, `status`, `exec` and
+  symbol lookup work against any clone in the workspace, whatever its
+  origin, so a repository you cloned by hand from anywhere is a
   first-class citizen everywhere except `corralctl <owner>`.
 - **`ghq look`.** There is no shell-integration subcommand.

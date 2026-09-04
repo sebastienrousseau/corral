@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloning works against five forges**, not one: GitHub, GitLab, Gitea,
+  Forgejo and Codeberg. `--forge <name>` selects one; `--forge-url`
+  points at a self-hosted instance, and is enough on its own when the
+  host is recognisable.
+
+  This closes an asymmetry that had been there from the start. Corral's
+  *reading* — the index, the MCP server, symbol lookup, content search —
+  never cared where a clone came from, because it operates on
+  directories. Only the *cloning* knew one host.
+
+  A forge has to do exactly one thing: given an owner, list their
+  repositories. Everything after that is already host-agnostic. So the
+  interface is one method, and the differences each forge has are
+  collapsed at the edge — GitLab's "internal" visibility becomes Private,
+  because the layout has two directories and a third that only one forge
+  ever populates would be worse than the lost nuance.
+
+  Gitea, Forgejo and Codeberg are one implementation. Forgejo is a hard
+  fork of Gitea that kept the API and Codeberg is a Forgejo instance;
+  three copies of one client would be three things that could drift.
+
+  GitHub keeps its existing client, wrapped rather than rewritten: its
+  auth ladder, secondary rate-limit handling and search pagination are
+  genuinely intricate and not worth re-deriving. GitLab and Gitea get a
+  few hundred lines of `net/http` each — no new dependencies, against a
+  module that holds eleven direct ones and a hand-maintained SBOM.
+
+  Filters are applied by corral rather than pushed into each API, so
+  `--include-forks` means the same thing everywhere instead of however
+  each host happens to implement it.
+
+  Verified live: Codeberg, gitlab.com, and GitHub unchanged.
+
 - **Symbol extraction covers Python, TypeScript, JavaScript and Rust.**
   Cross-repository symbol lookup is the thing corral can do that a
   single-repository index cannot, and until now it covered Go and nothing
