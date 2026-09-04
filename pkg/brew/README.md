@@ -7,8 +7,12 @@ SPDX-License-Identifier: GPL-3.0-only
 
 **Recipe:** the `homebrew_casks` section of
 [`.goreleaser.yaml`](../../.goreleaser.yaml), which generates the cask
-and pushes it to `sebastienrousseau/homebrew-tap`. Not duplicated here;
+and commits it to `sebastienrousseau/homebrew-tap`. Not duplicated here;
 see [`../README.md`](../README.md) for why.
+
+It commits directly rather than opening a pull request. goreleaser has no
+auto-merge, so a proposed change waits for a human — and seven of them
+waited while the tap served v0.0.25 through v0.0.32.
 
 A cask rather than a formula: goreleaser deprecated `brews:` in favour
 of casks for pre-built binaries, and corralctl ships as one.

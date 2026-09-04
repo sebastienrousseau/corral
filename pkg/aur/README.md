@@ -5,9 +5,19 @@ SPDX-License-Identifier: GPL-3.0-only
 
 # Arch User Repository
 
-**Recipe:** the `aurs` section of [`.goreleaser.yaml`](../../.goreleaser.yaml),
-which generates and pushes the `PKGBUILD`. Not duplicated here; see
-[`../README.md`](../README.md) for why.
+**Recipe:** [`scripts/publish_aur.sh`](../../scripts/publish_aur.sh), run by
+the `aur` job in the release workflow. The checksums it writes are read
+from the signed release rather than recomputed, so the `PKGBUILD` cannot
+disagree with what was published.
+
+Publishing is a separate job on purpose: `aur.archlinux.org` being
+unreachable must not cost a release its artefacts, signatures or
+attestations. It is also `continue-on-error`, so a failure is visible
+without failing the release.
+
+Before v0.0.33 this was left to manual publishing, and manual publishing
+happened once — the package sat at 0.0.13 while the project shipped
+0.0.32.
 
 ## Package
 
