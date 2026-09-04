@@ -7,7 +7,7 @@
 <h1 align="center"><a id="corral"></a>Corral</h1>
 
 <p align="center">
-  Automatically clone and organise repositories from GitHub, GitLab, Gitea, Forgejo and Codeberg using Finder-friendly collections, ecosystems, and metadata.
+  Automatically clone and organise repositories from GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket using Finder-friendly collections, ecosystems, and metadata.
 </p>
 
 <p align="center">
@@ -478,7 +478,7 @@ you have put your own in front of it.
 
 ## Forges
 
-Cloning works against five hosting services:
+Cloning works against six hosting services:
 
 ```bash
 corralctl <owner>                                    # GitHub (default)
@@ -486,6 +486,7 @@ corralctl <group> --forge gitlab                     # GitLab
 corralctl <owner> --forge codeberg                   # Codeberg
 corralctl <owner> --forge gitea --forge-url https://git.example.com
 corralctl <owner> --forge forgejo --forge-url https://forgejo.example.com
+corralctl <workspace> --forge bitbucket                # Bitbucket Cloud
 ```
 
 Gitea and Forgejo have no single public instance, so they need
@@ -495,7 +496,8 @@ https://codeberg.org` implies Codeberg.
 
 Credentials come from the environment, under the names each forge's own
 tooling already uses: `GITLAB_TOKEN` (or `CI_JOB_TOKEN`), and
-`GITEA_TOKEN` / `FORGEJO_TOKEN` / `CODEBERG_TOKEN`. A corral-specific
+`GITEA_TOKEN` / `FORGEJO_TOKEN` / `CODEBERG_TOKEN`, and
+`BITBUCKET_TOKEN`. A corral-specific
 `CORRAL_GITLAB_TOKEN` or `CORRAL_FORGE_TOKEN` wins where both are set.
 GitHub keeps its existing ladder — explicit token, then the environment,
 then the `gh` CLI.

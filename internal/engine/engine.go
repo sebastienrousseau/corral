@@ -1634,6 +1634,8 @@ var forgeToken = func(ctx context.Context, name string, mode github.AuthMode) st
 		return "" // resolved inside the GitHub client
 	case "gitlab":
 		return firstEnv("CORRAL_GITLAB_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN")
+	case "bitbucket":
+		return firstEnv("CORRAL_BITBUCKET_TOKEN", "BITBUCKET_TOKEN")
 	default:
 		return firstEnv("CORRAL_FORGE_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "CODEBERG_TOKEN")
 	}

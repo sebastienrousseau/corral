@@ -1041,3 +1041,287 @@ func TestForgesUseTheirPublicInstanceByDefault(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// ---------------------------------------------------------------------------
+// Bitbucket
+// ---------------------------------------------------------------------------
+
+// bitbucketPageJSON renders one page, with next set when more follow.
+// Bitbucket signals the end by omitting next, not by returning a short
+// page — a filtered listing can be short and still have more.
+func bitbucketPageJSON(from, n int, next string) string {
+	var b strings.Builder
+	b.WriteString(`{"values":[`)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		slug := "repo" + strconv.Itoa(from+i)
+		fmt.Fprintf(&b, `{
+			"uuid": "{%d}", "slug": %q, "name": "Display Name",
+			"full_name": %q, "scm": "git", "is_private": false,
+			"language": "go", "mainbranch": {"name": "main"},
+			"updated_on": "2026-04-05T06:07:08.123456+00:00",
+			"links": {"clone": [
+				{"name": "https", "href": "https://bitbucket.org/acme/%s.git"},
+				{"name": "ssh", "href": "git@bitbucket.org:acme/%s.git"}
+			]}
+		}`, from+i, slug, "acme/"+slug, slug, slug)
+	}
+	b.WriteString(`]`)
+	if next != "" {
+		fmt.Fprintf(&b, `,"next":%q`, next)
+	}
+	b.WriteString(`}`)
+	return b.String()
+}
+
+func TestBitbucketListsAndMaps(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/2.0/repositories/acme" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(bitbucketPageJSON(1, 1, "")))
+	})
+
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("got %d repositories, want 1", len(repos))
+	}
+	want := Repo{
+		Owner: "acme", Name: "repo1", FullName: "acme/repo1",
+		Language: "go", Visibility: "Public", DefaultBranch: "main",
+		CloneURL: "https://bitbucket.org/acme/repo1.git",
+		SSHURL:   "git@bitbucket.org:acme/repo1.git",
+		PushedAt: time.Date(2026, 4, 5, 6, 7, 8, 123456000, time.UTC),
+	}
+	got := repos[0]
+	got.PushedAt = got.PushedAt.UTC()
+	if got != want {
+		t.Errorf("mapping differs:\n got  %+v\n want %+v", got, want)
+	}
+}
+
+// TestBitbucketPrefersTheSlug: "name" is a display name and may contain
+// spaces and capitals — "Atlassian Event" for the repository cloned as
+// atlassian-event — so a directory named from it would not match the
+// clone URL.
+func TestBitbucketPrefersTheSlug(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"values":[{
+			"slug":"atlassian-event","name":"Atlassian Event",
+			"full_name":"atlassian/atlassian-event","scm":"git",
+			"links":{"clone":[{"name":"https","href":"https://bitbucket.org/atlassian/atlassian-event.git"}]}
+		}]}`))
+	})
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "atlassian", Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repos[0].Name != "atlassian-event" {
+		t.Errorf("name = %q, want the slug", repos[0].Name)
+	}
+
+	// A repository with no slug at all still needs a name.
+	srv2 := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"values":[{"name":"Fallback","full_name":"acme/fallback","scm":"git"}]}`))
+	})
+	repos, err = f.List(context.Background(), "acme", Options{BaseURL: srv2.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repos[0].Name != "Fallback" {
+		t.Errorf("name = %q, want the display name as a fallback", repos[0].Name)
+	}
+}
+
+// TestBitbucketSkipsMercurial: Bitbucket hosted Mercurial until 2020 and
+// an old workspace can still list one. It has no git clone URL, so
+// cloning it is impossible — and reporting that on every run would be
+// noise, since it is not an error.
+func TestBitbucketSkipsMercurial(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"values":[
+			{"slug":"g","full_name":"acme/g","scm":"git","links":{"clone":[{"name":"https","href":"https://bitbucket.org/acme/g.git"}]}},
+			{"slug":"h","full_name":"acme/h","scm":"hg","links":{"clone":[{"name":"https","href":"https://bitbucket.org/acme/h"}]}}
+		]}`))
+	})
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].Name != "g" {
+		t.Errorf("expected only the git repository, got %+v", repos)
+	}
+}
+
+func TestBitbucketDetectsForksAndPrivate(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"values":[
+			{"slug":"a","full_name":"acme/a","scm":"git","is_private":true},
+			{"slug":"b","full_name":"acme/b","scm":"git","parent":{"slug":"upstream"}}
+		]}`))
+	})
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "acme", Options{
+		BaseURL: srv.URL, Visibility: "all", IncludeForks: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Repo{}
+	for _, r := range repos {
+		byName[r.Name] = r
+	}
+	if byName["a"].Visibility != "Private" {
+		t.Errorf("is_private did not map to Private: %+v", byName["a"])
+	}
+	// Bitbucket has no fork boolean; the presence of a parent is the
+	// signal.
+	if byName["a"].Fork || !byName["b"].Fork {
+		t.Errorf("fork detection wrong: a=%t b=%t", byName["a"].Fork, byName["b"].Fork)
+	}
+}
+
+// TestBitbucketPaginatesOnNext is the difference from every other forge
+// here: a short page does not mean the last page.
+func TestBitbucketPaginatesOnNext(t *testing.T) {
+	var srv *recordingServer
+	srv = newRecordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("page") {
+		case "1":
+			// Deliberately short, and still not the end.
+			_, _ = w.Write([]byte(bitbucketPageJSON(1, 3, srv.URL+"/2.0/repositories/acme?page=2")))
+		case "2":
+			_, _ = w.Write([]byte(bitbucketPageJSON(4, 2, "")))
+		default:
+			_, _ = w.Write([]byte(`{"values":[]}`))
+		}
+	})
+
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 5 {
+		t.Errorf("got %d repositories, want 5 — a short page is not the last page", len(repos))
+	}
+	if n := srv.requests.Load(); n != 2 {
+		t.Errorf("made %d requests, want 2", n)
+	}
+}
+
+// TestBitbucketAsksForAFullPage: Bitbucket names its page size pagelen
+// and silently ignores per_page, defaulting to ten — not an error, just
+// ten times the requests.
+func TestBitbucketAsksForAFullPage(t *testing.T) {
+	var seen string
+	srv := newRecordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"values":[]}`))
+	})
+	f, _ := Get("bitbucket")
+	if _, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(seen, "pagelen="+strconv.Itoa(perPage)) {
+		t.Errorf("query %q does not ask for a full page with pagelen", seen)
+	}
+}
+
+// TestBitbucketAPIBase covers the web-host/API-host split. A user naming
+// the forge by URL names the one they can see, and sent as-is that 404s
+// on every request.
+func TestBitbucketAPIBase(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                           DefaultBitbucketURL,
+		"https://bitbucket.org":      "https://api.bitbucket.org",
+		"https://BitBucket.org":      "https://api.bitbucket.org",
+		"https://www.bitbucket.org":  "https://api.bitbucket.org",
+		"https://bitbucket.org/acme": "https://api.bitbucket.org",
+		"https://api.bitbucket.org":  "https://api.bitbucket.org",
+		"https://mirror.example.com": "https://mirror.example.com",
+		"://not a url":               "://not a url",
+	} {
+		if got := bitbucketAPIBase(in); got != want {
+			t.Errorf("bitbucketAPIBase(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBitbucketSendsItsToken(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"values":[]}`))
+	})
+	f, _ := Get("bitbucket")
+	if _, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL, Token: "bb-token"}); err != nil {
+		t.Fatal(err)
+	}
+	h := <-srv.headers
+	// Bearer rather than Basic: an app password would also need the
+	// username, which a bearer token does not.
+	if got := h.Get("Authorization"); got != "Bearer bb-token" {
+		t.Errorf("Authorization = %q", got)
+	}
+}
+
+func TestBitbucketReportsAnUnknownWorkspace(t *testing.T) {
+	srv := newRecordingServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	f, _ := Get("bitbucket")
+	_, err := f.List(context.Background(), "nobody", Options{BaseURL: srv.URL})
+	var nf *NotFoundError
+	if !errors.As(err, &nf) {
+		t.Errorf("err = %T %v, want *NotFoundError", err, err)
+	}
+	// A workspace is a workspace — there is no user/org split to fall back
+	// through, so exactly one request is made.
+	if n := srv.requests.Load(); n != 1 {
+		t.Errorf("made %d requests, want 1", n)
+	}
+}
+
+func TestBitbucketRejectsABadInstanceURL(t *testing.T) {
+	f, _ := Get("bitbucket")
+	if _, err := f.List(context.Background(), "acme", Options{BaseURL: "ftp://example.com"}); err == nil {
+		t.Error("a non-HTTP instance URL should be rejected")
+	}
+}
+
+// TestBitbucketStopsEarlyForASmallLimit: because Bitbucket paginates on
+// `next` rather than on a short page, nothing else would stop the walk,
+// and a workspace with thousands of repositories would be fetched in full
+// to answer a request for five.
+func TestBitbucketStopsEarlyForASmallLimit(t *testing.T) {
+	var srv *recordingServer
+	srv = newRecordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		n, _ := strconv.Atoi(page)
+		// Always another page, so only the limit can end this.
+		_, _ = w.Write([]byte(bitbucketPageJSON(n*10, 10,
+			srv.URL+"/2.0/repositories/acme?page="+strconv.Itoa(n+1))))
+	})
+
+	f, _ := Get("bitbucket")
+	repos, err := f.List(context.Background(), "acme", Options{BaseURL: srv.URL, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 5 {
+		t.Errorf("got %d repositories, want the limit of 5", len(repos))
+	}
+	// Twice the limit is fetched before stopping, so filtering afterwards
+	// does not leave the answer short. Ten per page covers that in one.
+	if n := srv.requests.Load(); n > 2 {
+		t.Errorf("made %d requests for a limit of 5", n)
+	}
+}

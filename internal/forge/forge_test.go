@@ -10,7 +10,7 @@ import (
 )
 
 func TestRegisteredForges(t *testing.T) {
-	want := []string{"codeberg", "forgejo", "gitea", "github", "gitlab"}
+	want := []string{"bitbucket", "codeberg", "forgejo", "gitea", "github", "gitlab"}
 	got := Names()
 	if len(got) != len(want) {
 		t.Fatalf("Names = %v, want %v", got, want)
@@ -69,6 +69,10 @@ func TestForHost(t *testing.T) {
 		"gitlab.com":       "gitlab",
 		"codeberg.org":     "codeberg",
 		"api.codeberg.org": "codeberg",
+		"bitbucket.org":    "bitbucket",
+		// The API host and the web host both resolve, because --forge-url
+		// is matched by host and a user may name either.
+		"api.bitbucket.org": "bitbucket",
 	} {
 		f, ok := ForHost(host)
 		if !ok {
