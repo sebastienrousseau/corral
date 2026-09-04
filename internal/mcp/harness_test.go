@@ -31,6 +31,17 @@ type harness struct {
 // newHarness starts a server over the given root and connects a client to it.
 func newHarness(t *testing.T, opts ServerOptions) *harness {
 	t.Helper()
+	return newHarnessWithClient(t, opts, nil)
+}
+
+// newHarnessWithClient is newHarness with control over the client half.
+//
+// Elicitation is a server-to-client request, so a test that exercises it has
+// to configure the client: the SDK infers the capability from the presence of
+// an ElicitationHandler, which is exactly the signal the server reads before
+// deciding whether anyone can be asked.
+func newHarnessWithClient(t *testing.T, opts ServerOptions, clientOpts *mcp.ClientOptions) *harness {
+	t.Helper()
 	if opts.Version == "" {
 		opts.Version = "test"
 	}
@@ -45,7 +56,7 @@ func newHarness(t *testing.T, opts ServerOptions) *harness {
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- srv.mcp.Run(ctx, serverTransport) }()
 
-	client := mcp.NewClient(&mcp.Implementation{Name: "harness", Version: "test"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "harness", Version: "test"}, clientOpts)
 	session, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatalf("client connect: %v", err)

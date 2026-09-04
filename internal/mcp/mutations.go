@@ -286,7 +286,16 @@ func (s *Server) handleCloneRepo(ctx context.Context, _ *mcp.CallToolRequest, in
 //     (defence against typos deleting an unrelated directory).
 //  6. Always writes an audit record before removing anything, so a
 //     race between the check and the removal is still logged.
-func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
+//  7. When ServerOptions.ConfirmDeletes is set, requires a person to
+//     approve this particular deletion. The cascade above stops
+//     mistakes; nothing else here stops a persuaded agent choosing the
+//     one clone that passes every check.
+//
+// Step 7 makes this a two-pass handler: the first call returns an input
+// request and no content, the client puts the question to a person, and
+// the same call arrives again carrying the answer. Every check runs on
+// both passes, and nothing is written until the approved one.
+func (s *Server) handleDeleteRepo(ctx context.Context, req *mcp.CallToolRequest, in queryInput) (*mcp.CallToolResult, any, error) {
 	query := in.Query
 	idx, err := s.scan()
 	if err != nil {
@@ -300,6 +309,14 @@ func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, i
 	if err != nil {
 		return toolError("%v", err), nil, nil
 	}
+
+	// One deletion at a time per clone. Over stdio there was one session
+	// and one request; over HTTP there are neither, and the window between
+	// these checks and the removal is wide enough for a second session to
+	// change what is being checked.
+	lock := s.repoLocks.lock(safe)
+	lock.Lock()
+	defer lock.Unlock()
 
 	rec := AuditRecord{
 		Tool:   "corral_delete_repo",
@@ -339,6 +356,46 @@ func (s *Server) handleDeleteRepo(ctx context.Context, _ *mcp.CallToolRequest, i
 			return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
 		}
 		return toolError("%s", rec.Message), nil, nil
+	}
+
+	// Per-call authority. The cascade above stops mistakes; this is what
+	// stops a persuaded agent choosing the one clone that passes every
+	// check. Asked only once the deletion would otherwise proceed, so a
+	// refusal the server can decide itself never reaches a person.
+	//
+	// Everything above this point is a read, so serving the call twice —
+	// once to ask, once with the answer — costs a scan and re-checks the
+	// clone against whatever changed while the person was deciding.
+	if s.confirmDeletes {
+		summary := fmt.Sprintf("Delete the local clone %s?", repo.Redacted().RelPath)
+		detail := fmt.Sprintf(
+			"Path: %s\nOrigin: %s\n\nCorral found no uncommitted, unpushed, stashed, "+
+				"gitignored or submodule work in it. This removes the directory from disk.",
+			safe, repo.Redacted().RemoteURL)
+
+		switch decision, ask := s.confirmer.Confirm(req, summary, detail); decision {
+		case confirmAsk:
+			// Not an outcome: the client now puts the question to a person
+			// and calls the tool again with the answer. Nothing is audited
+			// yet because nothing has been decided.
+			return ask, nil, nil
+		case confirmUnavailable:
+			// Fail closed. If nobody can be asked, nobody has approved.
+			rec.Message = "could not obtain confirmation: " + noElicitationMessage
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+			}
+			return toolError("%s\n\nStart the server with --no-confirm-deletes to delete without asking, "+
+				"which is only appropriate for an unattended workspace you are willing to lose.", rec.Message), nil, nil
+		case confirmDenied:
+			rec.Message = "declined by the user"
+			if auditErr := s.auditRefusal(rec, rec.Message); auditErr != nil {
+				return toolError("%s; audit failed: %v", rec.Message, auditErr), nil, nil
+			}
+			return toolError("deletion of %s was declined", repo.Redacted().RelPath), nil, nil
+		case confirmApproved:
+			// Fall through to the deletion.
+		}
 	}
 
 	rec, err = s.beginMutation(rec)

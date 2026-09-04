@@ -358,7 +358,7 @@ Where GitHub's own MCP server covers the remote API surface (issues, PRs, search
 
 - `corral_sync_repo` — Runs `git pull --rebase --autostash` against one clone
 - `corral_clone_repo` — Clones a URL into a sandboxed target path
-- `corral_delete_repo` — Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes
+- `corral_delete_repo` — Removes a clone. Requires `--enable-destructive-mutations`. Refuses on uncommitted/unpushed changes, and asks a person to approve each deletion
 
 Every mutation writes a JSONL audit record to
 `$XDG_STATE_HOME/corral/mutations.log` (or `~/.local/state/corral/mutations.log`),
@@ -434,6 +434,17 @@ Notes on the args:
 corralctl mcp --root /custom/workspace
 ```
 
+**Serve over HTTP** instead of stdio, for a client that connects to a running
+server rather than launching one:
+
+```bash
+corralctl mcp --http 127.0.0.1:7777
+```
+
+The address must be on loopback. `--http :7777` binds every interface and is
+refused, because this server has no authentication; pass `--allow-remote` if
+you have put your own in front of it.
+
 ### Safety
 
 - **Read-only by default.** `--enable-mutations` unlocks clone and sync. Deletion additionally requires `--enable-destructive-mutations`; every mutation writes intent and completion records to the audit log.
@@ -446,7 +457,19 @@ corralctl mcp --root /custom/workspace
   cannot verify. Each refusal names its specific reason and is written to the
   audit log.
 - **Path-traversal protected.** File-resource lookups canonicalise the selected repository root and candidate path, blocking `..` and symlink escapes into sibling repositories or outside the workspace.
-- **stdio-only.** No HTTP endpoint, no listening port — the server only ever speaks to the parent process that launched it.
+- **Per-call approval for deletion.** With `--enable-destructive-mutations`,
+  each individual deletion is put to a person over MCP elicitation before it
+  runs. The refusal cascade above stops *mistakes*; this is what stops a
+  persuaded agent choosing the one clone that passes every check, which no
+  amount of prompt text can. Pass `--no-confirm-deletes` only for an
+  unattended workspace you are willing to lose.
+- **stdio by default; loopback when not.** Without `--http` the server has no
+  endpoint and no listening port, and only ever speaks to the parent process
+  that launched it. `--http` serves the Streamable HTTP transport, and
+  because the server has no authentication and exposes every repository under
+  its root, a non-loopback address is refused unless you also pass
+  `--allow-remote` — the accidental `--http :7777`, which binds every
+  interface, does not start.
 
 ---
 

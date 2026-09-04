@@ -6,6 +6,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The MCP server can serve over HTTP.** `corralctl mcp --http
+  127.0.0.1:7777` runs the Streamable HTTP transport instead of stdio, for a
+  client that connects to a server somebody else started rather than
+  launching one itself. The transport is stateless, so any instance can serve
+  any request and there is no session state to leak between clients.
+
+  The address is required to be on loopback. This server has no
+  authentication and exposes every repository under its root — with mutations
+  enabled, it can change them — so binding it to a routable interface
+  publishes all of that. `--http :7777`, which is the form typed by somebody
+  thinking about the port and not about the empty host, binds every interface
+  and is refused with a message naming the alternative. `--allow-remote`
+  overrides the refusal for an operator who has put their own authentication
+  in front of it.
+
+### Security
+
+- **Deletion now needs a person, not just a flag.** Until now the only gate
+  on `corral_delete_repo` was `--enable-destructive-mutations`, decided once
+  when the process started; after that every call was authorised purely by
+  having been registered.
+
+  The refusal cascade bounds *mistakes* — it declines when a clone holds
+  uncommitted, unpushed, stashed, gitignored or submodule work. It bounds
+  nothing about intent: an agent that has been talked into deleting the one
+  clone with no unpublished work passes every check, because the request is
+  well-formed and each check genuinely succeeds. That is the gap the 2026 MCP
+  guidance describes when it says access control belongs at the execution
+  layer rather than in prompt text.
+
+  Each individual deletion is now put to a person over MCP elicitation before
+  it runs, and only an explicit accept proceeds — a dismissed prompt is not
+  consent. A client that cannot ask its user anything cannot delete, and a
+  confirmation that cannot be obtained refuses rather than proceeding. The
+  question is asked only once the deletion would otherwise have gone ahead,
+  so a refusal the server can reach on its own never reaches a person; a
+  prompt that mostly appears for operations that were going to fail anyway is
+  a prompt people learn to click through. Refusals and unobtainable
+  confirmations are both written to the audit log.
+
+  This matters more over HTTP than it ever did over stdio, where "the user
+  launched this process" was a reasonable proxy for "the user wants this
+  deletion". With concurrent sessions it is not.
+
+  `--no-confirm-deletes` restores the previous behaviour, and is documented
+  as appropriate only for an unattended workspace you are willing to lose.
+
+- **Deletions are serialised per repository.** One session's safety checks
+  could previously be invalidated by another session acting on the same clone
+  between the check and the removal. Unrelated repositories still delete in
+  parallel.
+
+### Fixed
+
+- **Confirmation is implemented as a multi round-trip request, not a
+  server-initiated one.** Protocol 2026-07-28 (SEP-2322 / SEP-2575) forbids a
+  server from issuing an elicitation request while it is serving a call, and
+  the SDK enforces it. A first implementation called `ServerSession.Elicit`
+  from inside the tool handler; a test driving a real client caught that it
+  fails on every conforming client, which would have refused every deletion
+  for the wrong reason. The handler now returns an input request and is
+  invoked again with the answer, so every safety check re-runs against the
+  clone as it stands *after* the person decided. Clients too old for the
+  round-trip flow are served by the SDK's compatibility middleware.
+
 ## [0.0.28] — 2026-09-03
 
 ### Security
