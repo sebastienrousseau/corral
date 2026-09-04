@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -261,9 +262,13 @@ func TestFindSymbolToleratesAnUnreadableRepository(t *testing.T) {
 	s, _ := NewServer(ServerOptions{Root: symbolWorkspace(t)})
 
 	old := extractSymbols
-	var calls int
+	// Atomic because handleFindSymbol extracts repositories concurrently.
+	// A plain int here was a data race, and the kind that a single local
+	// `go test -race` run does not reliably catch: it took CI, on a
+	// different scheduler, to surface it.
+	var calls atomic.Int64
 	extractSymbols = func(_ context.Context, path string, _ symbols.Cache) (*symbols.Result, error) {
-		calls++
+		calls.Add(1)
 		if strings.HasSuffix(path, "alpha") {
 			return nil, errors.New("permission denied")
 		}
@@ -281,8 +286,8 @@ func TestFindSymbolToleratesAnUnreadableRepository(t *testing.T) {
 	if got := int(body["total_matched"].(float64)); got != 1 {
 		t.Errorf("matched %d, want 1 from the readable repository", got)
 	}
-	if calls != 2 {
-		t.Errorf("attempted %d repositories, want 2", calls)
+	if got := calls.Load(); got != 2 {
+		t.Errorf("attempted %d repositories, want 2", got)
 	}
 }
 

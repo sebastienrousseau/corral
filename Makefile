@@ -37,7 +37,7 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck \
+        clean format sbom-check example-check doc-check spdx-check pkg-check eval staticcheck race-hard \
         docs-lint help
 
 all: format vet staticcheck spdx-check sbom-check pkg-check example-check test test-race build
@@ -95,8 +95,24 @@ test:
 	go test ./...
 
 ## test-race: run the suite under the race detector with shuffled order
+#
+# -count=1 because a race gate must never be answered from the test cache.
 test-race:
-	go test -race -shuffle=on ./...
+	go test -race -shuffle=on -count=1 ./...
+
+## race-hard: hammer the concurrent packages under the race detector
+#
+# One pass of `test-race` is weak evidence. A real race in
+# internal/mcp — a plain int incremented by the concurrent repository
+# fan-out — was missed by the full shuffled suite on every local run and
+# caught by CI, then reproduced 10 times out of 10 by running that one
+# test on its own. Whole-suite timing simply hides some interleavings.
+#
+# So the packages that actually run goroutines get repeated, focused runs.
+# RACE_RUNS overrides the count for a longer soak.
+RACE_RUNS ?= 10
+race-hard:
+	go test -race -count=$(RACE_RUNS) ./internal/mcp/ ./internal/symbols/ ./internal/search/ ./internal/engine/
 
 ## vet: run go vet
 vet:
