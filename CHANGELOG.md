@@ -6,6 +6,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed `corral_sync_repo` or `corral_clone_repo` returned a wall of
+  git internals.** The message put the entire invocation into the error —
+  eight internal `-c` flags and an absolute path — ahead of what actually
+  went wrong, and the MCP layer then prefixed it a second time:
+
+  ```text
+  git pull failed: git -c merge.verifySignatures=false -c rebase.verify…
+  ```
+
+  That is noise in a terminal and worse in a tool result, where it
+  reaches a model's context in place of the git error. It now names the
+  operation and the repository:
+
+  ```text
+  git pull failed in alpha: exit status 1: remote: Repository not found.
+  ```
+
+- **`make claims-check` could fail at random.** A single low coverage
+  reading was observed for `internal/search` and could not be reproduced
+  in thirty-seven attempts; the likeliest cause is a worker-pool branch
+  that does not always execute under contention. The root cause is not
+  claimed to be fixed — but a gate that fails at random is worse than the
+  drift it guards against, because people learn to re-run it and then
+  re-run it on the day it was right. A disagreement now has to survive a
+  second independent measurement, following the same reasoning as
+  `scripts/fuzz.sh`.
+
 ## [0.0.32] — 2026-09-04
 
 ### Fixed
