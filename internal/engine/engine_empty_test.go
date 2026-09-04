@@ -53,12 +53,10 @@ func TestProcessRepoSkipsEmptyRemote(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo.git",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "empty_upstream")
-	if err := os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750); err != nil {
-		t.Fatal(err)
-	}
+	makeCloneAt(t, targetDir, "https://github.com/owner/repo.git")
 	job := Job{Repo: repo, Target: targetDir}
 
 	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)
@@ -105,12 +103,10 @@ func TestProcessRepoStillSyncsNonEmpty(t *testing.T) {
 		Language:      "Go",
 		Visibility:    "Public",
 		DefaultBranch: "main",
-		CloneURL:      "http://clone",
+		CloneURL:      "https://github.com/owner/repo.git",
 	}
 	targetDir := filepath.Join(baseDir, "Public", "Go", "healthy")
-	if err := os.MkdirAll(filepath.Join(targetDir, ".git"), 0o750); err != nil {
-		t.Fatal(err)
-	}
+	makeCloneAt(t, targetDir, "https://github.com/owner/repo.git")
 	job := Job{Repo: repo, Target: targetDir}
 
 	msg := processRepo(context.Background(), "owner", "https", true, false, git.CloneOptions{}, SyncOptions{}, job)

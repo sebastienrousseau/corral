@@ -267,6 +267,16 @@ func RunE(ctx context.Context, opts RunOptions) error {
 	if err != nil {
 		return err
 	}
+	// Search selectors are a GitHub API feature. Passed to any other forge
+	// they are read as an owner name, and the 404 that follows blames the
+	// owner — sending somebody to look for a typo that is not there.
+	if isSearchOwner(opts.Owner) && f.Name() != "github" {
+		return fmt.Errorf(
+			"%s does not support %q: topic: and language: are GitHub search queries, "+
+				"and %s lists repositories by owner\n"+
+				"Name an owner instead, or drop --forge to search GitHub",
+			f.Name(), opts.Owner, f.Name())
+	}
 	fetchForgeName, fetchForgeURL = f.Name(), opts.ForgeURL
 	installTokenProvider(ctx, opts)
 
@@ -799,7 +809,33 @@ func isSearchOwner(owner string) bool {
 	return strings.HasPrefix(owner, "topic:") || strings.HasPrefix(owner, "language:")
 }
 
+// repoRemoteIdentity is the canonical identity of a listed repository, for
+// comparison against a local clone's remote.
+//
+// Derived from the clone URL the forge returned, and through the same
+// function the local side goes through, so the two are comparable by
+// construction.
+//
+// It used to be "github.com/" + FullName, which only ever agreed with a
+// real remote because GitHub's clone URLs happen to be
+// github.com/<full name>.git. On any other forge it disagreed with every
+// clone — and originMismatch treats a disagreement as an origin
+// collision, so v0.0.30 refused to sync every existing Codeberg, GitLab,
+// Gitea and Forgejo clone with "expected github.com/...". Cloning worked;
+// the second run failed.
 func repoRemoteIdentity(repo github.Repo) string {
+	// The URL first, always: it is the only field that carries the host,
+	// and every forge adapter populates it.
+	if repo.CloneURL != "" {
+		if id := git.CanonicalRemote(repo.CloneURL); id != "" {
+			return id
+		}
+	}
+	// Fallbacks for a repository with no clone URL, which no forge here
+	// produces. They assume github.com because there is nothing else to
+	// assume — which is precisely the assumption that caused the bug
+	// above, so they are reached only when the URL is absent and never in
+	// preference to it.
 	if repo.FullName != "" {
 		return strings.ToLower("github.com/" + repo.FullName)
 	}
