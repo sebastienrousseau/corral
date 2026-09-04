@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Case-insensitive search reported the wrong column on multi-byte
+  text.** It lowercased the line and searched that, then reported the
+  offset it found — but lowercasing can change a string's byte length, so
+  the offset indexed a string the caller never sees. On a line beginning
+  with three `İ` the reported column was 4 where the match was at 7.
+
+  The literal is now compiled to a quoted case-insensitive expression, so
+  the search runs against the original line. That also removed a
+  per-line allocation that scaled with the line: **4864 B/op on a 4 KB
+  line, against 16 B/op now**, and constant regardless of length. No
+  timing claim is made — the machine was too noisy for one to mean
+  anything; the allocation figures are deterministic.
+
+- **Two version references had gone stale.** `pkg/VERIFY.md` opened with
+  `VERSION=0.0.29` and every command below interpolates it, so a packager
+  following the page would download the wrong release and get a passing
+  checksum for it — worse than a failure. The documentation site's
+  version badge sat at v0.0.28, three releases behind. Neither is
+  reachable from `server.json` or the `Dockerfile`, so the existing
+  version check did not see them; it does now.
+
+- **Prose still described corral as GitHub-only** in the README tagline
+  and across the documentation site, two releases after cloning worked
+  against five forges.
+
+### Added
+
+- **Benchmarks for `internal/search` and `internal/symbols`**, and a
+  `make bench` target. Those two packages carry the 6.9s-to-1.3s figure
+  and had no benchmark behind it, so a change making extraction three
+  times slower would have passed every gate. CI already smoke-ran
+  benchmarks; local development had no equivalent. Adding them
+  immediately surfaced the allocation defect above.
+
 ## [0.0.31] — 2026-09-04
 
 ### Fixed
