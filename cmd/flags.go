@@ -75,11 +75,11 @@ func newFetchFlags() *pflag.FlagSet {
 	fs.StringVar(&authMode, "auth", string(github.AuthModeAuto), "authentication mode: auto, token, gh")
 	fs.StringVar(&repoType, "type", "", "repository type filter: "+strings.Join(repoTypeValues, ", "))
 	fs.StringVar(&repoSort, "sort", "", "repository sort order: "+strings.Join(repoSortValues, ", "))
-	fs.IntVar(&retryMax, "retry-max", 4, "max retries for transient GitHub API failures")
+	fs.IntVar(&retryMax, "retry-max", 4, "max retries for transient forge API failures")
 	fs.DurationVar(&retryMinBackoff, "retry-min-backoff", 500*time.Millisecond, "minimum retry backoff")
 	fs.DurationVar(&retryMaxBackoff, "retry-max-backoff", 8*time.Second, "maximum retry backoff")
 	fs.DurationVar(&apiRequestTimeout, "api-request-timeout", 30*time.Second,
-		"deadline for a single GitHub API request")
+		"deadline for a single forge API request")
 	fs.DurationVar(&apiTotalTimeout, "api-total-timeout", 10*time.Minute,
 		"deadline for the whole paginated fetch, including retries and backoff")
 	// Deprecated in v0.0.29. It was documented as a per-request deadline and

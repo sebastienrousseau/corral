@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **User-facing text still said GitHub.** `Fetching repositories from
+  GitHub...` printed on every run, including `--forge codeberg` — and it
+  is the only confirmation a user gets that the flag took effect, so
+  naming the wrong service is worse than saying nothing. It now names the
+  forge, and the instance too when one was given, since for a self-hosted
+  deployment the instance matters more than the software. `--orphans` and
+  the retry and timeout flags described themselves as GitHub-only as
+  well.
+
+  Per-profile `forge` already worked — `"settings": {"forge": "codeberg"}`
+  — but was undocumented and unverified. It is now both, so one config can
+  cover owners across several services.
+
 - **`prune` and orphan detection now follow `--forge`.** v0.0.29 made
   cloning work against five hosting services and left the reciprocal
   operation behind: `--forge` was accepted on `prune` and then ignored.

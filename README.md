@@ -505,6 +505,19 @@ then the `gh` CLI.
 `prune` compare against the forge you listed from, and scope by host — a
 GitLab clone under the same owner name is never a GitHub orphan.
 
+A profile can pin its own forge, so one config can cover owners on
+several services:
+
+```json
+{
+  "profiles": {
+    "work":     { "owners": ["acme"],   "settings": { "forge": "gitlab" } },
+    "personal": { "owners": ["me"] },
+    "upstream": { "owners": ["forgejo"], "settings": { "forge": "codeberg" } }
+  }
+}
+```
+
 **Reading was never host-specific.** The index, the MCP server, symbol
 lookup and content search work on clones, so a repository you cloned by
 hand from anywhere has always been a first-class citizen.

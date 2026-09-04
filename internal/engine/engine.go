@@ -401,7 +401,7 @@ func announceFetch(opts RunOptions, isTTY bool) {
 		return
 	}
 	if !isTTY {
-		log.Println("Fetching repositories from GitHub...")
+		log.Println(fetchAnnouncement(opts))
 		return
 	}
 	if os.Getenv("CORRAL_SHOW_LOGO") != "0" {
@@ -409,7 +409,27 @@ func announceFetch(opts RunOptions, isTTY bool) {
 		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("   ⧇ Organising Repositories") + "\n")
 		fmt.Print(lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render("   "+strings.Repeat("─", 58)) + "\n\n")
 	}
-	fmt.Println("Fetching repositories from GitHub...")
+	fmt.Println(fetchAnnouncement(opts))
+}
+
+// fetchAnnouncement names the host being listed from.
+//
+// It said "GitHub" unconditionally, which became a lie the moment
+// cloning worked against five forges: somebody running `--forge codeberg`
+// was told their repositories were coming from GitHub. A message that
+// names the wrong service is worse than no message, because it is the
+// only confirmation a user gets that the flag took effect.
+func fetchAnnouncement(opts RunOptions) string {
+	name := "GitHub"
+	if f, err := forge.Resolve(opts.Forge, opts.ForgeURL); err == nil {
+		name = f.Name()
+	}
+	if opts.ForgeURL != "" {
+		// The instance matters more than the software for a self-hosted
+		// deployment: two of them run the same forge.
+		return fmt.Sprintf("Fetching repositories from %s (%s)...", name, opts.ForgeURL)
+	}
+	return fmt.Sprintf("Fetching repositories from %s...", name)
 }
 
 // warnOnLimit reports a fetch that returned exactly --limit repositories,
