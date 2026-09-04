@@ -86,7 +86,12 @@ func evalWorkspace(t *testing.T) *harness {
 		"package retry\n\nfunc TestDo(t *testing.T) {}\n")
 	write(api, "cmd/server/main.go",
 		"package main\n\nfunc main() {\n\t_ = retry.MaxAttempts\n}\n")
-	write(api, ".env", "STRIPE_SECRET_KEY=sk_live_MaxAttempts\n")
+	// A credential file that mentions the symbol every other scenario
+	// searches for, so "it must never be the answer" is actually tested.
+	// The value is deliberately not shaped like a real key: a fixture that
+	// matches a secret scanner's pattern fails CI on every push, and
+	// nothing about this test needs it to look authentic.
+	write(api, ".env", "STRIPE_SECRET_KEY=fixture-not-a-real-key-MaxAttempts\n")
 
 	worker := makeFakeRepo(t, base, "Private", "python", "billing-worker", "https://github.com/acme/billing-worker.git", "")
 	write(worker, "worker/tasks.py",
@@ -129,7 +134,7 @@ func evalScenarios() []scenario {
 			wants: []string{"billing-api", "internal/retry/retry.go", "\"line\"", "const"},
 			// The credential file mentions MaxAttempts too. It must never
 			// be the answer to anything.
-			notWants: []string{".env", "sk_live"},
+			notWants: []string{".env", "STRIPE_SECRET_KEY"},
 		},
 		{
 			// A literal search across languages finds only the spellings
@@ -141,7 +146,7 @@ func evalScenarios() []scenario {
 			args:     map[string]any{"query": "max_attempts", "max_results": 20},
 			wants:    []string{"billing-worker", "worker/tasks.py"},
 			// The credential file mentions the same token.
-			notWants: []string{"sk_live"},
+			notWants: []string{"STRIPE_SECRET_KEY"},
 		},
 		{
 			// And this is the answer to the cross-language version of the
@@ -155,7 +160,7 @@ func evalScenarios() []scenario {
 				"query": "max_?attempts", "regex": true, "max_results": 20,
 			},
 			wants:    []string{"billing-api", "billing-worker", "billing-ui"},
-			notWants: []string{"sk_live"},
+			notWants: []string{"STRIPE_SECRET_KEY"},
 		},
 		{
 			question: "Which repository is billing-worker, and what state is it in?",

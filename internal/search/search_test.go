@@ -528,8 +528,10 @@ func TestSearchAcceptsANilContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//nolint:staticcheck // SA1012: passing nil is the case under test
-	res, err := SearchRepo(nil, root, m, nil)
+	// staticcheck runs standalone in CI, where //nolint has no effect —
+	// only //lint:ignore does. Passing nil is the case under test.
+	//lint:ignore SA1012 a nil context is exactly what this asserts is handled
+	res, err := SearchRepo(nil, root, m, nil) //nolint:staticcheck // see above
 	if err != nil {
 		t.Fatalf("a nil context should be treated as Background: %v", err)
 	}

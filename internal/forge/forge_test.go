@@ -209,27 +209,30 @@ func TestFilterIsOneDefinitionForEveryForge(t *testing.T) {
 		{Name: "d", Visibility: "Public", Archived: true},
 		{Name: "e", Visibility: "Private", Fork: true, Archived: true},
 	}
+	// Comma-separated rather than concatenated: it reads as a list in a
+	// failure message, and joining single letters with nothing between
+	// them produces words a spell checker flags as typos.
 	names := func(rs []Repo) string {
-		var b strings.Builder
+		out := make([]string, 0, len(rs))
 		for _, r := range rs {
-			b.WriteString(r.Name)
+			out = append(out, r.Name)
 		}
-		return b.String()
+		return strings.Join(out, ",")
 	}
 
 	for name, tc := range map[string]struct {
 		opts Options
 		want string
 	}{
-		"default excludes forks and archived": {Options{}, "ab"},
-		"forks kept":                          {Options{IncludeForks: true}, "abc"},
-		"archived kept":                       {Options{IncludeArchived: true}, "abd"},
-		"both kept":                           {Options{IncludeForks: true, IncludeArchived: true}, "abcde"},
+		"default excludes forks and archived": {Options{}, "a,b"},
+		"forks kept":                          {Options{IncludeForks: true}, "a,b,c"},
+		"archived kept":                       {Options{IncludeArchived: true}, "a,b,d"},
+		"both kept":                           {Options{IncludeForks: true, IncludeArchived: true}, "a,b,c,d,e"},
 		"public only":                         {Options{Visibility: "public"}, "a"},
 		"private only":                        {Options{Visibility: "private"}, "b"},
-		"visibility all":                      {Options{Visibility: "all"}, "ab"},
+		"visibility all":                      {Options{Visibility: "all"}, "a,b"},
 		"visibility is case-insensitive":      {Options{Visibility: "PUBLIC"}, "a"},
-		"limit applies after filtering":       {Options{IncludeForks: true, Limit: 2}, "ab"},
+		"limit applies after filtering":       {Options{IncludeForks: true, Limit: 2}, "a,b"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := names(Filter(all, tc.opts)); got != tc.want {

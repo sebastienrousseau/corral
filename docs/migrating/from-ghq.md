@@ -45,7 +45,7 @@ can apply without opening anything.
 | `ghq list` | `corralctl status` |
 | `ghq list --full-path` | `corralctl status --format json` |
 | `ghq root` | `--base-dir`, or `base_dir` in the config file |
-| `ghq look <repo>` | `cd "$(corralctl status --format json | jq -r '...')"`, or use the MCP server |
+| `ghq look <repo>` | No direct equivalent; `corralctl status --format json` gives paths to `cd` into, or use the MCP server |
 | — | `corralctl plan <owner>` — a dry run of the reconciliation, which ghq has no equivalent for |
 | — | `corralctl exec -- <cmd>` — run a command in every organised clone |
 | — | `corralctl mcp` — serve the workspace to an AI agent |

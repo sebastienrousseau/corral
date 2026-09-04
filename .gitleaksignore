@@ -12,3 +12,15 @@
 # test has since moved to internal/mcp/protocol_test.go; this entry covers
 # only the historical commit, which cannot be edited without a rewrite.
 f3c4d0c5e212a57480c3e3ba3b5c1af46f20b23a:internal/mcp/resources_test.go:private-key:479
+
+# 26e13d17 — internal/mcp/eval_test.go, `stripe-access-token` rule.
+# The eval suite's fixture workspace contains a ".env" whose value must be
+# recognisable as a credential, because the scenarios assert it is never the
+# answer to a symbol lookup or a content search. The value written was
+# "sk_live_MaxAttempts": no key material, and no account it could belong to,
+# but it matches the shape of a real Stripe key well enough for the scanner.
+#
+# The fixture now reads "fixture-not-a-real-key-MaxAttempts", so this cannot
+# recur. This entry covers only the historical commit, which cannot be edited
+# without a rewrite.
+26e13d17a94449f664ca03d43003961e5891e480:internal/mcp/eval_test.go:stripe-access-token:89
