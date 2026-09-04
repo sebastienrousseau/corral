@@ -153,6 +153,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   format shipped last month, which is exactly how this kind of directory
   rots.
 
+- **An evaluation suite for the MCP server** (`make eval`). Every other
+  test asks whether a handler is correct; none asked the question that
+  decides whether the server is useful — given a real question, does the
+  right tool answer it with something somebody could act on?
+
+  Eleven scenarios, each phrased as a person actually asked it, against a
+  polyglot fixture workspace with a fork, a private repository and a
+  credential file that must never surface in an answer. A second gate
+  measures *discriminability*: that each tool's description says something
+  its nearest sibling's does not, which is what a model reads when
+  choosing between them. Selection itself needs a model in the loop and
+  is out of scope; what this does is make the inputs to that decision
+  testable, so a selection failure downstream is predictable rather than
+  mysterious.
+
+  It earned its place immediately. A scenario — "we have a retry limit in
+  three services, find them all" — returned two of three, because Go
+  writes `MaxAttempts` and Python writes `MAX_ATTEMPTS` and no amount of
+  case-insensitivity bridges the underscore. `corral_search_code`'s
+  description now says to reach for a regex when a name is spelled
+  differently per language, and both the literal and the regex forms are
+  pinned as scenarios.
+
 - **A committed fuzz seed corpus** for all four fuzz targets. The inline
   `f.Add` seeds cover the readable cases; these cover the ones that are
   unreadable as Go string literals — NUL bytes, invalid UTF-8,

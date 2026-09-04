@@ -68,7 +68,7 @@ func (s *Server) registerSearchTool() {
 		Name:        "corral_search_code",
 		Title:       "Search file contents across every repository",
 		Annotations: readOnlyAnnotations(),
-		Description: "Search the contents of source and documentation files across every repository in the Corral workspace at once. Use this for where something is *used* — call sites, configuration keys, error strings — and corral_find_symbol for where something is *declared*. Returns file, line and the matching line's text, not whole files: read the file at the location it gives you. Only files the file resource would serve are searched, so credential files never match. Test files are excluded unless include_tests is set. Narrow with repo, language or path_glob on a large workspace; the response reports whether any bound was reached.",
+		Description: "Search the contents of source and documentation files across every repository in the Corral workspace at once. Use this for where something is *used* — call sites, configuration keys, error strings — and corral_find_symbol for where something is *declared*. Returns file, line and the matching line's text, not whole files: read the file at the location it gives you. Only files the file resource would serve are searched, so credential files never match. Test files are excluded unless include_tests is set. Narrow with repo, language or path_glob on a large workspace; the response reports whether any bound was reached. When a name is spelled differently per language — MaxAttempts in Go, MAX_ATTEMPTS in Python, maxAttempts in TypeScript — a literal search finds only one of them; use regex for those, e.g. \"max_?attempts\".",
 	}, s.handleSearchCode)
 }
 

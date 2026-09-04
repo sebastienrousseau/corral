@@ -37,7 +37,7 @@ LDFLAGS = -s -w \
 	-X $(VERSION_PKG)/internal/tui.Version=$(VERSION)
 
 .PHONY: all build docs install uninstall install-smoke test test-race vet lint \
-        clean format sbom-check example-check doc-check spdx-check pkg-check \
+        clean format sbom-check example-check doc-check spdx-check pkg-check eval \
         docs-lint help
 
 all: format vet spdx-check sbom-check pkg-check example-check test test-race build
@@ -117,6 +117,16 @@ example-check:
 ## doc-check: enforce 100% documentation coverage on exported declarations
 doc-check:
 	go run scripts/doc_coverage.go
+
+## eval: run the MCP evaluation suite and write a report
+# The path is absolute because `go test` runs each package in its own
+# directory, so a relative one would land under internal/mcp.
+eval:
+	@mkdir -p $(DIST)
+	CORRAL_EVAL_REPORT=$(CURDIR)/$(DIST)/eval.json \
+	  go test ./internal/mcp/ -count=1 -v \
+	  -run 'TestEval|TestEveryReadTool|TestToolDescriptions|TestEveryToolIsDescribed|TestServerInstructionsOrient'
+	@echo "eval report: $(DIST)/eval.json"
 
 ## pkg-check: verify pkg/ documents every distribution format built
 pkg-check:
