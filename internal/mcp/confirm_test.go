@@ -541,6 +541,13 @@ func TestServeHTTPServesAndShutsDown(t *testing.T) {
 		_ = conn.Close()
 		t.Error("the listener is still accepting connections after shutdown")
 	}
+
+	// The request above went through http.DefaultClient, which keeps the
+	// connection alive for reuse. Nothing will reuse it — the server it
+	// points at has just been shut down — so the writeLoop goroutine behind
+	// it would sit there until the process exits, which goleak reports as a
+	// leak because that is what it is.
+	http.DefaultTransport.(*http.Transport).CloseIdleConnections()
 }
 
 // TestServeHTTPReportsAListenFailure covers the error path: a port already
@@ -624,10 +631,30 @@ func TestConfirmationSurvivesTheHTTPTransport(t *testing.T) {
 
 	addr := freePort(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	served := make(chan error, 1)
 	go func() { served <- s.ServeHTTP(ctx, addr) }()
 	waitForListener(t, addr)
+
+	// Cancelling is not the same as having stopped. ServeHTTP returns only
+	// once http.Server.Shutdown has drained its connections, and this test
+	// used to cancel and walk away — so on a slow machine the shutdown was
+	// still running after the last test in the package finished. goleak
+	// caught it on CI within hours of being added, and never once here,
+	// which is the whole argument for the check: a leak that depends on
+	// timing is invisible on the machine that wrote it.
+	//
+	// The client's idle keep-alive connections have to go too. They are
+	// held by the transport, not the session, so closing the session leaves
+	// a writeLoop goroutine parked on a connection nothing will use again.
+	defer func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(10 * time.Second):
+			t.Error("ServeHTTP did not return within 10s of the context being cancelled")
+		}
+		http.DefaultTransport.(*http.Transport).CloseIdleConnections()
+	}()
 
 	asked := 0
 	client := mcp.NewClient(&mcp.Implementation{Name: "http-harness", Version: "test"},

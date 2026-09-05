@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **goleak found a real leak on its first day.** Two HTTP tests in
+  `internal/mcp` left goroutines behind: one cancelled the server's context
+  and walked away without waiting for `ServeHTTP` to return, so on a slow
+  runner `http.Server.Shutdown` was still draining after the last test in the
+  package finished; both left `http.DefaultClient`'s keep-alive connection
+  open, parking a `writeLoop` goroutine on a connection nothing would reuse
+  because the server behind it had just stopped.
+
+  It failed on CI and has never once failed locally — not under
+  `GOMAXPROCS=1`, not under `-race`. That is the argument for the check
+  rather than an objection to it: a leak that depends on timing is invisible
+  on the machine that wrote it.
+
 - **`server.json` is checked against the registry's field limits.** Nothing
   local knew the 100-character cap existed. `make manifest-check` now fails
   on a description over it, counted in runes rather than bytes because this
