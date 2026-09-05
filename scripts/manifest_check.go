@@ -41,6 +41,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // directRequire matches one non-indirect line inside go.mod's require block.
@@ -62,6 +63,7 @@ func main() {
 	problems = append(problems, checkChangelogLinks()...)
 	problems = append(problems, checkVersionedProse()...)
 	problems = append(problems, checkInstallSnippets()...)
+	problems = append(problems, checkRegistryLimits()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -132,6 +134,52 @@ func checkVersionedProse() []string {
 
 // verifyDocVersion matches the VERSION assignment packagers copy.
 var verifyDocVersion = regexp.MustCompile(`(?m)^VERSION=([0-9]+\.[0-9]+\.[0-9]+)\s*$`)
+
+// registryMaxDescription is the MCP registry's limit on server.json's
+// description, in characters.
+//
+// The registry enforces it at publish time and nowhere earlier, so a value
+// over the limit is not a warning — it is a 422 that fails the release job,
+// after the artefacts have already been published.
+const registryMaxDescription = 100
+
+// checkRegistryLimits keeps server.json publishable.
+//
+// v0.0.35 shipped its artefacts and then failed: the description had been
+// rewritten from 91 characters to 143 while removing some GitHub-only
+// wording, and the registry rejected it with
+//
+//	422 validation failed: expected length <= 100
+//
+// Nothing local knew the limit existed. The rewrite was correct prose and
+// passed every gate the project had; it was simply unpublishable, and the
+// only thing that could tell us was the registry itself, at the worst
+// possible moment.
+func checkRegistryLimits() []string {
+	raw, err := os.ReadFile("server.json")
+	if err != nil {
+		return []string{fmt.Sprintf("reading server.json: %v", err)}
+	}
+	var manifest struct {
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return []string{fmt.Sprintf("parsing server.json: %v", err)}
+	}
+	if manifest.Description == "" {
+		return []string{"server.json states no description; the registry requires one"}
+	}
+	// Counted in runes, not bytes: the limit is a character count, and this
+	// project's prose uses en dashes and curly quotes freely enough that the
+	// two figures diverge.
+	if n := utf8.RuneCountInString(manifest.Description); n > registryMaxDescription {
+		return []string{fmt.Sprintf(
+			"server.json description is %d characters; the MCP registry rejects anything "+
+				"over %d, and it does so at publish time — after the release has shipped "+
+				"its artefacts", n, registryMaxDescription)}
+	}
+	return nil
+}
 
 // downloadPin matches a release-download URL that hard-codes a version
 // instead of interpolating one.

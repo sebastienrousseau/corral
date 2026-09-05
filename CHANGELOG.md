@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **v0.0.35 published its artefacts and then failed, and I caused it.**
+  Removing GitHub-only wording from `server.json` in 0.0.35 grew its
+  description from 91 characters to 143. The MCP registry caps it at 100 and
+  enforces that only at publish time, so the release rejected with
+
+  ```text
+  422 validation failed: expected length <= 100
+  ```
+
+  The rewrite was correct prose and passed every gate the project had. It was
+  simply unpublishable, and the only thing that could say so was the registry
+  itself, at the worst possible moment. The description is now 88 characters
+  and says what the server is for rather than listing the forges.
+
+- **A third publisher could still abort two unrelated ones.** The registry
+  publish ran inside the release job, so its 422 skipped the AUR and Homebrew
+  jobs — both carry `needs: release` — after the artefacts and their
+  provenance were already out.
+
+  This is the same fault as v0.0.33's Homebrew failure, in a different step,
+  one release after the cask was moved out for exactly this reason. Moving
+  one publisher out of the critical path fixed that publisher; it did not fix
+  the shape. All three now run in their own jobs with `continue-on-error`, so
+  no package host can cost a release its other channels.
+
+### Added
+
+- **`server.json` is checked against the registry's field limits.** Nothing
+  local knew the 100-character cap existed. `make manifest-check` now fails
+  on a description over it, counted in runes rather than bytes because this
+  project's prose uses en dashes freely enough for the two to diverge.
+  Confirmed to fail on the exact 143-character description that broke
+  v0.0.35.
+
 ## [0.0.35] — 2026-09-05
 
 ### Added
