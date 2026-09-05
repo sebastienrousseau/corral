@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"go.uber.org/goleak"
 )
 
 // TestMain points every XDG directory at a throwaway location, for the
@@ -34,5 +36,16 @@ func TestMain(m *testing.M) {
 	// Removed after the run rather than with a defer, because os.Exit
 	// does not run deferred functions.
 	_ = os.RemoveAll(dir)
+
+	// goleak.Find rather than goleak.VerifyTestMain, because this TestMain
+	// has cleanup of its own and VerifyTestMain exits the process itself.
+	// Checked only on an otherwise-passing run, so a genuine failure is not
+	// buried under leak output from a test that returned early.
+	if code == 0 {
+		if err := goleak.Find(); err != nil {
+			fmt.Fprintf(os.Stderr, "goroutine leak: %v\n", err)
+			code = 1
+		}
+	}
 	os.Exit(code)
 }

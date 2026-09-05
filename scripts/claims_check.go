@@ -115,15 +115,85 @@ func coverage(profile string) (map[string]float64, float64, error) {
 			return nil, 0, fmt.Errorf("go test -coverprofile: %v\n%s", err, o)
 		}
 	}
-	o, err := exec.Command("go", "tool", "cover", "-func="+profile).Output()
+	// Counted from the profile rather than read off `go tool cover -func`.
+	//
+	// That command rounds its total to one decimal, so 4874 of 4875
+	// statements prints as "100.0%" — and a claim of 100% then agrees with
+	// a suite that is not at 100%. It also attributes blocks to named
+	// functions, so a statement inside a `var f = func(){...}` literal is
+	// absent from the report entirely, uncovered or not. Between the two, a
+	// three-statement regression was invisible: the branch in
+	// internal/search that only ran on some scheduler interleavings sat
+	// uncovered under -race while this gate reported agreement.
+	exact, uncovered, err := exactCoverage(profile)
 	if err != nil {
-		return nil, 0, fmt.Errorf("go tool cover: %w", err)
+		return nil, 0, err
 	}
-	total := regexp.MustCompile(`\(statements\)\s+([0-9.]+)%`).FindStringSubmatch(string(o))
-	if total == nil {
-		return nil, 0, fmt.Errorf("no total line in the coverage profile")
+	uncoveredBlocks = uncovered
+	return pkgs, exact, nil
+}
+
+// uncoveredBlocks names the statement blocks the last measurement found
+// uncovered, so a failure can say which they are rather than only that the
+// number moved.
+var uncoveredBlocks []string
+
+// coverLine matches one block of a coverage profile:
+//
+//	path/file.go:12.34,56.78 3 1
+//
+// The trailing pair is the number of statements in the block and the number
+// of times it ran.
+var coverLine = regexp.MustCompile(`^(\S+)\s+(\d+)\s+(\d+)$`)
+
+// exactCoverage counts covered statements against total, unrounded.
+//
+// A `go test ./...` profile can carry the same block more than once, because
+// a file compiled into several test binaries is reported by each of them.
+// Those duplicates have to be merged by taking the highest count — a block
+// covered by one package and not another is covered. Summing the lines
+// instead undercounts, which is a mistake worth naming here because it is
+// easy to make and produces a plausible-looking wrong answer.
+func exactCoverage(profile string) (float64, []string, error) {
+	b, err := os.ReadFile(profile) // #nosec G304 -- path supplied by the caller or created above
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading the coverage profile: %w", err)
 	}
-	return pkgs, mustFloat(total[1]), nil
+
+	type block struct{ stmts, count int }
+	blocks := map[string]block{}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "mode:") {
+			continue
+		}
+		m := coverLine.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		stmts, _ := strconv.Atoi(m[2])
+		count, _ := strconv.Atoi(m[3])
+		if prev, ok := blocks[m[1]]; ok && prev.count > count {
+			count = prev.count
+		}
+		blocks[m[1]] = block{stmts: stmts, count: count}
+	}
+	if len(blocks) == 0 {
+		return 0, nil, fmt.Errorf("no statement blocks in %s", profile)
+	}
+
+	total, covered := 0, 0
+	var uncovered []string
+	for pos, blk := range blocks {
+		total += blk.stmts
+		if blk.count > 0 {
+			covered += blk.stmts
+			continue
+		}
+		uncovered = append(uncovered, pos)
+	}
+	sort.Strings(uncovered)
+	return 100 * float64(covered) / float64(total), uncovered, nil
 }
 
 const modulePath = "github.com/sebastienrousseau/corral"
@@ -153,10 +223,24 @@ func checkCoverageClaims(pkgs map[string]float64, overall float64) []string {
 			"either restore one or drop this check"}
 	}
 	for _, m := range claims {
-		if claimed := mustFloat(m[1]); !sameToOneDecimal(claimed, overall) {
+		claimed := mustFloat(m[1])
+		if !sameToOneDecimal(claimed, overall) {
 			problems = append(problems, fmt.Sprintf(
-				".bestpractices.json claims %.1f%% statement coverage; the suite measures %.1f%%",
+				".bestpractices.json claims %.1f%% statement coverage; the suite measures %.4f%%",
 				claimed, overall))
+			break
+		}
+		// A claim of 100% is the one figure that cannot be approximate.
+		// Rounding makes 4874 of 4875 statements agree with it to one
+		// decimal, and that is exactly how an uncovered branch survived:
+		// the claim stayed true-looking while the suite stopped covering
+		// everything. Anything short of every statement fails here, and
+		// says which ones.
+		if claimed == 100 && overall < 100 {
+			problems = append(problems, fmt.Sprintf(
+				".bestpractices.json claims 100%% statement coverage; the suite measures "+
+					"%.4f%% — %d statement block(s) uncovered:\n      %s",
+				overall, len(uncoveredBlocks), strings.Join(uncoveredBlocks, "\n      ")))
 			break
 		}
 	}
