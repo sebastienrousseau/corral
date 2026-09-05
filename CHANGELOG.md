@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.36] — 2026-09-05
+
 ### Fixed
 
 - **v0.0.35 published its artefacts and then failed, and I caused it.**
@@ -47,6 +49,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GOMAXPROCS=1`, not under `-race`. That is the argument for the check
   rather than an objection to it: a leak that depends on timing is invisible
   on the machine that wrote it.
+
+- **`make release-preflight`, which proves a release can publish before the
+  tag exists.** Two releases in a row published their artefacts and then
+  failed — the Homebrew tap refused a push in v0.0.33, the MCP registry
+  rejected `server.json` in v0.0.35 — and the existing dry run could not have
+  caught either, because a dry run *skips publishing* and publishing is where
+  both failed.
+
+  Both were discoverable beforehand. The length limit that broke v0.0.35 is
+  written down in the schema `server.json` already points at, and the job
+  layout that turned one publisher's failure into three is readable in the
+  workflow. Nothing looked.
+
+  The preflight validates `server.json` against its **own declared
+  `$schema`**, in full, rather than against a copied list of limits — so a
+  constraint nobody here anticipated is still caught. It checks every version
+  reference agrees with the CHANGELOG. And it asserts that no publisher can
+  take the release down with it: each of `registry`, `brew` and `aur` must be
+  its own job, must declare `needs: release`, and must carry
+  `continue-on-error`, while the release job itself must run no publish step.
+
+  That last check is the one that matters most. The same fault occurred
+  twice — v0.0.33 lost its provenance to the cask, and v0.0.35 lost its AUR
+  and Homebrew packages to the registry, one release after the cask had been
+  moved out for exactly that reason. Fixing a publisher is not the same as
+  fixing the shape, and only the shape can be regression-tested.
+
+  All three cases are in its regression set and confirmed to fail: the exact
+  143-character description from v0.0.35, a publish step moved back into the
+  release job, and a publisher losing `continue-on-error`.
 
 - **`server.json` is checked against the registry's field limits.** Nothing
   local knew the 100-character cap existed. `make manifest-check` now fails
@@ -2253,7 +2285,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.35...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.36...HEAD
+[0.0.36]: https://github.com/sebastienrousseau/corral/compare/v0.0.35...v0.0.36
 [0.0.35]: https://github.com/sebastienrousseau/corral/compare/v0.0.34...v0.0.35
 [0.0.34]: https://github.com/sebastienrousseau/corral/compare/v0.0.33...v0.0.34
 [0.0.33]: https://github.com/sebastienrousseau/corral/compare/v0.0.32...v0.0.33
