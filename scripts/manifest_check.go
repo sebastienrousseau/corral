@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -60,6 +61,7 @@ func main() {
 	problems = append(problems, checkOSPSConsistency()...)
 	problems = append(problems, checkChangelogLinks()...)
 	problems = append(problems, checkVersionedProse()...)
+	problems = append(problems, checkInstallSnippets()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "manifest check failed:")
@@ -130,6 +132,76 @@ func checkVersionedProse() []string {
 
 // verifyDocVersion matches the VERSION assignment packagers copy.
 var verifyDocVersion = regexp.MustCompile(`(?m)^VERSION=([0-9]+\.[0-9]+\.[0-9]+)\s*$`)
+
+// downloadPin matches a release-download URL that hard-codes a version
+// instead of interpolating one.
+//
+// The `${VERSION}` form in pkg/VERIFY.md is deliberately not matched: that
+// file states its version once, on a line checkVersionedProse already
+// guards, and every command below interpolates it.
+var downloadPin = regexp.MustCompile(`releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/`)
+
+// installPin matches a version-pinned `go install`.
+var installPin = regexp.MustCompile(`go install [^\s]+@v([0-9]+\.[0-9]+\.[0-9]+)`)
+
+// snippetDocs are the documents a user copies commands out of.
+//
+// CHANGELOG.md is excluded on purpose: every version it names is history,
+// and history is supposed to name old versions.
+var snippetDocs = []string{
+	"README.md", "DEVELOPMENT.md", "CONTRIBUTING.md",
+	"docs", "pkg", "examples",
+}
+
+// checkInstallSnippets fails when a document hard-codes a version in a
+// command a reader would run.
+//
+// Every install path in this project is currently version-less — `@latest`,
+// `brew install`, `make install` — or interpolates ${VERSION} from the one
+// line that is gated. That is the state worth keeping: a hard-coded version
+// in an install snippet is invisible when it goes stale, because the command
+// still runs and still succeeds. It just installs the wrong release, and the
+// checksum matches it, which is worse than a failure.
+//
+// pkg/VERIFY.md shipped exactly that defect at 0.0.29 and it took two
+// releases to notice.
+func checkInstallSnippets() []string {
+	released, err := latestChangelogVersion("CHANGELOG.md")
+	if err != nil {
+		return []string{fmt.Sprintf("reading CHANGELOG.md: %v", err)}
+	}
+
+	var problems []string
+	for _, root := range snippetDocs {
+		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			// A root that does not exist, or a non-Markdown file, is
+			// skipped rather than reported: these roots are optional and
+			// this check is about what the documents say, not which of
+			// them are present.
+			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".md") {
+				return nil
+			}
+			b, err := os.ReadFile(path) // #nosec G304 -- walking the fixed roots above
+			if err != nil {
+				return nil
+			}
+			for _, re := range []*regexp.Regexp{downloadPin, installPin} {
+				for _, m := range re.FindAllSubmatch(b, -1) {
+					if got := string(m[1]); got != released {
+						problems = append(problems, fmt.Sprintf(
+							"%s pins version %s in a command a reader would run; "+
+								"newest release is %s — a stale pin still succeeds, "+
+								"it just installs the wrong release",
+							path, got, released))
+					}
+				}
+			}
+			return nil
+		})
+	}
+	sort.Strings(problems)
+	return problems
+}
 
 // heroTagVersion matches the documentation site's version badge.
 var heroTagVersion = regexp.MustCompile(`(?m)^hero_tag:\s*"(v[0-9]+\.[0-9]+\.[0-9]+)"`)
