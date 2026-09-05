@@ -196,6 +196,10 @@ spdx-check:
 CODESPELL_SKIP ?= ./.git,./docs-site,./public,./go.sum,./dist,./build,./node_modules
 CODESPELL_IGNORE ?= intoto,statuss,confg,gitub,repositor,unparseable
 
+## release-preflight: prove a release can publish, before the tag exists
+release-preflight:
+	python3 scripts/release_preflight.py
+
 ## contrast: assert the docs theme's colour pairs at WCAG AAA
 contrast:
 	python3 scripts/contrast.py

@@ -287,6 +287,29 @@ jobs:
       - name: Theme contrast is AAA
         run: python3 scripts/contrast.py
 
+      # Everything a tag push would otherwise be the first to try.
+      #
+      # Two releases in a row published their artefacts and then failed — the
+      # Homebrew tap refused a push in v0.0.33, the MCP registry rejected
+      # server.json in v0.0.35 — and the existing dry run could not have
+      # caught either, because a dry run skips publishing and publishing is
+      # where both failed.
+      #
+      # This validates server.json against the registry's own schema rather
+      # than a copied list of limits, and asserts that no publisher can take
+      # the release down with it. Both failures are in its regression set.
+      - name: Release preflight
+        run: |
+          set -euo pipefail
+          # --require-hashes, because a preflight that installs whatever PyPI
+          # serves today is a supply-chain hole in the very step whose job is
+          # to be trustworthy. Scorecard's Pinned-Dependencies check flagged
+          # the unpinned form on the pull request that added this, which is
+          # the check doing exactly what it is for.
+          python3 -m pip install --quiet --disable-pip-version-check \
+            --require-hashes -r scripts/requirements-preflight.txt
+          python3 scripts/release_preflight.py
+
       # REUSE-style licence coverage over the whole tree, not just the files
       # someone remembered. Twenty-one workflow and config files had drifted
       # uncovered before this became a gate.
