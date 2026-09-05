@@ -306,6 +306,12 @@ func (s *Server) handleFindSymbol(ctx context.Context, _ *mcp.CallToolRequest, i
 	wg.Wait()
 
 	if err := ctx.Err(); err != nil {
+		// A cancelled scan is reported *in the tool result*, not as a
+		// transport error. MCP treats a returned Go error as the call
+		// having failed, which would lose the partial count the agent can
+		// still act on. This is the protocol's convention, not an
+		// oversight.
+		//nolint:nilerr // deliberate: cancellation is a tool result, not an error
 		return toolError("cancelled after %d repositories", scanned), nil, nil
 	}
 	// Workers finish in an arbitrary order, so this list is arbitrary

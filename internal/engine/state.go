@@ -84,6 +84,7 @@ func readCloneState(repoDir string) (cloneState, error) {
 	// full sync.
 	path, err := statePath(repoDir)
 	if err != nil {
+		//nolint:nilerr // deliberate: "not a repository" is "no state", per the doc comment
 		return cloneState{}, nil
 	}
 	s, err := readStateFile(path)

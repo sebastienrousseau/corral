@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The `nilerr` linter**, which finds code returning a nil error when an
+  error is not nil. It reported five places, and all five turned out to be
+  deliberate — a walk callback skipping an unreadable entry, "not a
+  repository" being read as "no state", and a cancelled MCP scan reported in
+  the tool result rather than as a transport error, because returning a Go
+  error there would throw away the partial count the agent can still use.
+
+  None of them was a defect, and that is the reason to enable it: each now
+  carries a written justification at the point of the return instead of
+  relying on the reader working out that the nil was on purpose. A sixth
+  case, in `scripts/`, needed no suppression — those files are
+  `//go:build ignore` and are not linted.
+
 ## [0.0.34] — 2026-09-05
 
 ### Added
