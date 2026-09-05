@@ -36,7 +36,7 @@ footer_note: "Corral clones and organises repositories from six forges into a Fi
 copyright: "© 2026 Sebastien Rousseau. Licensed under GPL-3.0-only."
 translation_key: "home"
 title: "Corral — organise every repository you have"
-description: "Corral clones and organises repositories from GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket into a Finder-friendly hierarchy, applies native macOS tags, and lets your AI coding agent search across every one of them at once, straight from disk."
+description: "Corral clones and organises repositories from GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket into a Finder-friendly hierarchy, applies native macOS tags, and lets your AI coding agent search across all of them at once, straight from disk."
 keywords: "repository organiser, github gitlab codeberg forgejo gitea, clone all repos, mcp server, finder tags, go cli"
 hero_tag: "v0.0.34"
 hero_tagline: "A command-line tool and MCP server"
