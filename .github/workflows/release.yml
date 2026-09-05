@@ -181,6 +181,34 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" \
             "${RUNNER_TEMP}/checksums.txt.intoto.jsonl" --clobber
 
+  registry:
+    name: Publish to the MCP registry
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # Out of the release job, for the reason the cask was moved out in
+    # v0.0.34 and learned again in v0.0.35: this ran inside it, the registry
+    # rejected server.json with `422 expected length <= 100`, and that took
+    # the AUR and Homebrew jobs with it — both carry `needs: release`, so a
+    # validation error in a third publisher skipped two unrelated ones while
+    # the artefacts and their provenance were already out.
+    #
+    # A registry that will not accept a description is not a reason to
+    # withhold a package from Arch and Homebrew users.
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       # Publish the MCP registry entry.
       #
       # Without this step server.json was a file nobody read: the registry sat at
@@ -195,7 +223,6 @@ jobs:
       # kind of tool that should not be executed unverified. Upstream publishes a
       # .sigstore.json per artifact, so verification costs one command.
       - name: Install mcp-publisher
-        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MCP_PUBLISHER_VERSION: v1.8.1
@@ -216,7 +243,6 @@ jobs:
           echo "${RUNNER_TEMP}/mcp-publisher-bin" >> "${GITHUB_PATH}"
 
       - name: Publish to the MCP registry
-        if: env.DRY_RUN != 'true'
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
