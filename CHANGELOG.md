@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.34] — 2026-09-05
+
+### Added
+
+- **Install snippets are now checked against the released version.** Every
+  install path in this project is deliberately version-less — `@latest`,
+  `brew install`, `make install` — or interpolates `${VERSION}` from the one
+  line `checkVersionedProse` already guards. Nothing enforced that, so a
+  hard-coded version could be added to README.md, `docs/`, `pkg/` or
+  `examples/` and would then go stale invisibly: the command still runs and
+  still succeeds, it just installs the wrong release, and the checksum
+  matches the wrong release too. That is worse than a failure, and it is
+  what `pkg/VERIFY.md` did at 0.0.29 for two releases before anyone noticed.
+
+  `make manifest-check` now fails on a release-download URL or a
+  version-pinned `go install` that names anything other than the newest
+  release. CHANGELOG.md is exempt, because every version it names is
+  history. Confirmed to fail on a stale pin in both README.md and `docs/`,
+  and to stay quiet on a current one.
+
 ### Fixed
 
 - **A Homebrew tap permission error cost v0.0.33 its provenance.** The
@@ -2019,7 +2039,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.33...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.34...HEAD
+[0.0.34]: https://github.com/sebastienrousseau/corral/compare/v0.0.33...v0.0.34
 [0.0.33]: https://github.com/sebastienrousseau/corral/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/sebastienrousseau/corral/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/sebastienrousseau/corral/compare/v0.0.30...v0.0.31
