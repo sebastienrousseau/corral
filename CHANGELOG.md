@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.33] — 2026-09-05
+
 ### Added
 
 - **Bitbucket Cloud** is the sixth forge corral can clone from:
@@ -41,7 +43,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list public repositories, so there is no anonymous path and no way to
   verify an implementation against the live service without an account.
 
+- **The AUR and Homebrew taps publish again.** Both had silently stopped:
+  the Homebrew cask served v0.0.25 while the project shipped v0.0.32,
+  because the automation opened a pull request on every release and
+  nobody merged them — seven had accumulated. goreleaser has no
+  auto-merge option (established by reading the schema, after nearly
+  committing a comment claiming otherwise), so the cask is now committed
+  directly to the tap: the file is generated, carries `DO NOT EDIT`, and
+  its checksums come from the release the same job just signed.
+
+  The AUR package sat at 0.0.13, last touched in July. `skip_upload` was
+  set deliberately and for a good reason — aur.archlinux.org being
+  unreachable must not cost a release its artefacts, signatures or
+  attestations — but the plan it left behind was "generated in dist for
+  manual publishing", and manual publishing happened once. **A step
+  nobody is scheduled to run is a step that does not happen.** It is now
+  a separate job running after the release with `continue-on-error`, so
+  the original guarantee holds and the attempt is automatic. A missing
+  `AUR_KEY` fails loudly rather than reporting success without
+  publishing, which is how both this and the MCP registry entry went
+  stale before.
+
+- **`golangci-lint` runs in CI.** It had been in the `Makefile` since the
+  beginning and in no workflow. The reusable `go-ci` workflow runs
+  `go vet` and `staticcheck` — two of the four linters `.golangci.yml`
+  enables — so **`errcheck` and `gosec` were enforced nowhere**, only on
+  whichever machine last ran `make lint`. That is a habit, not a gate,
+  and habits do not fail pull requests. Pinned at v2.13.2, verified clean
+  at both the installed 2.12.2 and the pinned version before being wired
+  in.
+
+- **`make contrast`**, which asserts the documentation theme's colour
+  pairs at WCAG AAA. `styles.css` had stated since it was written that
+  "every pair the theme actually renders is asserted at WCAG AAA by
+  `scripts/contrast.py`" — and that script did not exist. The claim was
+  load-bearing in the way a claim should not be: it is the reason someone
+  would feel safe changing a colour, and nothing behind it would have
+  caught them. It checks all three token blocks independently, including
+  the `prefers-color-scheme` block that serves readers who have
+  expressed no preference, which is the one a recolour forgets. All 45
+  pairs pass.
+
 ### Fixed
+
+- **The Go Report Card badge had been dead for some time.** The service
+  was sunset after ten years; its shields.io endpoint answers
+  `404: badge not found`, so the README advertised a code-quality signal
+  that no longer existed and nothing noticed, because nothing checked.
+  The badge now names golangci-lint, which is the successor Go Report
+  Card's own farewell points to, and `make claims-check` fails on any
+  link to goreportcard.com so a dead badge cannot return by copy-paste
+  from an older README.
+
+- **The documentation site wore the theme's identity rather than its
+  own.** Three faults, each shipping for months:
+
+  - The masthead mark was Lucid's placeholder — a rounded square with an
+    `L` in it — inlined under a comment explaining that inlining saves a
+    request. It does, and it also meant doc.corrallib.com carried another
+    project's initial beside the word "Corral".
+  - **Both `favicon.ico` files were zero bytes.** `build-docs.sh`
+    checked them with `-f`, so a file that existed and contained nothing
+    passed a gate written specifically to catch missing assets — while
+    the CNAME check two lines below already used `-s` for exactly this
+    reason. An empty asset is as broken as a missing one and harder to
+    notice, because the browser simply falls back to a blank page icon.
+  - The palette was the theme's default blue, beside a coral logo.
+
+  The icon is now generated from the logo's own gradient at 16, 32, 48
+  and 64 px, with the small sizes thickened and deepened so the branch
+  detail does not wash out to pink in a browser tab, and the palette is
+  the logo's coral (`#F87171` → `#F56B5E` → `#9F1239`).
 
 - **A failed `corral_sync_repo` or `corral_clone_repo` returned a wall of
   git internals.** The message put the entire invocation into the error —
@@ -1914,7 +1986,8 @@ cron-safety overhaul.
   100 % doc coverage.
 - All tests green under `-race -count=1`.
 
-[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.32...HEAD
+[Unreleased]: https://github.com/sebastienrousseau/corral/compare/v0.0.33...HEAD
+[0.0.33]: https://github.com/sebastienrousseau/corral/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/sebastienrousseau/corral/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/sebastienrousseau/corral/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/sebastienrousseau/corral/compare/v0.0.29...v0.0.30

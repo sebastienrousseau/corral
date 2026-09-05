@@ -12,7 +12,7 @@ that came from the same place the file did.
 Set the version once:
 
 ```bash
-VERSION=0.0.32
+VERSION=0.0.33
 ```
 
 ## 1. Checksums
