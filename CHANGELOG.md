@@ -6,7 +6,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Goroutine-leak detection across every package that starts one.** Seven
+  packages spawn goroutines — `internal/search`, `internal/mcp`,
+  `internal/github`, `internal/symbols`, `internal/engine`, `internal/tui`
+  and `cmd` — and nothing asserted they finished. A worker that missed one
+  of its exit conditions would have left the suite green: `wg.Wait()` still
+  returns for every worker that *did* finish, so the only symptom was a test
+  binary holding more memory than it should.
+
+  `go.uber.org/goleak` now runs after every package's tests. Confirmed by
+  detaching a goroutine inside `SearchRepo` that never returns: the suite
+  still passed, and goleak failed the package naming `walk.go:144` as the
+  leak site. A second shape — a worker ignoring `hitsCap` and the context —
+  was caught too, by timeout rather than by report, which is the less useful
+  failure of the two but still a failure.
+
+  `internal/mcp` and `cmd` use `goleak.Find` after their existing `TestMain`
+  cleanup rather than `VerifyTestMain`, which exits the process itself, and
+  only on an otherwise-passing run so a genuine failure is not buried under
+  leak output from a test that returned early.
+
+- **The `nilerr` linter**, which finds code returning a nil error when an
+  error is not nil. It reported five places, and all five turned out to be
+  deliberate — a walk callback skipping an unreadable entry, "not a
+  repository" being read as "no state", and a cancelled MCP scan reported in
+  the tool result rather than as a transport error, because returning a Go
+  error there would throw away the partial count the agent can still use.
+
+  None of them was a defect, and that is the reason to enable it: each now
+  carries a written justification at the point of the return instead of
+  relying on the reader working out that the nil was on purpose. A sixth
+  case, in `scripts/`, needed no suppression — those files are
+  `//go:build ignore` and are not linted.
+
 ### Fixed
+
+- **The coverage gate could not see a three-statement regression.** It read
+  the total off `go tool cover -func`, which rounds to one decimal — so 4874
+  of 4875 statements printed as `100.0%` and agreed with a claim of 100%.
+  `-func` also attributes blocks to named functions, so a statement inside a
+  `var f = func(){…}` literal was absent from the report altogether.
+
+  Between the two, the `internal/search` branch that only ran on some
+  scheduler interleavings sat uncovered under `-race` while this gate
+  reported agreement.
+
+  Coverage is now counted from the profile directly, unrounded, and a claim
+  of exactly 100% requires every statement — the failure names the blocks
+  rather than only reporting that a number moved. Verified against a
+  deliberately uncovered statement: `go tool cover` still says `100.0%`
+  while the gate fails with `99.9795%` and the block's position.
+
+  The profile is merged by taking each block's highest count before
+  counting, because a `./...` profile reports a file once per test binary
+  that compiled it. Summing the lines instead undercounts and produces a
+  plausible-looking wrong answer — which it did, twice, while this was being
+  written.
 
 - **One branch in `SearchRepo` was covered or not depending on the
   scheduler.** Each search worker stops once its own slice reaches
@@ -111,21 +168,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without doing its job — after the AUR package and the MCP registry entry.
   The shape is always the same: an absent optional credential treated as
   "nothing to do" rather than as an error.
-
-### Added
-
-- **The `nilerr` linter**, which finds code returning a nil error when an
-  error is not nil. It reported five places, and all five turned out to be
-  deliberate — a walk callback skipping an unreadable entry, "not a
-  repository" being read as "no state", and a cancelled MCP scan reported in
-  the tool result rather than as a transport error, because returning a Go
-  error there would throw away the partial count the agent can still use.
-
-  None of them was a defect, and that is the reason to enable it: each now
-  carries a written justification at the point of the return instead of
-  relying on the reader working out that the nil was on purpose. A sixth
-  case, in `scripts/`, needed no suppression — those files are
-  `//go:build ignore` and are not linted.
 
 ## [0.0.34] — 2026-09-05
 
