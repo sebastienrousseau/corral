@@ -4,57 +4,66 @@
  * actually renders is asserted at WCAG AAA (7:1 text, 3:1 non-text) by
  * scripts/contrast.py, so a colour change that breaks contrast fails the
  * build rather than reaching a reader. Nothing here hard-codes a hex value
- * outside these two blocks.
+ * outside the three blocks that follow.
+ *
+ * Three, not two: an explicit light choice, an explicit dark choice, and the
+ * prefers-color-scheme block that serves everyone who has expressed no
+ * preference at all — which is most readers. The gate checks each of them
+ * independently, because the third is the one a recolour forgets.
+ *
+ * The palette is Corral's own: the coral gradient from assets/logo.svg
+ * (#F87171 → #F56B5E → #9F1239). It was the Lucid theme's default blue until
+ * the site was checked against the logo it sits beside.
  */
 
 :root,
 :root[data-theme="light"] {
   --bg: #ffffff;
-  --surface: #f4f6f9;
-  --surface-soft: #e7ebf1;
-  --ink: #0d1117;
-  --ink-soft: #232a35;
-  --ink-muted: #3d4553;
-  --accent: #08417f;
-  --accent-hover: #052c57;
+  --surface: #faf6f6;
+  --surface-soft: #f2e7e8;
+  --ink: #17100f;
+  --ink-soft: #2c2124;
+  --ink-muted: #47383b;
+  --accent: #9f1239;
+  --accent-hover: #881337;
   --accent-ink: #ffffff;
-  --accent-soft: #dce8f7;
-  --on-accent-soft: #08417f;
-  --focus: #08417f;
-  --line: #5f6976;
+  --accent-soft: #fce4e6;
+  --on-accent-soft: #881337;
+  --focus: #9f1239;
+  --line: #6b5a5e;
 }
 
 :root[data-theme="dark"] {
-  --bg: #0b0e14;
-  --surface: #141922;
-  --surface-soft: #1d2430;
-  --ink: #f2f5f9;
-  --ink-soft: #d3dae4;
-  --ink-muted: #adb7c5;
-  --accent: #93bef7;
-  --accent-hover: #bcd8fc;
-  --accent-ink: #06101d;
-  --accent-soft: #1b2a3f;
-  --on-accent-soft: #c6dbf7;
-  --focus: #93bef7;
-  --line: #7d8b9f;
+  --bg: #0e0b0c;
+  --surface: #191315;
+  --surface-soft: #241a1d;
+  --ink: #f7f2f3;
+  --ink-soft: #ded2d5;
+  --ink-muted: #b6a6aa;
+  --accent: #fca5a5;
+  --accent-hover: #fecdd3;
+  --accent-ink: #160a0d;
+  --accent-soft: #3a1620;
+  --on-accent-soft: #fbd5d5;
+  --focus: #fca5a5;
+  --line: #8d7a7e;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0e14;
-    --surface: #141922;
-    --surface-soft: #1d2430;
-    --ink: #f2f5f9;
-    --ink-soft: #d3dae4;
-    --ink-muted: #adb7c5;
-    --accent: #93bef7;
-    --accent-hover: #bcd8fc;
-    --accent-ink: #06101d;
-    --accent-soft: #1b2a3f;
-    --on-accent-soft: #c6dbf7;
-    --focus: #93bef7;
-    --line: #7d8b9f;
+    --bg: #0e0b0c;
+    --surface: #191315;
+    --surface-soft: #241a1d;
+    --ink: #f7f2f3;
+    --ink-soft: #ded2d5;
+    --ink-muted: #b6a6aa;
+    --accent: #fca5a5;
+    --accent-hover: #fecdd3;
+    --accent-ink: #160a0d;
+    --accent-soft: #3a1620;
+    --on-accent-soft: #fbd5d5;
+    --focus: #fca5a5;
+    --line: #8d7a7e;
   }
 }
 
