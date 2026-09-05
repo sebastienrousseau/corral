@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - README.md's "When not to use Corral", which still listed five forges and
     said `corralctl <owner>` "only knows those five" — Bitbucket landed in
     0.0.33 and this paragraph was not part of that change;
+  - README.md's Architecture section and its flow diagram, which described
+    fetching "concurrently from GitHub" through a "GitHub API" node;
+  - `corralctl mcp --help`, which promised "the GitHub API is not contacted"
+    where it meant no forge API at all;
   - `.bestpractices.json`, which quoted the README's *old* opening sentence
     verbatim as evidence for an OpenSSF criterion. The README had changed
     underneath it, so a public submission was citing a sentence that no
