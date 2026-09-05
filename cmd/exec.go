@@ -133,8 +133,12 @@ func (b *cappedBuffer) String() string {
 func findLocalRepos(baseDir string) ([]localRepoInfo, error) {
 	var repos []localRepoInfo
 	err := walkLocalRepos(baseDir, func(path string, d os.DirEntry, err error) error {
+		// An entry that cannot be read is skipped, not fatal: a single
+		// unreadable directory must not stop the caller from finding the
+		// repositories it can reach. The outer error still reports a base
+		// directory that could not be walked at all.
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // deliberate: skip this entry, keep walking
 		}
 		if d.IsDir() && path != baseDir && gitutil.IsRepository(path) {
 			repoDir := path

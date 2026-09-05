@@ -1431,7 +1431,7 @@ func findOrphansOn(owner, baseDir string, repos []github.Repo, forgeName, forgeU
 	// for best-effort orphan detection.
 	_ = filepath.WalkDir(baseDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // deliberate: see the comment above
 		}
 		if d.IsDir() && path != baseDir && git.IsRepository(path) {
 			repoDir := path

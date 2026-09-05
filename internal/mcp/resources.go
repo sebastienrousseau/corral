@@ -138,8 +138,9 @@ func (s *Server) handleRepoTreeResource(ctx context.Context, req *mcp.ReadResour
 		if len(lines) >= maxTreeEntries {
 			return filepath.SkipAll
 		}
+		// One unreadable entry should not empty the whole tree listing.
 		if walkErr != nil {
-			return nil
+			return nil //nolint:nilerr // deliberate: skip this entry, keep walking
 		}
 		rel, _ := filepath.Rel(repo.Path, path)
 		if rel == "." {
