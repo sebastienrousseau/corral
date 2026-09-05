@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The coverage badge had never shown a number.** `.github/workflows/ci.yml`
+  delegates testing to a reusable workflow that uploads to Codecov, and that
+  workflow *declares* `CODECOV_TOKEN` in its `workflow_call` contract. A
+  declared secret is not inherited — the caller has to hand it over — and
+  this one handed over nothing.
+
+  The upload step therefore received an empty token, fell back to a tokenless
+  upload, and **reported success**. Every CI run showed a green "Upload
+  coverage" tick while Codecov received nothing and the badge read "unknown".
+  The token itself was configured correctly all along; only the passing of it
+  was missing.
+
+  It is passed explicitly rather than with `secrets: inherit`, which would
+  also hand `AUR_KEY`, `HOMEBREW_TAP_TOKEN` and `SCORECARD_TOKEN` to a
+  workflow in another repository that asks for none of them.
+
+  This is the third time in this release cycle that a step reported success
+  without doing its job — after the AUR package and the MCP registry entry.
+  The shape is always the same: an absent optional credential treated as
+  "nothing to do" rather than as an error.
+
 ### Added
 
 - **The `nilerr` linter**, which finds code returning a nil error when an
