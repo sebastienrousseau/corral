@@ -669,3 +669,79 @@ func TestCaseInsensitiveLiteralIsNotARegex(t *testing.T) {
 		t.Errorf("as a regex it should match both lines, got %s", files(res))
 	}
 }
+
+// TestSearchRepoTruncatesAggregateAcrossWorkers pins the one branch in
+// SearchRepo whose execution depended on how the scheduler happened to
+// interleave the workers.
+//
+// Each worker stops once its own slice reaches MaxHits, so the aggregate can
+// only exceed MaxHits when several workers contribute before any of them
+// trips that cap. Whether that happened was a matter of timing: under -race
+// the scheduler serialises enough that one worker usually reached the cap
+// first, and the aggregate truncation below the wait never ran. Coverage
+// therefore read 100% without -race and 99.94% with it, and
+// scripts/claims_check.go could not see the difference because
+// `go tool cover` rounds to one decimal — 4874 of 4875 statements still
+// prints as 100.0%.
+//
+// The shape here removes the timing from the question. Eight files carry
+// three matches each against a cap of ten, so:
+//
+//   - if the work spreads, four workers take two files each, none reaches
+//     ten on its own, all twenty-four hits are collected;
+//   - if one worker takes everything, it stops after the fourth file with
+//     twelve;
+//
+// and twelve and twenty-four are both greater than ten. There is no
+// interleaving that leaves the aggregate at or below the cap, so the branch
+// runs on every execution rather than on most of them.
+func TestSearchRepoTruncatesAggregateAcrossWorkers(t *testing.T) {
+	const (
+		maxHits        = 10
+		fileCount      = 8
+		matchesPerFile = 3
+	)
+
+	old := searchWorkers
+	searchWorkers = func() int { return 4 }
+	t.Cleanup(func() { searchWorkers = old })
+
+	root := t.TempDir()
+	for i := range fileCount {
+		var b strings.Builder
+		for j := range matchesPerFile {
+			// Padding lines so a hit is never the whole file, and so the
+			// line numbers differ between matches within one file.
+			fmt.Fprintf(&b, "package p%d\n", i)
+			fmt.Fprintf(&b, "// needle %d-%d\n", i, j)
+		}
+		write(t, root, fmt.Sprintf("pkg%d/file.go", i), b.String())
+	}
+
+	res := run(t, root, Query{Pattern: "needle", MaxHits: maxHits}, nil)
+
+	// The aggregate was cut back to the cap, which is the branch under test.
+	if got := len(res.Hits); got != maxHits {
+		t.Errorf("len(Hits) = %d, want exactly the cap %d — the aggregate "+
+			"truncation did not run (files: %s)", got, maxHits, files(res))
+	}
+	// A result that dropped hits must say so, or a caller pages through a
+	// list believing it has seen everything.
+	if !res.Truncated {
+		t.Error("Truncated = false after the aggregate was cut to the cap")
+	}
+
+	// The invariant that has to hold however the workers interleave: the
+	// result never carries more than the cap, and stays ordered so two
+	// identical searches agree.
+	if len(res.Hits) > maxHits {
+		t.Fatalf("len(Hits) = %d exceeds the cap %d", len(res.Hits), maxHits)
+	}
+	for i := 1; i < len(res.Hits); i++ {
+		a, b := res.Hits[i-1], res.Hits[i]
+		if a.File > b.File || (a.File == b.File && a.Line >= b.Line) {
+			t.Fatalf("hits out of order at %d: %s:%d then %s:%d",
+				i, a.File, a.Line, b.File, b.Line)
+		}
+	}
+}
