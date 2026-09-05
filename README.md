@@ -778,10 +778,10 @@ Corral is opinionated, and the opinions do not suit everyone.
   purpose-built tool; Corral will not preserve every ref or hold a
   guaranteed-complete copy.
 - **You need a forge corral does not list from.** GitHub, GitLab, Gitea,
-  Forgejo and Codeberg are supported; anything else is not. Reading is
-  forge-neutral — a clone from any host is a first-class citizen in the
-  index, the MCP server and symbol lookup — but `corralctl <owner>` only
-  knows those five.
+  Forgejo, Codeberg and Bitbucket are supported; anything else is not.
+  Reading is forge-neutral — a clone from any host is a first-class citizen
+  in the index, the MCP server and symbol lookup — but `corralctl <owner>`
+  only knows those six.
 - **Your repositories must stay where they are.** Corral's value is a
   consistent layout, and the default reorganises clones into
   `Collection/Bucket/Name`. If a fixed path matters, use `--layout` to

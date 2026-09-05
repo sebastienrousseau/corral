@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     so the stale wording was the one agents and users read in the listing;
   - `docs-site/ssg.toml`, the site description in every page's `<meta>`;
   - `CONTRIBUTING.md`, `docs/security-model.md` and `docs/packaging.md`;
+  - README.md's "When not to use Corral", which still listed five forges and
+    said `corralctl <owner>` "only knows those five" — Bitbucket landed in
+    0.0.33 and this paragraph was not part of that change;
   - `.bestpractices.json`, which quoted the README's *old* opening sentence
     verbatim as evidence for an OpenSSF criterion. The README had changed
     underneath it, so a public submission was citing a sentence that no
