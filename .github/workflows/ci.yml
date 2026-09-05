@@ -301,7 +301,13 @@ jobs:
       - name: Release preflight
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet --disable-pip-version-check jsonschema pyyaml
+          # --require-hashes, because a preflight that installs whatever PyPI
+          # serves today is a supply-chain hole in the very step whose job is
+          # to be trustworthy. Scorecard's Pinned-Dependencies check flagged
+          # the unpinned form on the pull request that added this, which is
+          # the check doing exactly what it is for.
+          python3 -m pip install --quiet --disable-pip-version-check \
+            --require-hashes -r scripts/requirements-preflight.txt
           python3 scripts/release_preflight.py
 
       # REUSE-style licence coverage over the whole tree, not just the files

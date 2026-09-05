@@ -80,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   143-character description from v0.0.35, a publish step moved back into the
   release job, and a publisher losing `continue-on-error`.
 
+  Its two Python dependencies are installed with `--require-hashes` from
+  `scripts/requirements-preflight.txt`, which pins every version and every
+  digest pip could choose on any platform. The first version of this step
+  installed them unpinned, and Scorecard's Pinned-Dependencies check caught
+  it on the pull request — a supply-chain hole in the very step whose job is
+  to be trustworthy, found by a gate this project already had.
+
 - **`server.json` is checked against the registry's field limits.** Nothing
   local knew the 100-character cap existed. `make manifest-check` now fails
   on a description over it, counted in runes rather than bytes because this
