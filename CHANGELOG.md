@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http://` while `docs/osps-baseline-fillable.md` publicly claims "both
   official channels are HTTPS-only".
 
+- **"…and serve them to AI agents over MCP" described a mechanism, not a
+  reason.** It named a protocol and left the reader to work out what they
+  would get from it, which is the wrong trade in the one sentence someone
+  reads before deciding whether to try the tool.
+
+  The README already had the answer — "your *local mirror* … queryable
+  without a round-trip" — so the descriptions now say it: your AI coding
+  agent can search across every clone at once, rather than only the project
+  it has open, offline and without touching a forge API. Changed in the
+  three packaging descriptions, the documentation site's description and its
+  homepage feature card. `docs/ARCHITECTURE.md` keeps the mechanism wording,
+  which is the right register for a document explaining how it works.
+
+  The feature card also still said "never contacts the GitHub API", which
+  had been true of one forge out of six since 0.0.30.
+
 ### Added
 
 - **The `nilerr` linter**, which finds code returning a nil error when an
