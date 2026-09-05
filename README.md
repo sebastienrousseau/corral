@@ -212,7 +212,7 @@ and makes Finder searches and Smart Folders useful across ecosystems.
 
 ## Architecture
 
-A single run resolves git, fetches every repository concurrently from GitHub, optionally lets you pick a subset interactively, then dispatches clone / smart-sync / skip decisions across a worker pool. Smart sync consults a per-repository `.corral-state.json` sidecar to skip a `git pull` when the upstream `pushed_at` is unchanged.
+A single run resolves git, fetches every repository concurrently from the forge (GitHub, GitLab, Gitea, Forgejo, Codeberg or Bitbucket), optionally lets you pick a subset interactively, then dispatches clone / smart-sync / skip decisions across a worker pool. Smart sync consults a per-repository `.corral-state.json` sidecar to skip a `git pull` when the upstream `pushed_at` is unchanged.
 
 ```mermaid
 graph TD
@@ -220,7 +220,7 @@ graph TD
     B --> C[Pre-flight: exec.LookPath git]
     C -- Missing --> Z1[Exit: git not found on PATH]
     C -- OK --> D[Resolve auto/token/gh auth]
-    D --> E[GitHub API: list repos]
+    D --> E[Forge API: list repos]
     E --> E1["First page<br/>+ resp.LastPage"]
     E1 --> E2{LastPage > 1?}
     E2 -- Yes --> E3["Concurrent fetch<br/>pages 2..N (max 5)"]
@@ -778,10 +778,10 @@ Corral is opinionated, and the opinions do not suit everyone.
   purpose-built tool; Corral will not preserve every ref or hold a
   guaranteed-complete copy.
 - **You need a forge corral does not list from.** GitHub, GitLab, Gitea,
-  Forgejo and Codeberg are supported; anything else is not. Reading is
-  forge-neutral — a clone from any host is a first-class citizen in the
-  index, the MCP server and symbol lookup — but `corralctl <owner>` only
-  knows those five.
+  Forgejo, Codeberg and Bitbucket are supported; anything else is not.
+  Reading is forge-neutral — a clone from any host is a first-class citizen
+  in the index, the MCP server and symbol lookup — but `corralctl <owner>`
+  only knows those six.
 - **Your repositories must stay where they are.** Corral's value is a
   consistent layout, and the default reorganises clones into
   `Collection/Bucket/Name`. If a fixed path matters, use `--layout` to

@@ -213,7 +213,7 @@
   "delivery_unsigned_status": "Met",
   "dependency_monitoring_justification": "GitHub Dependabot alerts are enabled repo-wide; Dependabot config opens dependency PRs on updates. Historical dep bumps: PR #21 (setup-go 6.4->6.5), PR #34 (Dockerfile digest pin).\n\nEvidence: https://github.com/sebastienrousseau/corral/security/dependabot",
   "dependency_monitoring_status": "Met",
-  "description_good_justification": "README.md's opening paragraph describes what Corral does: 'Automatically clone and organise GitHub repositories by visibility and language.' Follow-up sentences cover the MCP server angle.",
+  "description_good_justification": "README.md's opening paragraph describes what Corral does: 'Automatically clone and organise repositories from GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket using Finder-friendly collections, ecosystems, and metadata.' Follow-up sentences cover the MCP server angle.",
   "description_good_status": "Met",
   "discussion_justification": "GitHub Issues is the primary discussion channel — searchable, publicly viewable, no client install required. GitHub Discussions can be enabled if demand emerges.",
   "discussion_status": "Met",

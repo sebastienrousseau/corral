@@ -41,7 +41,7 @@ var mcpCmd = &cobra.Command{
 The server exposes the local Corral-organised workspace (cloned
 repositories under the configured base directory) to AI coding agents
 through eight read-only tools and four resources. No network calls are
-made and the GitHub API is not contacted.
+made and no forge API is contacted.
 
 Tools:
   corral_find_symbol       - where a symbol is defined, across EVERY clone
