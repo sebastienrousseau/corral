@@ -1,13 +1,17 @@
 <header class="masthead">
   <div class="lu-shell masthead-in">
     <a class="brand" href="{{locale_path}}">
-      <!-- Inlined rather than linked: it removes a request, cannot 404, and
-           carries no raster sibling for an auditor to ask after. Decorative,
-           because the brand name follows it as text. -->
-      <svg class="brand-mark" width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-        <rect width="32" height="32" rx="7" fill="currentColor" />
-        <path d="M9 8h3.4v12.6H22V24H9z" fill="var(--bg)" />
-      </svg>
+      <!-- Corral's own logo, not the theme's. What stood here was Lucid's
+           placeholder mark — a rounded square with an "L" in it — inlined
+           with a comment explaining that inlining saves a request. It did,
+           and it also meant doc.corrallib.com wore another project's initial
+           in its masthead.
+           Linked rather than inlined because logo.svg is 60 KB of path data,
+           which is not worth repeating in every page's HTML to save one
+           cached request. Decorative, because the brand name follows it as
+           text. -->
+      <img class="brand-mark" src="{{base_path}}assets/logo.svg"
+           width="28" height="28" alt="" aria-hidden="true" />
       <span class="brand-name">{{name}}</span>
     </a>
 

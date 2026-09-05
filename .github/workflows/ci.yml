@@ -75,6 +75,44 @@ jobs:
             echo "::endgroup::"
           done
 
+  # golangci-lint, which the Makefile has run since the beginning and CI
+  # never did.
+  #
+  # The reusable go-ci workflow above runs `go vet` and `staticcheck` — two of
+  # the four linters .golangci.yml enables. errcheck and gosec were therefore
+  # enforced only on whichever laptop happened to run `make lint`, which is not
+  # a gate; it is a habit, and habits do not fail pull requests.
+  #
+  # This surfaced when Go Report Card was sunset. Its own farewell points to
+  # golangci-lint (https://golangci-lint.run) as the successor, the README now
+  # says that is what corral uses, and a claim in the README has to be backed
+  # by something that actually runs. This job is that something.
+  #
+  # The version is pinned rather than floating: a linter that gains a check
+  # overnight turns an unrelated pull request red, and the fix belongs in its
+  # own commit where it can be read.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No actions/setup-go, for the reason given in docs-check below: the
+      # runner ships a toolchain and GOTOOLCHAIN=auto honours go.mod, so the
+      # version is pinned by go.mod rather than by a workflow input that can
+      # drift away from it.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOTOOLCHAIN: auto
+        with:
+          version: v2.13.2
+          args: ./...
+
   vulncheck:
     name: Vulnerability Scan
     runs-on: ubuntu-latest
@@ -224,6 +262,15 @@ jobs:
           set -euo pipefail
           go version
           go run scripts/doc_coverage.go
+
+      # The documentation theme's colour pairs, at WCAG AAA.
+      #
+      # scripts/build-docs.sh runs this too, but that script only runs on a
+      # push to main — by which point a colour that fails contrast is already
+      # published. A palette change arrives in a pull request, so the check
+      # belongs here as well.
+      - name: Theme contrast is AAA
+        run: python3 scripts/contrast.py
 
       # REUSE-style licence coverage over the whole tree, not just the files
       # someone remembered. Twenty-one workflow and config files had drifted

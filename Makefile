@@ -196,6 +196,10 @@ spdx-check:
 CODESPELL_SKIP ?= ./.git,./docs-site,./public,./go.sum,./dist,./build,./node_modules
 CODESPELL_IGNORE ?= intoto,statuss,confg,gitub,repositor,unparseable
 
+## contrast: assert the docs theme's colour pairs at WCAG AAA
+contrast:
+	python3 scripts/contrast.py
+
 ## docs-lint: markdownlint + codespell over the prose
 #
 # npx is the fallback rather than a hard requirement on a global install,

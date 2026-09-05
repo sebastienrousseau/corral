@@ -73,6 +73,7 @@ func main() {
 	problems = append(problems, covProblems...)
 	problems = append(problems, checkBenchmarkCoverage()...)
 	problems = append(problems, checkExampleCoverage()...)
+	problems = append(problems, checkLintClaim()...)
 
 	if len(problems) > 0 {
 		fmt.Fprintln(os.Stderr, "claims check failed:")
@@ -252,6 +253,78 @@ func checkExampleCoverage() []string {
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+// checkLintClaim keeps the README's linting badge honest.
+//
+// The badge it replaced was Go Report Card's, which was sunset after ten
+// years — the service stopped, shields.io started answering "404: badge not
+// found", and the README went on advertising a code-quality signal that no
+// longer existed. Nothing caught it, because nothing checked.
+//
+// The replacement badge names golangci-lint, and that claim was not true
+// either when it was written: .golangci.yml enabled errcheck, gosec, govet
+// and staticcheck, but CI ran only vet and staticcheck through the reusable
+// workflow. errcheck and gosec were enforced on whoever's laptop last typed
+// `make lint`. So this checks the whole chain the badge implies — the config
+// exists, and something in CI actually runs it — rather than the badge alone.
+func checkLintClaim() []string {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		return []string{fmt.Sprintf("reading README.md: %v", err)}
+	}
+	body := string(readme)
+
+	var problems []string
+
+	// Go Report Card is gone. Any badge pointing at it is dead by
+	// definition, so this cannot come back by copy-paste from an older
+	// README.
+	if strings.Contains(body, "goreportcard.com") {
+		problems = append(problems, "README.md links to goreportcard.com, "+
+			"which was sunset; its badge endpoint returns 404")
+	}
+
+	if !strings.Contains(body, "golangci-lint") {
+		// No claim, nothing to keep true.
+		return problems
+	}
+	if !strings.Contains(body, "https://golangci-lint.run") {
+		problems = append(problems, "README.md names golangci-lint but does not "+
+			"link to https://golangci-lint.run")
+	}
+	if _, err := os.Stat(".golangci.yml"); err != nil {
+		problems = append(problems, "README.md advertises golangci-lint but "+
+			".golangci.yml is missing, so there is no configuration to run")
+	}
+	if !runsInCI("golangci-lint-action") {
+		problems = append(problems, "README.md advertises golangci-lint but no "+
+			"workflow runs it; a linter nothing runs is a habit, not a gate")
+	}
+	sort.Strings(problems)
+	return problems
+}
+
+// runsInCI reports whether any workflow mentions needle.
+func runsInCI(needle string) bool {
+	entries, err := os.ReadDir(".github/workflows")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".yml") && !strings.HasSuffix(n, ".yaml") {
+			continue
+		}
+		b, err := os.ReadFile(".github/workflows/" + n) // #nosec G304 -- workflow dir listing
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(b), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // readAll concatenates the files that exist, ignoring the ones that do not.

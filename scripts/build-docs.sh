@@ -49,13 +49,27 @@ cp -f docs-site/_layouts/favicon.ico "${OUT}/favicon.ico"
 echo "==> anchoring headings"
 python3 scripts/anchor_headings.py "${OUT}"
 
+# The stylesheet says every colour pair it renders is asserted at AAA. It said
+# so while scripts/contrast.py did not exist, which is the same class of
+# untrue claim as the zero-byte favicon: something a reader would rely on,
+# with nothing behind it. It exists now, and runs here.
+echo "==> checking contrast"
+python3 scripts/contrast.py
+
 echo "doc.corrallib.com" > "${OUT}/CNAME"
 
 # A page that references a stylesheet which is not there builds green and
 # serves unstyled, which is how this was missed the first time.
+#
+# -s, not -f. The favicon shipped as a zero-byte file at both
+# docs-site/assets/favicon.ico and docs-site/_layouts/favicon.ico, and this
+# loop waved it through for months because the file existed. An empty asset
+# is exactly as broken as a missing one and harder to notice — the browser
+# just falls back to a blank page icon. Same reasoning as the CNAME check
+# below, which already used -s for the same reason.
 missing=0
 for f in styles.css main.js theme-init.js favicon.ico assets/logo.svg; do
-  [[ -f "${OUT}/${f}" ]] || { echo "missing ${OUT}/${f}" >&2; missing=1; }
+  [[ -s "${OUT}/${f}" ]] || { echo "missing or empty ${OUT}/${f}" >&2; missing=1; }
 done
 [[ -s "${OUT}/CNAME" ]] || { echo "CNAME is empty" >&2; missing=1; }
 pages=$(find "${OUT}" -name index.html | wc -l | tr -d ' ')
