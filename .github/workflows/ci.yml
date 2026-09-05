@@ -21,6 +21,21 @@ jobs:
       go-version: '1.26.6'
       run-cross-platform: true
       run-coverage: true
+    # Passed explicitly, not `secrets: inherit`.
+    #
+    # go-ci.yml declares CODECOV_TOKEN in its workflow_call contract, and a
+    # declared secret is not inherited — the caller has to hand it over. This
+    # job handed over nothing, so the upload step received an empty token,
+    # fell back to a tokenless upload, reported success, and Codecov stored
+    # nothing. The badge has read "unknown" ever since, while a green tick
+    # said the coverage had been uploaded.
+    #
+    # `secrets: inherit` would fix it and also hand AUR_KEY,
+    # HOMEBREW_TAP_TOKEN and SCORECARD_TOKEN to a workflow in another
+    # repository, none of which it asks for or needs. It declares exactly one
+    # secret, so exactly one is passed.
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   # The reusable go-ci workflow above does not run the race detector or
   # randomise test order, and a 100%-coverage suite turned out to be
