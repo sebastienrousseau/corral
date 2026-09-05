@@ -10,7 +10,8 @@ Maintainer contact: <sebastian.rousseau@gmail.com> · issues at
 
 ## What it is
 
-`corralctl` — a CLI that clones and organises GitHub repositories into a
+`corralctl` — a CLI that clones and organises repositories from GitHub,
+GitLab, Gitea, Forgejo, Codeberg and Bitbucket into a
 structured local workspace, and serves that workspace to AI coding agents
 over the Model Context Protocol. One static binary, no runtime data files
 beyond the manpages and completions.

@@ -6,6 +6,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Six documents still described corral as GitHub-only**, three releases
+  after cloning worked against six forges. 0.0.32 corrected the README and
+  the documentation site; these were missed because nothing links them to
+  the README:
+
+  - `server.json`, which is the description the **MCP registry publishes** —
+    so the stale wording was the one agents and users read in the listing;
+  - `docs-site/ssg.toml`, the site description in every page's `<meta>`;
+  - `CONTRIBUTING.md`, `docs/security-model.md` and `docs/packaging.md`;
+  - README.md's "When not to use Corral", which still listed five forges and
+    said `corralctl <owner>` "only knows those five" — Bitbucket landed in
+    0.0.33 and this paragraph was not part of that change;
+  - README.md's Architecture section and its flow diagram, which described
+    fetching "concurrently from GitHub" through a "GitHub API" node;
+  - `corralctl mcp --help`, which promised "the GitHub API is not contacted"
+    where it meant no forge API at all;
+  - `.bestpractices.json`, which quoted the README's *old* opening sentence
+    verbatim as evidence for an OpenSSF criterion. The README had changed
+    underneath it, so a public submission was citing a sentence that no
+    longer existed anywhere.
+
+  The GitHub repository description and topics were stale in the same way
+  and have been updated too, along with the homepage field, which was
+  `http://` while `docs/osps-baseline-fillable.md` publicly claims "both
+  official channels are HTTPS-only".
+
+- **"…and serve them to AI agents over MCP" described a mechanism, not a
+  reason.** It named a protocol and left the reader to work out what they
+  would get from it, which is the wrong trade in the one sentence someone
+  reads before deciding whether to try the tool.
+
+  The README already had the answer — "your *local mirror* … queryable
+  without a round-trip" — so the descriptions now say it: your AI coding
+  agent can search across every clone at once, rather than only the project
+  it has open, straight from disk. Changed in the three packaging
+  descriptions, the documentation site's description and its homepage
+  feature card. `docs/ARCHITECTURE.md` keeps the mechanism wording, which is
+  the right register for a document explaining how it works.
+
+  The first attempt at this ended "offline, without touching a forge API",
+  which contradicted the first half of its own sentence: cloning from six
+  forges is exactly a network operation against a forge API. Only the
+  *search* is local — `internal/search` reads the clones on disk and the
+  read-only MCP server makes no network calls — so that is what the sentence
+  claims now. "Offline" as a blanket adjective for a tool whose main job is
+  cloning was simply false.
+
+  The feature card also still said "never contacts the GitHub API", which
+  had been true of one forge out of six since 0.0.30.
+
 ### Added
 
 - **The `nilerr` linter**, which finds code returning a nil error when an
