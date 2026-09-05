@@ -1,6 +1,6 @@
 site_name = "Corral"
 site_title = "Corral — organise every repository you have"
-site_description = "Corral clones and organises GitHub repositories into a Finder-friendly hierarchy of visibility and ecosystem, applies native macOS tags, and exposes the result to AI agents over MCP."
+site_description = "Corral clones and organises repositories from GitHub, GitLab, Gitea, Forgejo, Codeberg and Bitbucket into a Finder-friendly hierarchy of visibility and ecosystem, applies native macOS tags, and exposes the result to AI agents over MCP."
 base_url = "https://doc.corrallib.com"
 language = "en-GB"
 

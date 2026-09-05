@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Six documents still described corral as GitHub-only**, three releases
+  after cloning worked against six forges. 0.0.32 corrected the README and
+  the documentation site; these were missed because nothing links them to
+  the README:
+
+  - `server.json`, which is the description the **MCP registry publishes** —
+    so the stale wording was the one agents and users read in the listing;
+  - `docs-site/ssg.toml`, the site description in every page's `<meta>`;
+  - `CONTRIBUTING.md`, `docs/security-model.md` and `docs/packaging.md`;
+  - `.bestpractices.json`, which quoted the README's *old* opening sentence
+    verbatim as evidence for an OpenSSF criterion. The README had changed
+    underneath it, so a public submission was citing a sentence that no
+    longer existed anywhere.
+
+  The GitHub repository description and topics were stale in the same way
+  and have been updated too, along with the homepage field, which was
+  `http://` while `docs/osps-baseline-fillable.md` publicly claims "both
+  official channels are HTTPS-only".
+
 ### Added
 
 - **The `nilerr` linter**, which finds code returning a nil error when an

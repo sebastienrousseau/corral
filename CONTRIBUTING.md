@@ -1,6 +1,7 @@
 # Contributing
 
-Corral is a compiled Go application with a Bubble Tea terminal user interface that clones and organises GitHub repositories by visibility and language. Contributions are welcome.
+Corral is a compiled Go application with a Bubble Tea terminal user interface that clones and organises repositories from GitHub, GitLab, Gitea, Forgejo,
+Codeberg and Bitbucket by visibility and language. Contributions are welcome.
 
 ## Getting Started
 

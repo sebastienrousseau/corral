@@ -22,7 +22,8 @@ the specific criterion or control they satisfy.
 ## 1. What Corral is
 
 Corral (`corralctl`) is a Go CLI that clones and organises a user's own
-GitHub repositories into a local directory tree grouped by visibility and
+repositories — from GitHub, GitLab, Gitea, Forgejo, Codeberg or Bitbucket —
+into a local directory tree grouped by visibility and
 language. It also ships an MCP server that lets an LLM query the local
 mirror without network access.
 
