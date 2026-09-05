@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One branch in `SearchRepo` was covered or not depending on the
+  scheduler.** Each search worker stops once its own slice reaches
+  `MaxHits`, so the *aggregate* can exceed the cap only when several workers
+  contribute before any of them trips it. Whether that happened was a matter
+  of timing: under `-race` the scheduler serialises enough that one worker
+  usually reaches the cap first, and the aggregate truncation after the wait
+  never ran.
+
+  So the same suite measured 100% without `-race` and 99.94% with it —
+  which is what Codecov had been reporting all along, correctly, the moment
+  uploads started working. `scripts/claims_check.go` could not see the
+  difference: `go tool cover` rounds to one decimal, and 4874 of 4875
+  statements still prints as `100.0%`.
+
+  The comment in `claims_check.go` had guessed at this exactly — "a
+  worker-pool branch in internal/search that does not always execute under
+  contention" — and recorded that it could not be reproduced in thirty-seven
+  attempts. It is now pinned by a test whose shape removes the timing from
+  the question: eight files of three matches each against a cap of ten, so
+  whether the work spreads across four workers or lands on one, the
+  aggregate is twenty-four or twelve and both exceed ten. There is no
+  interleaving that leaves it at or below the cap.
+
+  Confirmed to fail — 24 hits against a cap of 10 — with the branch removed,
+  and `-race` coverage of `internal/search` is now identical across six
+  consecutive runs.
+
+  One statement remains uncovered under `-race`, and deliberately so:
+  `runSelectorProgram` is excluded by a `!race` build tag because starting a
+  real Bubble Tea program trips a data race inside cancelreader, which
+  closes an `os.File` while its own goroutine is still reading it. That is a
+  dependency's race, not corral's, and it is documented where it is
+  excluded.
+
 - **Six documents still described corral as GitHub-only**, three releases
   after cloning worked against six forges. 0.0.32 corrected the README and
   the documentation site; these were missed because nothing links them to
